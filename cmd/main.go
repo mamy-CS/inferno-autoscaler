@@ -57,11 +57,6 @@ func init() {
 
 // nolint:gocyclo
 func main() {
-	// Log info before initializing metrics exporter
-	ctrl.Log.Info("Initializing Metrics Exporter.")
-	actuator.RegisterMetrics()
-	// Log info after the metrics exporter is initialized
-	ctrl.Log.Info("Metrics Exporter Initialized.")
 	var metricsAddr string
 	var metricsCertPath, metricsCertName, metricsCertKey string
 	var webhookCertPath, webhookCertName, webhookCertKey string
@@ -94,6 +89,12 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+
+	// Log info before initializing metrics exporter
+	setupLog.Info("Initializing Metrics Exporter.")
+	actuator.RegisterMetrics()
+	// Log info after the metrics exporter is initialized
+	setupLog.Info("Metrics Exporter Initialized.")
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
 	// due to its vulnerabilities. More specifically, disabling http/2 will

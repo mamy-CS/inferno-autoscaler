@@ -29,10 +29,17 @@ type PrometheusActuator struct {
 	desiredReplicasGauge    *prometheus.GaugeVec
 	currentReplicasGauge    *prometheus.GaugeVec
 	optimizationStatusGauge *prometheus.GaugeVec
+	startupGauge            prometheus.Gauge
 }
 
 var (
 	pa = &PrometheusActuator{
+		startupGauge: prometheus.NewGauge(
+			prometheus.GaugeOpts{
+				Name: "inferno_autoscaler_up",
+				Help: "Set to 1 when Inferno Autoscaler is initialized",
+			},
+		),
 		desiredReplicasGauge: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
 				Name: "inferno_desired_replicas",
@@ -59,15 +66,15 @@ var (
 
 // Register metrics
 func RegisterMetrics() {
+	log.Log.Info(">>>>> Registering Prometheus metrics")
 	// Register custom metrics with the global prometheus registry
-	metrics.Registry.MustRegister(pa.desiredReplicasGauge, pa.currentReplicasGauge, pa.optimizationStatusGauge)
-}
+	metrics.Registry.MustRegister(
+		pa.desiredReplicasGauge,
+		pa.currentReplicasGauge,
+		pa.optimizationStatusGauge,
+		pa.startupGauge)
 
-func (a *PrometheusActuator) ApplyReplicaTargets(ctx context.Context, VariantAutoscaling *llmdOptv1alpha1.VariantAutoscaling) error {
-	// This actuator does not modify replicas directly
-	logger := log.FromContext(ctx)
-	logger.Info("PrometheusActuator does not apply replica targets directly")
-	return nil
+	pa.startupGauge.Set(1) // Inferno Autoscaler initialized
 }
 
 func NewPrometheusActuator() *PrometheusActuator {
@@ -76,7 +83,6 @@ func NewPrometheusActuator() *PrometheusActuator {
 
 func (a *PrometheusActuator) EmitMetrics(ctx context.Context, VariantAutoscaling *llmdOptv1alpha1.VariantAutoscaling) error {
 	logger := log.FromContext(ctx)
-
 	model := VariantAutoscaling.Spec.ModelID
 	namespace := VariantAutoscaling.Namespace
 

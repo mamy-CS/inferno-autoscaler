@@ -5,4 +5,4 @@ kind: Kustomization
 images:
 - name: controller
   newName: quay.io/mmunirab/inferno-autoscaler
-  newTag: arm0.1
+  newTag: arm0.2

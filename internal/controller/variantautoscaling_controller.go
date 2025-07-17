@@ -247,14 +247,15 @@ func (r *VariantAutoscalingReconciler) Reconcile(ctx context.Context, req ctrl.R
 			continue
 		}
 
-		// prometheusActuator := actuator.NewPrometheusActuator()
-		// if err := prometheusActuator.EmitMetrics(ctx, &updateVa); err != nil {
-		// 	logger.Error(err, "failed to emit prometheus metrics")
-		// }
-
 		act := actuator.NewDummyActuator(r.Client)
 		if err := act.ApplyReplicaTargets(ctx, &updateVa); err != nil {
 			logger.Error(err, "failed to apply replicas")
+		}
+
+		// Emit Prometheus metrics
+		if err := act.EmitMetrics(ctx, &updateVa); err != nil {
+			logger.Error(err, "failed to emit metrics")
+			// optional: don't fail the reconcile on metrics error
 		}
 
 	}

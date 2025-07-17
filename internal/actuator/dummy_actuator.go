@@ -12,11 +12,15 @@ import (
 )
 
 type DummyActuator struct {
-	Client client.Client
+	Client             client.Client
+	PrometheusExporter *PrometheusActuator
 }
 
 func NewDummyActuator(k8sClient client.Client) *DummyActuator {
-	return &DummyActuator{Client: k8sClient}
+	return &DummyActuator{
+		Client:             k8sClient,
+		PrometheusExporter: NewPrometheusActuator(),
+	}
 }
 
 func (a *DummyActuator) ApplyReplicaTargets(ctx context.Context, VariantAutoscaling *llmdOptv1alpha1.VariantAutoscaling) error {
@@ -43,4 +47,8 @@ func (a *DummyActuator) ApplyReplicaTargets(ctx context.Context, VariantAutoscal
 
 	logger.Info("Patched Deployment", "name", deploy.Name, "num replicas", replicas)
 	return nil
+}
+
+func (a *DummyActuator) EmitMetrics(ctx context.Context, va *llmdOptv1alpha1.VariantAutoscaling) error {
+	return a.PrometheusExporter.EmitMetrics(ctx, va)
 }
