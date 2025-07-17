@@ -139,6 +139,12 @@ ifndef ignore-not-found
   ignore-not-found = false
 endif
 
+.PHONY: prometheus-install
+prometheus-install: ## Install Prometheus using Helm in the inferno-autoscaler-monitoring namespace.
+	helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+	helm repo update
+	helm install prometheus -f config/prometheus/prometheus.yaml prometheus-community/kube-prometheus-stack --namespace=inferno-autoscaler-monitoring --create-namespace
+
 .PHONY: install
 install: manifests kustomize ## Install CRDs into the K8s cluster specified in ~/.kube/config.
 	$(KUSTOMIZE) build config/crd | $(KUBECTL) apply -f -
@@ -155,6 +161,7 @@ deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in
 .PHONY: undeploy
 undeploy: kustomize ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
 	$(KUSTOMIZE) build config/default | $(KUBECTL) delete --ignore-not-found=$(ignore-not-found) -f -
+
 
 ##@ Dependencies
 

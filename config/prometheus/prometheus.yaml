@@ -1,0 +1,37 @@
+alertmanager:
+    enabled: false
+kube-state-metrics:
+    enabled: false
+prometheus-node-exporter:
+    enabled: false
+prometheus-pushgateway:
+    enabled: false
+server:
+    name: inferno-autoscaler-prometheus
+    namespace: inferno-autoscaler-monitoring
+    service:
+        enabled: true
+        type: NodePort
+        servicePort: 9090
+    persistentVolume:
+        existingClaim: prometheus-inferno-autoscaler-pvc
+        enabled: false
+    securityContext:
+        runAsUser:
+        runAsNonRoot:
+        runAsGroup:
+        fsGroup:
+extraScrapeConfigs: |
+    - job_name: inferno-metrics
+      honor_labels: true
+      metrics_path: /metrics
+      scheme: https
+      scrape_interval: 15s
+      static_configs:
+          - targets:
+              - inferno-autoscaler-metrics-service.inferno-autoscaler-system.svc.cluster.local:8443
+      tls_config:
+        insecure_skip_verify: true
+serviceMonitorSelector:
+    matchLabels:
+        release: prometheus

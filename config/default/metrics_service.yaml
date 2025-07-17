@@ -5,11 +5,11 @@ metadata:
     control-plane: controller-manager
     app.kubernetes.io/name: inferno-autoscaler
     app.kubernetes.io/managed-by: kustomize
-  name: controller-manager-metrics-service
+  name: metrics-service
   namespace: system
 spec:
   ports:
-  - name: https
+  - name: metrics
     port: 8443
     protocol: TCP
     targetPort: 8443

@@ -38,6 +38,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	llmdv1alpha1 "github.com/llm-d-incubation/inferno-autoscaler/api/v1alpha1"
+	actuator "github.com/llm-d-incubation/inferno-autoscaler/internal/actuator"
 	"github.com/llm-d-incubation/inferno-autoscaler/internal/controller"
 	// +kubebuilder:scaffold:imports
 )
@@ -56,6 +57,11 @@ func init() {
 
 // nolint:gocyclo
 func main() {
+	// Log info before initializing metrics exporter
+	ctrl.Log.Info("Initializing Metrics Exporter.")
+	actuator.RegisterMetrics()
+	// Log info after the metrics exporter is initialized
+	ctrl.Log.Info("Metrics Exporter Initialized.")
 	var metricsAddr string
 	var metricsCertPath, metricsCertName, metricsCertKey string
 	var webhookCertPath, webhookCertName, webhookCertKey string
@@ -64,7 +70,7 @@ func main() {
 	var secureMetrics bool
 	var enableHTTP2 bool
 	var tlsOpts []func(*tls.Config)
-	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
+	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
