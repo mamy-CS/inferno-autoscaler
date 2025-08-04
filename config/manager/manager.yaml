@@ -67,6 +67,8 @@ spec:
         env:
           - name: LOG_LEVEL
             value: "debug"  # or "info", "warn", "error"
+          - name: PROMETHEUS_BASE_URL
+            value: "https://prometheus-k8s.openshift-monitoring.svc.cluster.local:9091"
         name: manager
         ports: []
         securityContext:

@@ -20,8 +20,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -38,6 +40,7 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
+	"crypto/tls"
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/inferno-autoscaler/api/v1alpha1"
 	actuator "github.com/llm-d-incubation/inferno-autoscaler/internal/actuator"
 	collector "github.com/llm-d-incubation/inferno-autoscaler/internal/collector"
@@ -344,18 +347,58 @@ func (r *VariantAutoscalingReconciler) applyOptimizedAllocations(
 	return nil
 }
 
-// SetupWithManager sets up the controller with the Manager.
+// authTransport adds bearer token authentication to HTTP requests
+type authTransport struct {
+	base  http.RoundTripper
+	token string
+}
+
+func (a *authTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	req.Header.Set("Authorization", "Bearer "+a.token)
+	return a.base.RoundTrip(req)
+}
+
 func (r *VariantAutoscalingReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	// To run locally, set the environment variable to Prometheus base URL e.g. PROMETHEUS_BASE_URL=http://localhost:9090
 	prom_addr := os.Getenv("PROMETHEUS_BASE_URL")
 	if prom_addr == "" {
-		// Running in cluster
-		prom_addr = "http://prometheus-operated.default.svc.cluster.local:9090"
+		// Running in cluster - use user-workload monitoring for application metrics
+		prom_addr = "https://prometheus-user-workload.openshift-user-workload-monitoring.svc.cluster.local:9091"
 	}
-	promClient, err := api.NewClient(api.Config{
-		Address: prom_addr,
-	})
+
+	// Create Prometheus client config with authentication and skip TLS verification
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+
+	promConfig := api.Config{
+		Address:      prom_addr,
+		RoundTripper: tr,
+	}
+
+	// Add authentication if running in cluster (when PROMETHEUS_BASE_URL is set to cluster URL or empty)
+	if prom_addr == "https://prometheus-user-workload.openshift-user-workload-monitoring.svc.cluster.local:9091" ||
+		strings.Contains(prom_addr, "openshift-monitoring") ||
+		strings.Contains(prom_addr, "openshift-user-workload-monitoring") ||
+		strings.Contains(prom_addr, "svc.cluster.local") {
+		// Read service account token for authentication
+		token, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token")
+		if err == nil {
+			// Create a custom round tripper that adds the bearer token
+			promConfig.RoundTripper = &authTransport{
+				base:  tr,
+				token: string(token),
+			}
+			logger.Log.Info("Added bearer token authentication for Prometheus")
+		} else {
+			logger.Log.Error(err, "Failed to read service account token, continuing without authentication")
+		}
+	} else {
+		logger.Log.Info("Running with local Prometheus, skipping authentication")
+	}
+
+	promClient, err := api.NewClient(promConfig)
 	if err != nil {
 		return fmt.Errorf("failed to create prometheus client: %w", err)
 	}

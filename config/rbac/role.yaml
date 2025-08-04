@@ -60,3 +60,22 @@ rules:
   - get
   - patch
   - update
+# Add permissions for service account token access
+- apiGroups:
+  - ""
+  resources:
+  - serviceaccounts
+  verbs:
+  - get
+  - list
+  - watch
+# Add permissions for accessing Prometheus metrics (if needed for cluster monitoring)
+- apiGroups:
+  - monitoring.coreos.com
+  resources:
+  - servicemonitors
+  - prometheusrules
+  verbs:
+  - get
+  - list
+  - watch
