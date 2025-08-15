@@ -333,21 +333,19 @@ func (r *VariantAutoscalingReconciler) applyOptimizedAllocations(
 
 		updateVa.Status.CurrentAlloc = va.Status.CurrentAlloc
 		updateVa.Status.DesiredOptimizedAlloc = optimizedAllocation[va.Name]
-		updateVa.Status.Actuation.Applied = true
+		updateVa.Status.Actuation.Applied = false // No longer directly applying changes
 
 		act := actuator.NewActuator(r.Client)
-		if err := act.ApplyReplicaTargets(ctx, &updateVa); err != nil {
-			logger.Log.Error(err, "failed to apply replicas")
+
+		// Emit optimization signals for external autoscalers
+		if err := act.EmitMetrics(ctx, &updateVa); err != nil {
+			logger.Log.Error(err, "failed to emit optimization signals for external autoscalers", "variant", updateVa.Name)
+		} else {
+			logger.Log.Debug("Successfully emitted optimization signals for external autoscalers", "variant", updateVa.Name)
+			updateVa.Status.Actuation.Applied = true // Signals emitted successfully
 		}
 
 		err = utils.UpdateStatusWithBackoff(ctx, r.Client, &updateVa, utils.StandardBackoff, "VariantAutoscaling")
-
-		// Emit metrics for the variant autoscaling
-		if err := act.EmitMetrics(ctx, &updateVa); err != nil {
-			logger.Log.Error(err, "failed to emit metrics for variantAutoscaling - ", "variantAutoscaling-name: ", updateVa.Name)
-		} else {
-			logger.Log.Debug("EmitMetrics call completed successfully for variantAutoscaling - ", "variantAutoscaling-name: ", updateVa.Name)
-		}
 
 		if err != nil {
 			logger.Log.Error(err, "failed to patch status for variantAutoscaling after retries - ", "variantAutoscaling-name: ", updateVa.Name)

@@ -24,14 +24,8 @@ type ModelAnalyzer interface {
 }
 
 type Actuator interface {
-	// ApplyReplicaTargets mutates workloads (e.g., Deployments, InferenceServices) to match target replicas.
-	// To be deprecated
-	ApplyReplicaTargets(
-		ctx context.Context,
-		VariantAutoscalings *llmdOptv1alpha1.VariantAutoscaling,
-	) error
-
-	// EmitMetrics publishes metrics about the target state (e.g., desired replicas, reasons).
+	// EmitMetrics publishes optimization signals for external autoscalers (e.g., HPA, KEDA).
+	// This includes real-time current state and Inferno's optimization targets.
 	EmitMetrics(
 		ctx context.Context,
 		VariantAutoscalings *llmdOptv1alpha1.VariantAutoscaling,
