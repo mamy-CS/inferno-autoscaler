@@ -7,6 +7,9 @@ The inferno-autoscaler assigns GPU types to inference model servers and decides 
 - [Description](#description)
 - [Getting Started](#getting-started)
   - [Prerequisites](#prerequisites)
+- [HPA Integration](#hpa-integration)
+  - [Overview](#hpa-overview)
+  - [Quick Setup](#hpa-quick-setup)
 - [Quickstart Guide: Installation of Inferno-autoscaler along with llm-d infrastructure emulated deployment on a Kind cluster](#quickstart-guide-installation-of-inferno-autoscaler-along-with-llm-d-infrastructure-emulated-deployment-on-a-kind-cluster)
   - [Showing Inferno-autoscaler scaling replicas up and down](#showing-inferno-autoscaler-scaling-replicas-up-and-down)
   - [Uninstalling llm-d and Inferno-autoscaler](#uninstalling-llm-d-and-inferno-autoscaler)
@@ -56,6 +59,45 @@ Modeling and optimization techniques used in the inferno-autoscaler are describe
 - docker version 17.03+.
 - kubectl version v1.32.0+.
 - Access to a Kubernetes v1.32.0+ cluster.
+
+## HPA Integration
+
+Inferno can work with Kubernetes HPA for external scaling. Deploy Inferno with the HPA-enabled image, then:
+
+1. **Deploy Prometheus Adapter** to expose Inferno metrics to HPA
+2. **Create HPA resources** that target `inferno_desired_replicas` metric  
+3. **HPA scales deployments** based on Inferno's optimization decisions
+
+Quick setup after Inferno deployment:
+```bash
+# Deploy Prometheus Adapter
+helm install prometheus-adapter prometheus-community/prometheus-adapter \
+  -n inferno-autoscaler-monitoring \
+  -f config/samples/prometheus-adapter-values.yaml
+
+# Deploy HPA resources  
+kubectl apply -f config/samples/hpa-integration.yaml
+```
+
+### Quick Setup
+
+1. **Deploy Prometheus Adapter:**
+   ```bash
+   kubectl apply -f config/samples/prometheus-adapter-config.yaml
+   ```
+
+2. **Deploy HPA Resources:**
+   ```bash
+   kubectl apply -f config/samples/hpa-integration.yaml
+   ```
+
+3. **Verify Integration:**
+   ```bash
+   kubectl get hpa -n llm-d-sim
+   kubectl describe hpa vllme-deployment-hpa -n llm-d-sim
+   ```
+
+For detailed setup instructions, troubleshooting, and best practices, see the [HPA Integration Guide](docs/hpa-integration.md).
 
 ## Quickstart Guide: Installation of Inferno-autoscaler along with llm-d infrastructure emulated deployment on a Kind cluster
 
@@ -467,6 +509,16 @@ For detailed information about the custom metrics, see [Custom Metrics Documenta
 # password: prom-operator
 kubectl port-forward svc/kube-prometheus-stack-grafana 3000:80 -n inferno-autoscaler-monitoring
 ```
+
+## Documentation
+
+### HPA Integration
+- [HPA Integration Quick Start](docs/hpa-integration.md) - Setup HPA with Inferno optimization signals
+
+### Additional Resources
+- [Custom Metrics Documentation](docs/custom-metrics.md) - Understanding Inferno's metrics system
+- [CRD Documentation](docs/crd-docs.md) - VariantAutoscaling custom resource details
+- [Modeling & Optimization](docs/modeling-optimization.md) - Deep dive into optimization algorithms
 
 ## Contributing
 

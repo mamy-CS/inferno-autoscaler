@@ -48,13 +48,6 @@ func InitMetrics(registry prometheus.Registerer) error {
 	if err := registry.Register(currentReplicas); err != nil {
 		return fmt.Errorf("failed to register currentReplicas metric: %w", err)
 	}
-
-	// Initialize metrics with default values to ensure they appear in /metrics endpoint
-	// This ensures the metrics are visible even before they're set to actual values
-	replicaScalingTotal.WithLabelValues("default", "default", "none", "none").Add(0)
-	desiredReplicas.WithLabelValues("default", "default", "none").Set(0)
-	currentReplicas.WithLabelValues("default", "default", "none").Set(0)
-
 	return nil
 }
 

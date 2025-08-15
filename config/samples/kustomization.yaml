@@ -1,4 +1,8 @@
-## Append samples of your project ##
+# Add your sample resources to be built with kustomize here.
+# Examples in the samples folder:
 resources:
-- llmd_v1alpha1_VariantAutoscalings.yaml
-# +kubebuilder:scaffold:manifestskustomizesamples
+- llmd.ai_v1alpha1_variantautoscaling.yaml
+
+# HPA Integration samples
+- hpa-integration.yaml
+- prometheus-adapter-config.yaml

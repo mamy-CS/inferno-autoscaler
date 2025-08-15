@@ -1,0 +1,35 @@
+prometheus:
+  url: https://kube-prometheus-stack-prometheus.inferno-autoscaler-monitoring.svc.cluster.local
+  port: 9090
+  
+rules:
+  external:
+  - seriesQuery: 'inferno_desired_replicas{variant_name!="",exported_namespace!=""}'
+    resources:
+      overrides:
+        exported_namespace: {resource: "namespace"}
+        variant_name: {resource: "deployment"}  
+    name:
+      matches: "^inferno_desired_replicas"
+      as: "inferno_desired_replicas"
+    metricsQuery: 'inferno_desired_replicas{<<.LabelMatchers>>}'
+
+replicas: 1
+
+logLevel: 4
+
+tls:
+  enable: false
+
+extraVolumes:
+  - name: prometheus-ca
+    configMap:
+      name: prometheus-ca
+
+extraVolumeMounts:
+  - name: prometheus-ca
+    mountPath: /etc/prometheus-ca
+    readOnly: true
+
+extraArguments:
+  - --prometheus-ca-file=/etc/prometheus-ca/ca.crt 

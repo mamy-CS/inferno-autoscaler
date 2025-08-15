@@ -43,7 +43,7 @@ All custom metrics are prefixed with `inferno_` and include labels for `variant_
 ## Configuration
 
 ### Metrics Endpoint
-The metrics are exposed at the `/metrics` endpoint on port 8080 (HTTP).
+The metrics are exposed at the `/metrics` endpoint on port 8443 (HTTPS).
 
 ### ServiceMonitor Configuration
 ```yaml

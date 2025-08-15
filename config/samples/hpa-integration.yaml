@@ -1,0 +1,93 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: vllme-deployment-hpa
+  namespace: llm-d-sim
+  labels:
+    app.kubernetes.io/managed-by: inferno-autoscaler
+    app.kubernetes.io/component: hpa
+    inferno.ai/variant: vllme-deployment
+  annotations:
+    inferno.ai/description: "HPA managed by Inferno autoscaler optimization signals"
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: vllme-deployment
+  minReplicas: 1
+  maxReplicas: 10
+  metrics:
+  # Primary metric: Use Inferno's optimization target
+  - type: External
+    external:
+      metric:
+        name: inferno_desired_replicas
+        selector:
+          matchLabels:
+            variant_name: vllme-deployment
+      target:
+        type: AverageValue
+        averageValue: "1"
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30    # Quick response to Inferno signals
+      policies:
+      - type: Pods
+        value: 2                         # Scale up by 2 pods max
+        periodSeconds: 30
+      - type: Percent
+        value: 50                        # Or 50% of current replicas
+        periodSeconds: 30
+      selectPolicy: Max                  # Use the higher of the two policies
+    scaleDown:
+      stabilizationWindowSeconds: 180    # Slower scale-down for stability
+      policies:
+      - type: Pods
+        value: 1                         # Scale down by 1 pod max
+        periodSeconds: 60
+      - type: Percent
+        value: 10                        # Or 10% of current replicas
+        periodSeconds: 60
+      selectPolicy: Min                  # Use the lower of the two policies
+---
+# Example for a second deployment
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: llama-deployment-hpa
+  namespace: llm-d-sim
+  labels:
+    app.kubernetes.io/managed-by: inferno-autoscaler
+    app.kubernetes.io/component: hpa
+    inferno.ai/variant: llama-deployment
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: llama-deployment
+  minReplicas: 1
+  maxReplicas: 8
+  metrics:
+  - type: External
+    external:
+      metric:
+        name: inferno_desired_replicas
+        selector:
+          matchLabels:
+            variant_name: llama-deployment
+      target:
+        type: AverageValue
+        averageValue: "1"
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 45
+      policies:
+      - type: Pods
+        value: 1
+        periodSeconds: 45
+    scaleDown:
+      stabilizationWindowSeconds: 300    # More conservative for larger models
+      policies:
+      - type: Pods
+        value: 1
+        periodSeconds: 90 
