@@ -19,7 +19,7 @@ replicas: 1
 logLevel: 4
 
 tls:
-  enable: false
+  enable: false # Inbound TLS (Client → Adapter)
 
 extraVolumes:
   - name: prometheus-ca

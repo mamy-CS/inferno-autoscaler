@@ -33,7 +33,7 @@ spec:
       stabilizationWindowSeconds: 30    # Quick response to Inferno signals
       policies:
       - type: Pods
-        value: 2                         # Scale up by 2 pods max
+        value: 100                       # Setting to large value and let inferno's intelligence handle the decision
         periodSeconds: 30
       - type: Percent
         value: 50                        # Or 50% of current replicas
@@ -43,7 +43,7 @@ spec:
       stabilizationWindowSeconds: 180    # Slower scale-down for stability
       policies:
       - type: Pods
-        value: 1                         # Scale down by 1 pod max
+        value: 100                       # Setting to large value and let inferno's intelligence handle the decision
         periodSeconds: 60
       - type: Percent
         value: 10                        # Or 10% of current replicas
@@ -83,11 +83,11 @@ spec:
       stabilizationWindowSeconds: 45
       policies:
       - type: Pods
-        value: 1
+        value: 100
         periodSeconds: 45
     scaleDown:
       stabilizationWindowSeconds: 300    # More conservative for larger models
       policies:
       - type: Pods
-        value: 1
+        value: 100
         periodSeconds: 90 

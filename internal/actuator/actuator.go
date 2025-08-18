@@ -76,10 +76,7 @@ func (a *Actuator) EmitMetrics(ctx context.Context, VariantAutoscaling *llmdOptv
 		} else {
 			logger.Log.Debug("EmitReplicaMetrics completed successfully", "variant", VariantAutoscaling.Name)
 		}
-	} else {
-		logger.Log.Debug("Skipping EmitReplicaMetrics - NumReplicas is 0", "variant", VariantAutoscaling.Name)
 	}
-
 	logger.Log.Info("Emitted optimization signals for external autoscaler consumption",
 		"variant", VariantAutoscaling.Name, "namespace", VariantAutoscaling.Namespace)
 	return nil

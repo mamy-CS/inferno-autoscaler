@@ -16,6 +16,8 @@ spec:
     interval: 10s
     scheme: https
     tlsConfig:
+      # Skip TLS verification for self-signed Prometheus certificates in development
+      # Use proper CA-signed certificates in production and set to false
       insecureSkipVerify: true
     bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
   selector:
