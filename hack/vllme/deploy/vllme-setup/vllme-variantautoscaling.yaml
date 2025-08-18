@@ -10,7 +10,7 @@ metadata:
     inference.optimization/acceleratorName: A100
 # This is essentially static input to the optimizer
 spec:
-    # OpenAI API compatible name of the model
+  # OpenAI API compatible name of the model
   modelID: default/default
   # Reference to service class configuration deployed with Inferno
   sloClassRef:
