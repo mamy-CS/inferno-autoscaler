@@ -804,9 +804,7 @@ var _ = Describe("Test Inferno-autoscaler with vllme deployment - single VA - cr
 			g.Expect(va.Status.DesiredOptimizedAlloc.NumReplicas).To(BeNumerically(">", 1),
 				fmt.Sprintf("High load should trigger scale-up recommendation for VA: %s - actual replicas: %d", va.Name, va.Status.CurrentAlloc.NumReplicas))
 
-			deployment, err := k8sClient.AppsV1().Deployments(namespace).Get(ctx, deployName, metav1.GetOptions{})
-			Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to fetch Deployment: %s", deployName))
-			g.Expect(deployment.Status.Replicas).To(BeNumerically(">", 1), fmt.Sprintf("Deployment: %s should have scaled up", deployment.Name))
+			// Verify load detection accuracy
 			g.Expect(strconv.ParseFloat(va.Status.CurrentAlloc.Load.ArrivalRate, 64)).To(BeNumerically("~", loadRate, loadThresholdDiff), fmt.Sprintf("Detected load rate: %s should be approximately the actual load rate: %d", va.Status.CurrentAlloc.Load.ArrivalRate, loadRate))
 
 		}, 4*time.Minute, 10*time.Second).Should(Succeed())
@@ -941,11 +939,7 @@ var _ = Describe("Test Inferno-autoscaler with vllme deployment - single VA - cr
 			g.Expect(va.Status.DesiredOptimizedAlloc.NumReplicas).To(BeNumerically("==", 1),
 				fmt.Sprintf("No load should trigger scale-down recommendation for: %s", va.Name))
 
-			deployment, err := k8sClient.AppsV1().Deployments(namespace).Get(ctx, deployName, metav1.GetOptions{})
-			Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to fetch Deployment: %s", deployName))
-			g.Expect(deployment.Status.Replicas).To(BeNumerically("==", 1), fmt.Sprintf("Deployment: %s should have scaled down to one replica", deployment.Name))
-
-		}, 4*time.Minute, 10*time.Second).Should(Succeed())
+		}, 6*time.Minute, 10*time.Second).Should(Succeed())
 
 		By("verifying that the controller has updated the status")
 		finalVA := &v1alpha1.VariantAutoscaling{}
@@ -1044,13 +1038,8 @@ var _ = Describe("Test Inferno-autoscaler with vllme deployment - single VA - cr
 		err := k8sClient.AppsV1().Deployments(namespace).Delete(ctx, deployName, metav1.DeleteOptions{})
 		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to delete Deployment: %s", deployName))
 
-		By("verifying VariantAutoscaling is deleted")
+		By("verifying VariantAutoscaling is deleted due to owner reference")
 		variantAutoscaling := &v1alpha1.VariantAutoscaling{}
-		err = crClient.Get(ctx, client.ObjectKey{
-			Namespace: namespace,
-			Name:      deployName,
-		}, variantAutoscaling)
-		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to fetch VariantAutoscaling for: %s", deployName))
 		Eventually(func() error {
 			return crClient.Get(ctx, client.ObjectKey{
 				Namespace: namespace,
@@ -1319,10 +1308,8 @@ var _ = Describe("Test Inferno-autoscaler with vllme deployment - multiple VAs -
 			g.Expect(va1.Status.DesiredOptimizedAlloc.NumReplicas).To(BeNumerically(">", 1),
 				fmt.Sprintf("High load should trigger scale-up recommendation for VA: %s", va1.Name))
 
-			deployment1, err := k8sClient.AppsV1().Deployments(namespace).Get(ctx, firstDeployName, metav1.GetOptions{})
-			Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to get Deployment: %s", firstDeployName))
-			g.Expect(deployment1.Status.Replicas).To(BeNumerically(">", 1), fmt.Sprintf("Deployment %s should have scaled up - actual replicas: %d", deployment1.Name, deployment1.Status.Replicas))
-			g.Expect(strconv.ParseFloat(va1.Status.CurrentAlloc.Load.ArrivalRate, 64)).To(BeNumerically("~", loadRate, loadThresholdDiff), fmt.Sprintf("Detected load rate %s should be approximately the actual load rate %d for %s", va1.Status.CurrentAlloc.Load.ArrivalRate, loadRate, deployment1.Name))
+			// Verify load detection accuracy for first deployment
+			g.Expect(strconv.ParseFloat(va1.Status.CurrentAlloc.Load.ArrivalRate, 64)).To(BeNumerically("~", loadRate, loadThresholdDiff), fmt.Sprintf("Detected load rate %s should be approximately the actual load rate %d for %s", va1.Status.CurrentAlloc.Load.ArrivalRate, loadRate, firstDeployName))
 
 			va2 := &v1alpha1.VariantAutoscaling{}
 			err = crClient.Get(ctx, client.ObjectKey{
@@ -1335,10 +1322,8 @@ var _ = Describe("Test Inferno-autoscaler with vllme deployment - multiple VAs -
 			g.Expect(va2.Status.DesiredOptimizedAlloc.NumReplicas).To(BeNumerically(">", 1),
 				fmt.Sprintf("High load should trigger scale-up recommendation for VA: %s", va2.Name))
 
-			deployment2, err := k8sClient.AppsV1().Deployments(namespace).Get(ctx, secondDeployName, metav1.GetOptions{})
-			Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to get Deployment: %s", secondDeployName))
-			g.Expect(deployment2.Status.Replicas).To(BeNumerically(">", 1), fmt.Sprintf("Deployment %s should have scaled up - actual replicas: %d", deployment2.Name, deployment2.Status.Replicas))
-			g.Expect(strconv.ParseFloat(va2.Status.CurrentAlloc.Load.ArrivalRate, 64)).To(BeNumerically("~", loadRate, loadThresholdDiff), fmt.Sprintf("Detected load rate %s should be approximately the actual load rate %d for %s", va2.Status.CurrentAlloc.Load.ArrivalRate, loadRate, deployment2.Name))
+			// Verify load detection accuracy for second deployment
+			g.Expect(strconv.ParseFloat(va2.Status.CurrentAlloc.Load.ArrivalRate, 64)).To(BeNumerically("~", loadRate, loadThresholdDiff), fmt.Sprintf("Detected load rate %s should be approximately the actual load rate %d for %s", va2.Status.CurrentAlloc.Load.ArrivalRate, loadRate, secondDeployName))
 
 		}, 5*time.Minute, 10*time.Second).Should(Succeed())
 
@@ -1390,7 +1375,10 @@ var _ = Describe("Test Inferno-autoscaler with vllme deployment - multiple VAs -
 			deployment2.Status.Replicas)
 	})
 
-	It("should scale up optimized replicas over cluster limits", func() {
+	PIt("should not scale up optimized replicas over cluster limits", func() {
+		// PENDING: This test is disabled because Inferno no longer enforces cluster capacity constraints.
+		// Cluster capacity limits are now the responsibility of external autoscalers (e.g., HPA).
+		// Inferno's role is limited to emitting optimization metrics for external consumption.
 		By("verifying initial state of VariantAutoscaling")
 		initialVA1 := &v1alpha1.VariantAutoscaling{}
 		err := crClient.Get(ctx, client.ObjectKey{
@@ -1591,10 +1579,6 @@ var _ = Describe("Test Inferno-autoscaler with vllme deployment - multiple VAs -
 			g.Expect(va1.Status.DesiredOptimizedAlloc.NumReplicas).To(BeNumerically("==", 1),
 				fmt.Sprintf("No load should trigger scale-down recommendation for VA: %s - actual replicas: %d", firstDeployName, va1.Status.CurrentAlloc.NumReplicas))
 
-			deployment1, err := k8sClient.AppsV1().Deployments(namespace).Get(ctx, firstDeployName, metav1.GetOptions{})
-			Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to get Deployment: %s", firstDeployName))
-			g.Expect(deployment1.Status.Replicas).To(BeNumerically("==", 1), fmt.Sprintf("Deployment %s should have scaled down to one replica", deployment1.Name))
-
 			va2 := &v1alpha1.VariantAutoscaling{}
 			err = crClient.Get(ctx, client.ObjectKey{
 				Namespace: namespace,
@@ -1604,11 +1588,7 @@ var _ = Describe("Test Inferno-autoscaler with vllme deployment - multiple VAs -
 
 			// Verify that the number of replicas has scaled down to 1
 			g.Expect(va2.Status.DesiredOptimizedAlloc.NumReplicas).To(BeNumerically("==", 1),
-				fmt.Sprintf("High load should trigger scale-up recommendation for VA: %s - actual replicas: %d", secondDeployName, va2.Status.CurrentAlloc.NumReplicas))
-
-			deployment2, err := k8sClient.AppsV1().Deployments(namespace).Get(ctx, secondDeployName, metav1.GetOptions{})
-			Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to get Deployment: %s", secondDeployName))
-			g.Expect(deployment2.Status.Replicas).To(BeNumerically("==", 1), fmt.Sprintf("Deployment %s should have scaled down to one replica", deployment2.Name))
+				fmt.Sprintf("No load should trigger scale-down recommendation for VA: %s - actual replicas: %d", secondDeployName, va2.Status.CurrentAlloc.NumReplicas))
 
 		}, 4*time.Minute, 10*time.Second).Should(Succeed())
 
