@@ -155,6 +155,7 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: vllme-deployment
+  # minReplicas: 0  # scale to zero - alpha feature
   maxReplicas: 10
   metrics:
   - type: External
