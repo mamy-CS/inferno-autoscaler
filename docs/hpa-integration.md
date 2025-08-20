@@ -33,6 +33,8 @@ kubectl create configmap prometheus-ca --from-file=ca.crt=/tmp/prometheus-ca.crt
 
 ### 2. Deploy Prometheus Adapter
 
+Note: The yaml snippet is found at the bottom of this page. Take a look at Prometheus Adapter Values yaml. Create a config file in /config/samples dir. 
+
 ```bash
 # Add Prometheus community helm repo
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
@@ -59,6 +61,8 @@ kubectl apply -f hack/vllme/deploy/vllme-setup/vllme-variantautoscaling.yaml
 ```
 
 ### 5. Deploy HPA Resources
+
+Note: The yaml snippet is found at the bottom of this page. Take a look at HPA Configuration Example yaml. Create a config file in /config/samples dir. 
 
 ```bash
 # Deploy HPA for your deployments
@@ -119,7 +123,7 @@ rules:
       as: "inferno_desired_replicas"
     metricsQuery: 'inferno_desired_replicas{<<.LabelMatchers>>}'
 
-replicas: 1
+replicas: 2
 logLevel: 4
 
 tls:
@@ -151,7 +155,6 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: vllme-deployment
-  minReplicas: 1
   maxReplicas: 10
   metrics:
   - type: External
@@ -204,3 +207,5 @@ kubectl get --raw "/apis/external.metrics.k8s.io/v1beta1/namespaces/llm-d-sim/in
 - `config/samples/prometheus-adapter-values.yaml` - Prometheus Adapter configuration with TLS
 - `config/samples/hpa-integration.yaml` - HPA resource definitions  
 - `hack/vllme/deploy/vllme-setup/vllme-variantautoscaling.yaml` - VariantAutoscaling example
+
+Note: Inferno Autoscaler can leverage Kubernetes HPA's alpha feature for scale to zero functionality, enabling complete resource optimization by scaling deployments down to zero replicas when no load is detected.

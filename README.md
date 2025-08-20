@@ -17,6 +17,7 @@ The inferno-autoscaler assigns GPU types to inference model servers and decides 
   - [Prometheus vllme setup](#prometheus-vllme-setup)
     - [Note: The above script already deploys emulated vllm server:](#note-the-above-script-already-deploys-emulated-vllm-server)
   - [Inferno custom metrics](#inferno-custom-metrics)
+- [HPA Integration](#hpa-integration)
 - [Contributing](#contributing)
 
 
@@ -474,6 +475,28 @@ kubectl port-forward svc/kube-prometheus-stack-grafana 3000:80 -n inferno-autosc
 - [Custom Metrics Documentation](docs/custom-metrics.md) - Understanding Inferno's metrics system
 - [CRD Documentation](docs/crd-docs.md) - VariantAutoscaling custom resource details
 - [Modeling & Optimization](docs/modeling-optimization.md) - Deep dive into optimization algorithms
+
+## HPA Integration
+
+Inferno Autoscaler integrates seamlessly with Kubernetes Horizontal Pod Autoscaler (HPA) to provide GPU-aware autoscaling using standard Kubernetes patterns. This integration allows Inferno to act as an intelligent optimization engine while HPA handles the actual scaling execution.
+
+### Architecture Overview
+
+```
+Load Traffic → Inferno (GPU Optimization) → External Metrics → HPA → Deployment Scaling
+```
+
+**Inferno's Role**: GPU-aware brain that emits optimization recommendations as external metrics
+**HPA's Role**: Standard Kubernetes autoscaler that executes scaling decisions based on Inferno's metrics
+
+### Key Benefits
+
+- **GPU-Aware Optimization**: Intelligent resource allocation based on GPU capabilities and constraints
+- **Standard Kubernetes Integration**: Uses native HPA mechanisms and policies
+- **High Availability**: Supports multiple Prometheus adapter replicas for reliability
+- **Multi-Variant Support**: Scales multiple workloads independently and consistently
+
+For detailed integration examples and configurations, see the [HPA Integration Documentation](docs/hpa-integration.md).
 
 ## Contributing
 
