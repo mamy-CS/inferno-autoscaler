@@ -1001,6 +1001,45 @@ func CreateLlmdSimServiceMonitor(name, namespace, targetNamespace, appLabel stri
 	return serviceMonitor
 }
 
+// CreateControllerServiceMonitor creates the controller's own ServiceMonitor for testing
+func CreateControllerServiceMonitor(namespace string) *unstructured.Unstructured {
+	serviceMonitor := &unstructured.Unstructured{}
+	serviceMonitor.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "monitoring.coreos.com",
+		Version: "v1",
+		Kind:    "ServiceMonitor",
+	})
+	serviceMonitor.SetName("workload-variant-autoscaler-controller-manager-metrics-monitor")
+	serviceMonitor.SetNamespace(namespace)
+	serviceMonitor.SetLabels(map[string]string{
+		"app.kubernetes.io/name": "workload-variant-autoscaler",
+		"control-plane":          "controller-manager",
+	})
+
+	spec := map[string]any{
+		"selector": map[string]any{
+			"matchLabels": map[string]any{
+				"app.kubernetes.io/name": "workload-variant-autoscaler",
+				"control-plane":          "controller-manager",
+			},
+		},
+		"endpoints": []any{
+			map[string]any{
+				"port":     "https",
+				"path":     "/metrics",
+				"interval": "10s",
+				"scheme":   "https",
+			},
+		},
+		"namespaceSelector": map[string]any{
+			"matchNames": []string{namespace},
+		},
+	}
+	serviceMonitor.Object["spec"] = spec
+
+	return serviceMonitor
+}
+
 // PrometheusQueryResult represents the response from Prometheus API
 type PrometheusQueryResult struct {
 	Status string `json:"status"`

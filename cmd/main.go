@@ -223,8 +223,9 @@ func main() {
 	}
 
 	if err = (&controller.VariantAutoscalingReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("workload-variant-autoscaler-controller-manager"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error("unable to create controller", zap.String("controller", "variantautoscaling"), zap.Error(err))
 		os.Exit(1)

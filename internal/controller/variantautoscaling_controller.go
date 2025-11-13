@@ -26,7 +26,11 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
@@ -58,7 +62,8 @@ import (
 // VariantAutoscalingReconciler reconciles a variantAutoscaling object
 type VariantAutoscalingReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme   *runtime.Scheme
+	Recorder record.EventRecorder
 
 	PromAPI promv1.API
 }
@@ -70,10 +75,23 @@ type VariantAutoscalingReconciler struct {
 // +kubebuilder:rbac:groups="",resources=nodes/status,verbs=get;list;update;patch;watch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;update;list;watch
+// +kubebuilder:rbac:groups=monitoring.coreos.com,resources=servicemonitors,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
 const (
 	configMapName      = "workload-variant-autoscaler-variantautoscaling-config"
 	configMapNamespace = "workload-variant-autoscaler-system"
+	// ServiceMonitor constants for watching controller's own metrics ServiceMonitor
+	serviceMonitorName = "workload-variant-autoscaler-controller-manager-metrics-monitor"
+)
+
+var (
+	// ServiceMonitor GVK for watching controller's own metrics ServiceMonitor
+	serviceMonitorGVK = schema.GroupVersionKind{
+		Group:   "monitoring.coreos.com",
+		Version: "v1",
+		Kind:    "ServiceMonitor",
+	}
 )
 
 func initMetricsEmitter() {
@@ -453,6 +471,13 @@ func (r *VariantAutoscalingReconciler) SetupWithManager(mgr ctrl.Manager) error 
 
 	//logger.Log.Info("Prometheus client initialized (validation skipped)")
 
+	// Verify ServiceMonitor exists on startup
+	r.verifyServiceMonitorExists(context.Background())
+
+	// TODO: Auto-recreate ServiceMonitor if deleted
+	// TODO: Add controller metrics validation to complement ServiceMonitor watch
+	// TODO: Add controller status resource for ServiceMonitor health
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&llmdVariantAutoscalingV1alpha1.VariantAutoscaling{}).
 		// Watch the specific ConfigMap to trigger global reconcile
@@ -468,6 +493,42 @@ func (r *VariantAutoscalingReconciler) SetupWithManager(mgr ctrl.Manager) error 
 			builder.WithPredicates(predicate.NewPredicateFuncs(func(obj client.Object) bool {
 				return obj.GetName() == configMapName && obj.GetNamespace() == configMapNamespace
 			})),
+		).
+		// Watch ServiceMonitor for controller's own metrics
+		// This enables detection when ServiceMonitor is deleted, which would prevent
+		// Prometheus from scraping controller metrics (including optimized replicas).
+		Watches(
+			&unstructured.Unstructured{},
+			handler.EnqueueRequestsFromMapFunc(r.handleServiceMonitorEvent),
+			builder.WithPredicates(predicate.Funcs{
+				CreateFunc: func(e event.CreateEvent) bool {
+					obj := e.Object
+					gvk := obj.GetObjectKind().GroupVersionKind()
+					return gvk.Group == serviceMonitorGVK.Group &&
+						gvk.Kind == serviceMonitorGVK.Kind &&
+						obj.GetName() == serviceMonitorName &&
+						obj.GetNamespace() == configMapNamespace
+				},
+				UpdateFunc: func(e event.UpdateEvent) bool {
+					obj := e.ObjectNew
+					gvk := obj.GetObjectKind().GroupVersionKind()
+					return gvk.Group == serviceMonitorGVK.Group &&
+						gvk.Kind == serviceMonitorGVK.Kind &&
+						obj.GetName() == serviceMonitorName &&
+						obj.GetNamespace() == configMapNamespace
+				},
+				DeleteFunc: func(e event.DeleteEvent) bool {
+					obj := e.Object
+					gvk := obj.GetObjectKind().GroupVersionKind()
+					return gvk.Group == serviceMonitorGVK.Group &&
+						gvk.Kind == serviceMonitorGVK.Kind &&
+						obj.GetName() == serviceMonitorName &&
+						obj.GetNamespace() == configMapNamespace
+				},
+				GenericFunc: func(e event.GenericEvent) bool {
+					return false
+				},
+			}),
 		).
 		Named("variantAutoscaling").
 		WithEventFilter(predicate.Funcs{
@@ -591,4 +652,107 @@ func (r *VariantAutoscalingReconciler) readOptimizationConfig(ctx context.Contex
 
 	interval = cm.Data["GLOBAL_OPT_INTERVAL"]
 	return interval, nil
+}
+
+// handleServiceMonitorEvent handles events for the controller's own ServiceMonitor.
+// When ServiceMonitor is deleted, it logs a critical warning and emits a Kubernetes event.
+// This ensures that administrators are aware when the ServiceMonitor that enables
+// Prometheus scraping of controller metrics (including optimized replicas) is missing.
+//
+// TODO: Auto-recreate ServiceMonitor if deleted
+// TODO: Add validation to check if ServiceMonitor spec matches expected configuration
+func (r *VariantAutoscalingReconciler) handleServiceMonitorEvent(ctx context.Context, obj client.Object) []reconcile.Request {
+	serviceMonitor, ok := obj.(*unstructured.Unstructured)
+	if !ok {
+		// Fallback for other types
+		name := obj.GetName()
+		namespace := obj.GetNamespace()
+		logger.Log.Info("ServiceMonitor event detected (non-unstructured)",
+			"servicemonitor", name,
+			"namespace", namespace)
+		return nil
+	}
+
+	name := serviceMonitor.GetName()
+	namespace := serviceMonitor.GetNamespace()
+
+	// Set GVK if not already set (needed for proper event emission)
+	if serviceMonitor.GetObjectKind().GroupVersionKind().Empty() {
+		serviceMonitor.SetGroupVersionKind(serviceMonitorGVK)
+	}
+
+	// Check if ServiceMonitor is being deleted
+	if !serviceMonitor.GetDeletionTimestamp().IsZero() {
+		// ServiceMonitor is being deleted
+		logger.Log.Error(nil, "CRITICAL: ServiceMonitor being deleted - Prometheus will not scrape controller metrics",
+			"servicemonitor", name,
+			"namespace", namespace,
+			"impact", "Actuator will not be able to access optimized replicas metrics",
+			"action", "ServiceMonitor must be recreated for metrics scraping to resume")
+
+		// Emit Kubernetes event for observability
+		if r.Recorder != nil {
+			r.Recorder.Eventf(
+				serviceMonitor,
+				corev1.EventTypeWarning,
+				"ServiceMonitorDeleted",
+				"ServiceMonitor %s/%s is being deleted. Prometheus will not scrape controller metrics. Actuator will not be able to access optimized replicas metrics. Please recreate the ServiceMonitor.",
+				namespace,
+				name,
+			)
+		}
+
+		// TODO: Auto-recreate ServiceMonitor here after deletion completes
+		// Note: We can't recreate while deletion is in progress, need to watch for actual deletion
+
+		// Don't trigger reconciliation - ServiceMonitor deletion doesn't affect optimization logic
+		// Metrics validation will handle detecting missing metrics
+		return nil
+	}
+
+	// ServiceMonitor was created or updated
+	logger.Log.Info("ServiceMonitor event detected",
+		"servicemonitor", name,
+		"namespace", namespace,
+		"action", "ServiceMonitor exists - metrics scraping should be active")
+
+	// TODO: Validate ServiceMonitor spec matches expected configuration
+
+	// Don't trigger reconciliation - ServiceMonitor changes don't affect optimization logic
+	return nil
+}
+
+// verifyServiceMonitorExists checks if the ServiceMonitor exists on controller startup.
+// This provides early detection if the ServiceMonitor is missing.
+//
+// TODO: Auto-recreate ServiceMonitor if missing
+func (r *VariantAutoscalingReconciler) verifyServiceMonitorExists(ctx context.Context) {
+	serviceMonitor := &unstructured.Unstructured{}
+	serviceMonitor.SetGroupVersionKind(serviceMonitorGVK)
+
+	err := r.Client.Get(ctx, client.ObjectKey{
+		Name:      serviceMonitorName,
+		Namespace: configMapNamespace,
+	}, serviceMonitor)
+
+	if err != nil {
+		if errors.IsNotFound(err) {
+			logger.Log.Warn("ServiceMonitor not found on startup - Prometheus may not scrape controller metrics",
+				"servicemonitor", serviceMonitorName,
+				"namespace", configMapNamespace,
+				"impact", "Actuator will not be able to access optimized replicas metrics",
+				"action", "ServiceMonitor should be created by Helm chart. If missing, please recreate it.")
+
+			// TODO: Auto-recreate ServiceMonitor if missing
+		} else {
+			logger.Log.Error(err, "Failed to check ServiceMonitor existence on startup",
+				"servicemonitor", serviceMonitorName,
+				"namespace", configMapNamespace)
+		}
+		return
+	}
+
+	logger.Log.Info("ServiceMonitor verified on startup - metrics scraping should be active",
+		"servicemonitor", serviceMonitorName,
+		"namespace", configMapNamespace)
 }
