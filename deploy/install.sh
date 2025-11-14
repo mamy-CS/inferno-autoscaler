@@ -112,6 +112,35 @@ log_error() {
     exit 1
 }
 
+# Wait for a CRD to be available and established in the cluster
+wait_for_crd() {
+    local crd_name=$1
+    local timeout=${2:-60}
+    local elapsed=0
+    local interval=2
+    
+    log_info "Waiting for CRD $crd_name to be available and established (timeout: ${timeout}s)..."
+    
+    while [ $elapsed -lt $timeout ]; do
+        # Check if CRD exists and is established
+        if kubectl get crd "$crd_name" &>/dev/null; then
+            # Check if CRD is established (has Established condition)
+            if kubectl wait --for=condition=Established crd/"$crd_name" --timeout=5s &>/dev/null; then
+                log_success "CRD $crd_name is available and established"
+                return 0
+            fi
+        fi
+        sleep $interval
+        elapsed=$((elapsed + interval))
+        if [ $((elapsed % 10)) -eq 0 ]; then
+            log_info "Still waiting for CRD $crd_name... (${elapsed}s/${timeout}s)"
+        fi
+    done
+    
+    log_warning "CRD $crd_name not available/established after ${timeout}s"
+    return 1
+}
+
 print_help() {
   cat <<EOF
 Usage: $(basename "$0") [OPTIONS]
@@ -453,6 +482,12 @@ deploy_llm_d_infrastructure() {
     log_info "Installing llm-d dependencies"
     bash $CLIENT_PREREQ_DIR/install-deps.sh
     bash $GATEWAY_PREREQ_DIR/install-gateway-provider-dependencies.sh
+    
+    # Wait for required CRDs to be available after installation
+    # These CRDs are installed by install-gateway-provider-dependencies.sh
+    log_info "Waiting for required CRDs to be available..."
+    wait_for_crd "gateways.gateway.networking.k8s.io" 120 || log_warning "Gateway CRD not found, continuing anyway"
+    wait_for_crd "inferencepools.inference.networking.x-k8s.io" 120 || log_warning "InferencePool CRD not found, continuing anyway"
 
     # Install Gateway provider (if kgateway, use v2.0.3)
     if [ "$GATEWAY_PROVIDER" == "kgateway" ]; then
@@ -496,6 +531,12 @@ deploy_llm_d_infrastructure() {
       log_info "Skipping llm-d-inference-simulator deployment (DEPLOY_LLM_D_INFERENCE_SIM=false)"
     fi
 
+    # Ensure required CRDs are available before deploying charts
+    # Some charts (like inferencepool) require CRDs to be installed first
+    log_info "Ensuring required CRDs are available before deploying llm-d components..."
+    wait_for_crd "gateways.gateway.networking.k8s.io" 60 || log_warning "Gateway CRD not found, may cause deployment issues"
+    wait_for_crd "inferencepools.inference.networking.x-k8s.io" 60 || log_warning "InferencePool CRD not found, may cause deployment issues"
+    
     # Deploy llm-d core components
     log_info "Deploying llm-d core components"
     helmfile apply -e $GATEWAY_PROVIDER -n ${LLMD_NS}

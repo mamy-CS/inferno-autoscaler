@@ -498,7 +498,11 @@ func (r *VariantAutoscalingReconciler) SetupWithManager(mgr ctrl.Manager) error 
 		// This enables detection when ServiceMonitor is deleted, which would prevent
 		// Prometheus from scraping controller metrics (including optimized replicas).
 		Watches(
-			&unstructured.Unstructured{},
+			func() client.Object {
+				serviceMonitorSource := &unstructured.Unstructured{}
+				serviceMonitorSource.SetGroupVersionKind(serviceMonitorGVK)
+				return serviceMonitorSource
+			}(),
 			handler.EnqueueRequestsFromMapFunc(r.handleServiceMonitorEvent),
 			builder.WithPredicates(predicate.Funcs{
 				CreateFunc: func(e event.CreateEvent) bool {
@@ -519,11 +523,21 @@ func (r *VariantAutoscalingReconciler) SetupWithManager(mgr ctrl.Manager) error 
 				},
 				DeleteFunc: func(e event.DeleteEvent) bool {
 					obj := e.Object
+					// For Delete events, name and namespace are more reliable than GVK
+					// (GVK may be empty for unstructured objects in Delete events)
+					if obj.GetName() != serviceMonitorName || obj.GetNamespace() != configMapNamespace {
+						return false
+					}
+
+					// If GVK is set, validate it matches
 					gvk := obj.GetObjectKind().GroupVersionKind()
-					return gvk.Group == serviceMonitorGVK.Group &&
-						gvk.Kind == serviceMonitorGVK.Kind &&
-						obj.GetName() == serviceMonitorName &&
-						obj.GetNamespace() == configMapNamespace
+					if !gvk.Empty() {
+						return gvk.Group == serviceMonitorGVK.Group &&
+							gvk.Kind == serviceMonitorGVK.Kind
+					}
+
+					// If GVK is empty, trust name/namespace match (common for Delete events)
+					return true
 				},
 				GenericFunc: func(e event.GenericEvent) bool {
 					return false
@@ -662,6 +676,12 @@ func (r *VariantAutoscalingReconciler) readOptimizationConfig(ctx context.Contex
 // TODO: Auto-recreate ServiceMonitor if deleted
 // TODO: Add validation to check if ServiceMonitor spec matches expected configuration
 func (r *VariantAutoscalingReconciler) handleServiceMonitorEvent(ctx context.Context, obj client.Object) []reconcile.Request {
+	// Log all events to debug watch behavior
+	logger.Log.Info("ServiceMonitor watch event received",
+		"object", obj.GetName(),
+		"namespace", obj.GetNamespace(),
+		"gvk", obj.GetObjectKind().GroupVersionKind().String())
+
 	serviceMonitor, ok := obj.(*unstructured.Unstructured)
 	if !ok {
 		// Fallback for other types
@@ -681,9 +701,40 @@ func (r *VariantAutoscalingReconciler) handleServiceMonitorEvent(ctx context.Con
 		serviceMonitor.SetGroupVersionKind(serviceMonitorGVK)
 	}
 
-	// Check if ServiceMonitor is being deleted
-	if !serviceMonitor.GetDeletionTimestamp().IsZero() {
-		// ServiceMonitor is being deleted
+	// Check if ServiceMonitor is being deleted or has been deleted
+	// For Delete events, the deletion timestamp might not be set, so we also check
+	// if the object still exists in the cluster
+	isDeleting := !serviceMonitor.GetDeletionTimestamp().IsZero()
+
+	// For Delete events, verify the object no longer exists in the cluster
+	// This handles the case where Delete events don't have deletion timestamps set
+	if !isDeleting {
+		// Try to get the object to see if it still exists
+		// If it doesn't exist, it was deleted
+		existing := &unstructured.Unstructured{}
+		existing.SetGroupVersionKind(serviceMonitorGVK)
+		err := r.Client.Get(ctx, client.ObjectKey{
+			Name:      name,
+			Namespace: namespace,
+		}, existing)
+		if err != nil {
+			if errors.IsNotFound(err) {
+				// Object was deleted
+				isDeleting = true
+				logger.Log.Info("ServiceMonitor not found in cluster - treating as deleted",
+					"servicemonitor", name,
+					"namespace", namespace)
+			} else {
+				// Other error - log but don't treat as deletion
+				logger.Log.Error(err, "Error checking ServiceMonitor existence",
+					"servicemonitor", name,
+					"namespace", namespace)
+			}
+		}
+	}
+
+	if isDeleting {
+		// ServiceMonitor is being deleted or has been deleted
 		logger.Log.Error(nil, "CRITICAL: ServiceMonitor being deleted - Prometheus will not scrape controller metrics",
 			"servicemonitor", name,
 			"namespace", namespace,
