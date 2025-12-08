@@ -72,6 +72,9 @@ type VariantAutoscalingReconciler struct {
 
 	PromAPI promv1.API
 
+	// Circuit breaker for Prometheus queries to prevent cascade failures
+	prometheusCircuitBreaker *utils.PrometheusCircuitBreaker
+
 	// Saturation scaling config cache (thread-safe, updated on ConfigMap changes)
 	saturationConfigCache      map[string]interfaces.SaturationScalingConfig
 	saturationConfigCacheMutex sync.RWMutex
@@ -790,8 +793,8 @@ func (r *VariantAutoscalingReconciler) collectMetricsForSaturationMode(
 			continue
 		}
 
-		// Collect metrics and populate CurrentAlloc
-		currentAllocation, err := collector.AddMetricsToOptStatus(ctx, &updateVA, deploy, cost, r.PromAPI)
+		// Collect metrics and populate CurrentAlloc (with circuit breaker protection)
+		currentAllocation, err := collector.AddMetricsToOptStatusWithCircuitBreaker(ctx, &updateVA, deploy, cost, r.PromAPI, r.prometheusCircuitBreaker)
 		if err != nil {
 			logger.Log.Debugf("Unable to fetch metrics for VA: variant=%s, error=%v", updateVA.Name, err)
 			continue
@@ -1146,6 +1149,13 @@ func (r *VariantAutoscalingReconciler) SetupWithManager(mgr ctrl.Manager) error 
 	}
 
 	r.PromAPI = promv1.NewAPI(promClient)
+
+	// Initialize circuit breaker for Prometheus queries
+	// This prevents cascade failures when Prometheus is unavailable
+	cbConfig := utils.DefaultCircuitBreakerConfig()
+	r.prometheusCircuitBreaker = utils.NewPrometheusCircuitBreaker(r.PromAPI, cbConfig)
+	logger.Log.Infof("Prometheus circuit breaker initialized: failureThreshold=%d, timeout=%v",
+		cbConfig.FailureThreshold, cbConfig.Timeout)
 
 	// Validate that the API is working by testing a simple query with retry logic
 	if err := utils.ValidatePrometheusAPI(context.Background(), r.PromAPI); err != nil {

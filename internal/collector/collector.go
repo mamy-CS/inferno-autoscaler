@@ -2,11 +2,14 @@ package collector
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/utils"
 	"math"
 	"strconv"
+	"sync"
 	"time"
+
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/utils"
 
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/constants"
@@ -48,11 +51,35 @@ type MetricKV struct {
 	Value  float64
 }
 
-// queryAndExtractMetric performs a Prometheus query and extracts the float value,
-func queryAndExtractMetric(ctx context.Context, promAPI promv1.API, query string, metricName string) (float64, error) {
-	val, warn, err := utils.QueryPrometheusWithBackoff(ctx, promAPI, query)
-	if err != nil {
-		return 0.0, fmt.Errorf("failed to query Prometheus for %s: %w", metricName, err)
+// queryAndExtractMetricWithCircuitBreaker performs a Prometheus query with optional circuit breaker protection.
+// If circuitBreaker is nil, queries are executed without circuit breaker protection.
+func queryAndExtractMetricWithCircuitBreaker(ctx context.Context, promAPI promv1.API, query string, metricName string, circuitBreaker *utils.PrometheusCircuitBreaker) (float64, error) {
+	var val model.Value
+	var warn promv1.Warnings
+	var err error
+
+	if circuitBreaker != nil {
+		// Use circuit breaker for query
+		result, warnings, queryErr := circuitBreaker.QueryPrometheus(ctx, query)
+		if queryErr != nil {
+			if errors.Is(queryErr, utils.ErrCircuitBreakerOpen) {
+				return 0.0, fmt.Errorf("circuit breaker is open: Prometheus unavailable for %s", metricName)
+			}
+			return 0.0, fmt.Errorf("failed to query Prometheus for %s: %w", metricName, queryErr)
+		}
+		// Safe type assertion with error handling
+		var ok bool
+		val, ok = result.(model.Value)
+		if !ok {
+			return 0.0, fmt.Errorf("unexpected result type from Prometheus query for %s: got %T, expected model.Value", metricName, result)
+		}
+		warn = warnings
+	} else {
+		// Fallback to direct query without circuit breaker
+		val, warn, err = utils.QueryPrometheusWithBackoff(ctx, promAPI, query)
+		if err != nil {
+			return 0.0, fmt.Errorf("failed to query Prometheus for %s: %w", metricName, err)
+		}
 	}
 
 	if warn != nil {
@@ -65,7 +92,12 @@ func queryAndExtractMetric(ctx context.Context, promAPI promv1.API, query string
 		return 0.0, nil
 	}
 
-	vec := val.(model.Vector)
+	// Safe type assertion, already verified it's a Vector type above
+	vec, ok := val.(model.Vector)
+	if !ok {
+		logger.Log.Warnf("Type assertion failed for Vector despite Type() check: metric=%s, type=%T", metricName, val)
+		return 0.0, nil
+	}
 	resultVal := 0.0
 	if len(vec) > 0 {
 		resultVal = float64(vec[0].Value)
@@ -110,7 +142,15 @@ func ValidateMetricsAvailability(ctx context.Context, promAPI promv1.API, modelN
 		}
 	}
 
-	vec := val.(model.Vector)
+	// Safe type assertion, already verified it's a vector type above
+	vec, ok := val.(model.Vector)
+	if !ok {
+		return MetricsValidationResult{
+			Available: false,
+			Reason:    llmdVariantAutoscalingV1alpha1.ReasonMetricsMissing,
+			Message:   fmt.Sprintf("Unexpected result type for model '%s': expected Vector, got %T", modelName, val),
+		}
+	}
 	// If no results with namespace label, try without it (for vllme emulator compatibility)
 	if len(vec) == 0 {
 		testQueryFallback := fmt.Sprintf(`%s{model_name="%s"}`, constants.VLLMNumRequestRunning, modelName)
@@ -124,7 +164,14 @@ func ValidateMetricsAvailability(ctx context.Context, promAPI promv1.API, modelN
 		}
 
 		if val.Type() == model.ValVector {
-			vec = val.(model.Vector)
+			vec, ok = val.(model.Vector)
+			if !ok {
+				return MetricsValidationResult{
+					Available: false,
+					Reason:    llmdVariantAutoscalingV1alpha1.ReasonMetricsMissing,
+					Message:   fmt.Sprintf("Unexpected result type for fallback query for model '%s': expected Vector, got %T", modelName, val),
+				}
+			}
 		}
 
 		// If still no results, metrics are truly missing
@@ -161,6 +208,17 @@ func AddMetricsToOptStatus(ctx context.Context,
 	deployment appsv1.Deployment,
 	acceleratorCostVal float64,
 	promAPI promv1.API) (llmdVariantAutoscalingV1alpha1.Allocation, error) {
+	return AddMetricsToOptStatusWithCircuitBreaker(ctx, opt, deployment, acceleratorCostVal, promAPI, nil)
+}
+
+// AddMetricsToOptStatusWithCircuitBreaker collects metrics with optional circuit breaker protection.
+// If circuitBreaker is nil, queries are executed without circuit breaker protection.
+func AddMetricsToOptStatusWithCircuitBreaker(ctx context.Context,
+	opt *llmdVariantAutoscalingV1alpha1.VariantAutoscaling,
+	deployment appsv1.Deployment,
+	acceleratorCostVal float64,
+	promAPI promv1.API,
+	circuitBreaker *utils.PrometheusCircuitBreaker) (llmdVariantAutoscalingV1alpha1.Allocation, error) {
 
 	deployNamespace := deployment.Namespace
 	modelName := opt.Spec.ModelID
@@ -209,35 +267,142 @@ func AddMetricsToOptStatus(ctx context.Context,
 		constants.LabelModelName, modelName,
 		constants.LabelNamespace, deployNamespace)
 
-	// --- 2. Execute Queries ---
+	// --- 2. Execute Queries in Parallel ---
+	// Parallelize all 5 Prometheus queries to reduce latency
 
-	arrivalVal, err := queryAndExtractMetric(ctx, promAPI, arrivalQuery, "ArrivalRate")
-	if err != nil {
-		return llmdVariantAutoscalingV1alpha1.Allocation{}, err
-	}
-	arrivalVal *= 60 // convert from req/sec to req/min
-
-	avgInputTokens, err := queryAndExtractMetric(ctx, promAPI, avgPromptToksQuery, "AvgInputTokens")
-	if err != nil {
-		return llmdVariantAutoscalingV1alpha1.Allocation{}, err
-	}
-
-	avgOutputTokens, err := queryAndExtractMetric(ctx, promAPI, avgDecToksQuery, "AvgOutputTokens")
-	if err != nil {
-		return llmdVariantAutoscalingV1alpha1.Allocation{}, err
+	type queryResults struct {
+		arrivalVal      float64
+		avgInputTokens  float64
+		avgOutputTokens float64
+		ttftAverageTime float64
+		itlAverage      float64
+		arrivalErr      error
+		avgInputErr     error
+		avgOutputErr    error
+		ttftErr         error
+		itlErr          error
 	}
 
-	ttftAverageTime, err := queryAndExtractMetric(ctx, promAPI, ttftQuery, "TTFTAverageTime")
-	if err != nil {
-		return llmdVariantAutoscalingV1alpha1.Allocation{}, err
-	}
-	ttftAverageTime *= 1000 // convert to msec
+	results := &queryResults{}
+	var wg sync.WaitGroup
+	var mu sync.Mutex
 
-	itlAverage, err := queryAndExtractMetric(ctx, promAPI, itlQuery, "ITLAverage")
-	if err != nil {
-		return llmdVariantAutoscalingV1alpha1.Allocation{}, err
+	// Query 1: Arrival rate
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		// Check context cancellation before starting query
+		if ctx.Err() != nil {
+			mu.Lock()
+			results.arrivalErr = fmt.Errorf("context cancelled: %w", ctx.Err())
+			mu.Unlock()
+			return
+		}
+		val, err := queryAndExtractMetricWithCircuitBreaker(ctx, promAPI, arrivalQuery, "ArrivalRate", circuitBreaker)
+		mu.Lock()
+		results.arrivalVal = val * 60 // convert from req/sec to req/min
+		results.arrivalErr = err
+		mu.Unlock()
+	}()
+
+	// Query 2: Average input tokens
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		// Check context cancellation before starting query
+		if ctx.Err() != nil {
+			mu.Lock()
+			results.avgInputErr = fmt.Errorf("context cancelled: %w", ctx.Err())
+			mu.Unlock()
+			return
+		}
+		val, err := queryAndExtractMetricWithCircuitBreaker(ctx, promAPI, avgPromptToksQuery, "AvgInputTokens", circuitBreaker)
+		mu.Lock()
+		results.avgInputTokens = val
+		results.avgInputErr = err
+		mu.Unlock()
+	}()
+
+	// Query 3: Average output tokens
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		// Check context cancellation before starting query
+		if ctx.Err() != nil {
+			mu.Lock()
+			results.avgOutputErr = fmt.Errorf("context cancelled: %w", ctx.Err())
+			mu.Unlock()
+			return
+		}
+		val, err := queryAndExtractMetricWithCircuitBreaker(ctx, promAPI, avgDecToksQuery, "AvgOutputTokens", circuitBreaker)
+		mu.Lock()
+		results.avgOutputTokens = val
+		results.avgOutputErr = err
+		mu.Unlock()
+	}()
+
+	// Query 4: Average TTFT
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		// Check context cancellation before starting query
+		if ctx.Err() != nil {
+			mu.Lock()
+			results.ttftErr = fmt.Errorf("context cancelled: %w", ctx.Err())
+			mu.Unlock()
+			return
+		}
+		val, err := queryAndExtractMetricWithCircuitBreaker(ctx, promAPI, ttftQuery, "TTFTAverageTime", circuitBreaker)
+		mu.Lock()
+		results.ttftAverageTime = val * 1000 // convert to msec
+		results.ttftErr = err
+		mu.Unlock()
+	}()
+
+	// Query 5: Average ITL
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		// Check context cancellation before starting query
+		if ctx.Err() != nil {
+			mu.Lock()
+			results.itlErr = fmt.Errorf("context cancelled: %w", ctx.Err())
+			mu.Unlock()
+			return
+		}
+		val, err := queryAndExtractMetricWithCircuitBreaker(ctx, promAPI, itlQuery, "ITLAverage", circuitBreaker)
+		mu.Lock()
+		results.itlAverage = val * 1000 // convert to msec
+		results.itlErr = err
+		mu.Unlock()
+	}()
+
+	// Wait for all queries to complete
+	wg.Wait()
+
+	// Check for errors after all queries complete
+	if results.arrivalErr != nil {
+		return llmdVariantAutoscalingV1alpha1.Allocation{}, fmt.Errorf("failed to query arrival rate: %w", results.arrivalErr)
 	}
-	itlAverage *= 1000 // convert to msec
+	if results.avgInputErr != nil {
+		return llmdVariantAutoscalingV1alpha1.Allocation{}, fmt.Errorf("failed to query avg input tokens: %w", results.avgInputErr)
+	}
+	if results.avgOutputErr != nil {
+		return llmdVariantAutoscalingV1alpha1.Allocation{}, fmt.Errorf("failed to query avg output tokens: %w", results.avgOutputErr)
+	}
+	if results.ttftErr != nil {
+		return llmdVariantAutoscalingV1alpha1.Allocation{}, fmt.Errorf("failed to query TTFT: %w", results.ttftErr)
+	}
+	if results.itlErr != nil {
+		return llmdVariantAutoscalingV1alpha1.Allocation{}, fmt.Errorf("failed to query ITL: %w", results.itlErr)
+	}
+
+	// Extract results
+	arrivalVal := results.arrivalVal
+	avgInputTokens := results.avgInputTokens
+	avgOutputTokens := results.avgOutputTokens
+	ttftAverageTime := results.ttftAverageTime
+	itlAverage := results.itlAverage
 
 	// --- 3. Collect K8s and Static Info ---
 
