@@ -7,11 +7,13 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/prometheus/common/model"
+	"go.uber.org/zap"
 	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/constants"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logger"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/test/utils"
 )
 
@@ -28,6 +30,7 @@ var _ = Describe("PrometheusCollector Cache Integration", func() {
 	)
 
 	BeforeEach(func() {
+		logger.Log = zap.NewNop().Sugar()
 		ctx = context.Background()
 		modelName = "test-model"
 		namespace = "test-namespace"
@@ -38,8 +41,15 @@ var _ = Describe("PrometheusCollector Cache Integration", func() {
 			QueryErrors:  make(map[string]error),
 		}
 
-		// Create collector with cache enabled
-		collector = NewPrometheusCollector(mockPromAPI)
+		// Create collector with cache enabled, but disable background fetching for tests
+		testConfig := &CacheConfig{
+			Enabled:         true,
+			TTL:             30 * time.Second,
+			MaxSize:         0,
+			CleanupInterval: 1 * time.Minute,
+			FetchInterval:   0, // Disable background fetching in tests
+		}
+		collector = NewPrometheusCollectorWithConfig(mockPromAPI, testConfig)
 
 		// Setup VariantAutoscaling
 		va = &llmdVariantAutoscalingV1alpha1.VariantAutoscaling{
@@ -84,8 +94,17 @@ var _ = Describe("PrometheusCollector Cache Integration", func() {
 			// We can't directly access private cache field, so we verify behavior
 			alloc2, err := collector.AddMetricsToOptStatus(ctx, va, deployment, acceleratorCost)
 			Expect(err).NotTo(HaveOccurred())
-			// Should return same data (from cache)
-			Expect(alloc2).To(Equal(alloc1))
+			// Should return same data (from cache) - compare without metadata timestamps
+			Expect(alloc2.Accelerator).To(Equal(alloc1.Accelerator))
+			Expect(alloc2.NumReplicas).To(Equal(alloc1.NumReplicas))
+			Expect(alloc2.MaxBatch).To(Equal(alloc1.MaxBatch))
+			Expect(alloc2.VariantCost).To(Equal(alloc1.VariantCost))
+			Expect(alloc2.ITLAverage).To(Equal(alloc1.ITLAverage))
+			Expect(alloc2.TTFTAverage).To(Equal(alloc1.TTFTAverage))
+			Expect(alloc2.Load).To(Equal(alloc1.Load))
+			// Metadata should exist but age will differ slightly
+			Expect(alloc2.Metadata).NotTo(BeNil())
+			Expect(alloc2.Metadata.FreshnessStatus).To(Equal(alloc1.Metadata.FreshnessStatus))
 		})
 
 		It("should return cached metrics on second call", func() {
@@ -102,7 +121,17 @@ var _ = Describe("PrometheusCollector Cache Integration", func() {
 			// Second call - should use cache
 			alloc2, err := collector.AddMetricsToOptStatus(ctx, va, deployment, acceleratorCost)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(alloc2).To(Equal(alloc1))
+			// Compare without metadata timestamps (they differ slightly due to cache retrieval time)
+			Expect(alloc2.Accelerator).To(Equal(alloc1.Accelerator))
+			Expect(alloc2.NumReplicas).To(Equal(alloc1.NumReplicas))
+			Expect(alloc2.MaxBatch).To(Equal(alloc1.MaxBatch))
+			Expect(alloc2.VariantCost).To(Equal(alloc1.VariantCost))
+			Expect(alloc2.ITLAverage).To(Equal(alloc1.ITLAverage))
+			Expect(alloc2.TTFTAverage).To(Equal(alloc1.TTFTAverage))
+			Expect(alloc2.Load).To(Equal(alloc1.Load))
+			// Metadata should exist but age will differ slightly
+			Expect(alloc2.Metadata).NotTo(BeNil())
+			Expect(alloc2.Metadata.FreshnessStatus).To(Equal(alloc1.Metadata.FreshnessStatus))
 		})
 
 		It("should query again after cache expiration", func() {
@@ -180,7 +209,12 @@ var _ = Describe("PrometheusCollector Cache Integration", func() {
 			mockPromAPI.QueryResults = make(map[string]model.Value)
 			alloc2, err := collector.AddMetricsToOptStatus(ctx, va, deployment, acceleratorCost)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(alloc2).To(Equal(alloc1))
+			// Compare without metadata timestamps (they differ slightly due to cache retrieval time)
+			Expect(alloc2.Accelerator).To(Equal(alloc1.Accelerator))
+			Expect(alloc2.NumReplicas).To(Equal(alloc1.NumReplicas))
+			Expect(alloc2.Load).To(Equal(alloc1.Load))
+			Expect(alloc2.Metadata).NotTo(BeNil())
+			Expect(alloc2.Metadata.FreshnessStatus).To(Equal(alloc1.Metadata.FreshnessStatus))
 
 			// Invalidate
 			collector.InvalidateCacheForVariant(modelName, namespace, variantName)
@@ -210,10 +244,17 @@ var _ = Describe("PrometheusCollector Cache Integration", func() {
 			mockPromAPI.QueryResults = make(map[string]model.Value)
 			alloc1Cached, err := collector.AddMetricsToOptStatus(ctx, va1, deployment, acceleratorCost)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(alloc1Cached).To(Equal(alloc1))
+			// Compare without metadata timestamps (they differ slightly due to cache retrieval time)
+			Expect(alloc1Cached.Accelerator).To(Equal(alloc1.Accelerator))
+			Expect(alloc1Cached.NumReplicas).To(Equal(alloc1.NumReplicas))
+			Expect(alloc1Cached.Load).To(Equal(alloc1.Load))
+			Expect(alloc1Cached.Metadata).NotTo(BeNil())
 			alloc2Cached, err := collector.AddMetricsToOptStatus(ctx, va2, deployment, acceleratorCost)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(alloc2Cached).To(Equal(alloc2))
+			Expect(alloc2Cached.Accelerator).To(Equal(alloc2.Accelerator))
+			Expect(alloc2Cached.NumReplicas).To(Equal(alloc2.NumReplicas))
+			Expect(alloc2Cached.Load).To(Equal(alloc2.Load))
+			Expect(alloc2Cached.Metadata).NotTo(BeNil())
 
 			// Invalidate for entire model
 			collector.InvalidateCacheForModel(modelName, namespace)

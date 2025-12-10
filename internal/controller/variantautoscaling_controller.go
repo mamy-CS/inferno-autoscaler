@@ -35,6 +35,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
@@ -663,7 +664,7 @@ func (r *VariantAutoscalingReconciler) runSaturationAnalysis(
 
 	for i := range modelVAs {
 		va := &modelVAs[i]
-		cost := 10.0 // default
+		cost := saturation.DefaultVariantCost // default
 		if va.Spec.VariantCost != "" {
 			if parsedCost, err := strconv.ParseFloat(va.Spec.VariantCost, 64); err == nil {
 				cost = parsedCost
@@ -1194,6 +1195,18 @@ func (r *VariantAutoscalingReconciler) SetupWithManager(mgr ctrl.Manager) error 
 	// Set K8sClient on the collector if it supports it (for pod discovery in saturation metrics)
 	if promCollector, ok := metricsCollector.(*collector.PrometheusCollector); ok {
 		promCollector.SetK8sClient(mgr.GetClient())
+
+		// Start background fetching executor using manager context
+		// This ensures the executor stops gracefully when the manager stops
+		if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
+			promCollector.StartBackgroundWorker(ctx)
+			<-ctx.Done() // Wait for context cancellation
+			return nil
+		})); err != nil {
+			logger.Log.Warnf("Failed to register background fetching executor with manager: %v", err)
+		} else {
+			logger.Log.Info("Registered background fetching executor with manager")
+		}
 	}
 
 	logger.Log.Info("Metrics collector initialized successfully")
@@ -1480,44 +1493,41 @@ func (r *VariantAutoscalingReconciler) readPrometheusCacheConfig(ctx context.Con
 		return nil, fmt.Errorf("failed to get configmap for Prometheus cache config: %w", err)
 	}
 
+	// Initialize with defaults including freshness thresholds
+	defaultThresholds := collector.DefaultFreshnessThresholds()
 	config := &collector.CacheConfig{
-		Enabled:         true, // default
-		TTL:             30 * time.Second,
-		MaxSize:         0, // unlimited
-		CleanupInterval: 1 * time.Minute,
+		Enabled:             true, // default
+		TTL:                 30 * time.Second,
+		MaxSize:             0, // unlimited
+		CleanupInterval:     1 * time.Minute,
+		FetchInterval:       30 * time.Second, // default fetch interval
+		FreshnessThresholds: defaultThresholds,
 	}
 
 	// PROMETHEUS_METRICS_CACHE_ENABLED (default: true)
-	if enabled := utils.GetConfigValue(cm.Data, "PROMETHEUS_METRICS_CACHE_ENABLED", "true"); enabled != "" {
-		config.Enabled = enabled == "true" || enabled == "1"
-	}
+	config.Enabled = utils.ParseBoolFromConfig(cm.Data, "PROMETHEUS_METRICS_CACHE_ENABLED", true)
 
 	// PROMETHEUS_METRICS_CACHE_TTL (default: 30s)
-	if ttlStr := utils.GetConfigValue(cm.Data, "PROMETHEUS_METRICS_CACHE_TTL", "30s"); ttlStr != "" {
-		if ttl, err := time.ParseDuration(ttlStr); err == nil {
-			config.TTL = ttl
-		} else {
-			logger.Log.Warnf("Invalid PROMETHEUS_METRICS_CACHE_TTL value '%s' in ConfigMap, using default: %v", ttlStr, config.TTL)
-		}
-	}
+	config.TTL = utils.ParseDurationFromConfig(cm.Data, "PROMETHEUS_METRICS_CACHE_TTL", 30*time.Second)
 
 	// PROMETHEUS_METRICS_CACHE_MAX_SIZE (default: 0 = unlimited)
-	if maxSizeStr := utils.GetConfigValue(cm.Data, "PROMETHEUS_METRICS_CACHE_MAX_SIZE", "0"); maxSizeStr != "" {
-		if maxSize, err := strconv.Atoi(maxSizeStr); err == nil && maxSize >= 0 {
-			config.MaxSize = maxSize
-		} else {
-			logger.Log.Warnf("Invalid PROMETHEUS_METRICS_CACHE_MAX_SIZE value '%s' in ConfigMap, using default: %d", maxSizeStr, config.MaxSize)
-		}
-	}
+	config.MaxSize = utils.ParseIntFromConfig(cm.Data, "PROMETHEUS_METRICS_CACHE_MAX_SIZE", 0, 0)
 
 	// PROMETHEUS_METRICS_CACHE_CLEANUP_INTERVAL (default: 1m)
-	if cleanupStr := utils.GetConfigValue(cm.Data, "PROMETHEUS_METRICS_CACHE_CLEANUP_INTERVAL", "1m"); cleanupStr != "" {
-		if cleanup, err := time.ParseDuration(cleanupStr); err == nil {
-			config.CleanupInterval = cleanup
-		} else {
-			logger.Log.Warnf("Invalid PROMETHEUS_METRICS_CACHE_CLEANUP_INTERVAL value '%s' in ConfigMap, using default: %v", cleanupStr, config.CleanupInterval)
-		}
-	}
+	config.CleanupInterval = utils.ParseDurationFromConfig(cm.Data, "PROMETHEUS_METRICS_CACHE_CLEANUP_INTERVAL", 1*time.Minute)
+
+	// PROMETHEUS_METRICS_CACHE_FETCH_INTERVAL (default: 30s, 0 = disable background fetching)
+	config.FetchInterval = utils.ParseDurationFromConfig(cm.Data, "PROMETHEUS_METRICS_CACHE_FETCH_INTERVAL", 30*time.Second)
+
+	// Freshness thresholds
+	// PROMETHEUS_METRICS_CACHE_FRESH_THRESHOLD (default: 1m)
+	config.FreshnessThresholds.FreshThreshold = utils.ParseDurationFromConfig(cm.Data, "PROMETHEUS_METRICS_CACHE_FRESH_THRESHOLD", 1*time.Minute)
+
+	// PROMETHEUS_METRICS_CACHE_STALE_THRESHOLD (default: 2m)
+	config.FreshnessThresholds.StaleThreshold = utils.ParseDurationFromConfig(cm.Data, "PROMETHEUS_METRICS_CACHE_STALE_THRESHOLD", 2*time.Minute)
+
+	// PROMETHEUS_METRICS_CACHE_UNAVAILABLE_THRESHOLD (default: 5m)
+	config.FreshnessThresholds.UnavailableThreshold = utils.ParseDurationFromConfig(cm.Data, "PROMETHEUS_METRICS_CACHE_UNAVAILABLE_THRESHOLD", 5*time.Minute)
 
 	return config, nil
 }

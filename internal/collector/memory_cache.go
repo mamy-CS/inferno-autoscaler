@@ -82,7 +82,9 @@ func (mc *MemoryCache) Set(key CacheKey, data interface{}, ttl time.Duration) {
 		if mc.Size() >= mc.maxSize {
 			// Evict oldest entry (simple strategy: remove first expired, or random)
 			// For now, we'll just allow it to grow (can improve later)
-			logger.Log.Debugf("Cache at max size (%d), allowing growth", mc.maxSize)
+			if logger.Log != nil {
+				logger.Log.Debugf("Cache at max size (%d), allowing growth", mc.maxSize)
+			}
 		}
 	}
 
@@ -104,7 +106,12 @@ func (mc *MemoryCache) Invalidate(key CacheKey) {
 func (mc *MemoryCache) InvalidateForModel(modelID, namespace string) {
 	prefix := fmt.Sprintf("%s/%s/", modelID, namespace)
 	mc.cache.Range(func(key, value interface{}) bool {
-		cacheKey := key.(CacheKey)
+		cacheKey, ok := key.(CacheKey)
+		if !ok {
+			// Invalid key type, delete it
+			mc.cache.Delete(key)
+			return true
+		}
 		keyStr := string(cacheKey)
 		// Check if key starts with modelID/namespace
 		if len(keyStr) >= len(prefix) && keyStr[:len(prefix)] == prefix {
@@ -118,7 +125,12 @@ func (mc *MemoryCache) InvalidateForModel(modelID, namespace string) {
 func (mc *MemoryCache) InvalidateForVariant(modelID, namespace, variantName string) {
 	prefix := fmt.Sprintf("%s/%s/%s/", modelID, namespace, variantName)
 	mc.cache.Range(func(key, value interface{}) bool {
-		cacheKey := key.(CacheKey)
+		cacheKey, ok := key.(CacheKey)
+		if !ok {
+			// Invalid key type, delete it
+			mc.cache.Delete(key)
+			return true
+		}
 		keyStr := string(cacheKey)
 		// Check if key matches modelID/namespace/variantName
 		if len(keyStr) >= len(prefix) && keyStr[:len(prefix)] == prefix {
@@ -179,7 +191,7 @@ func (mc *MemoryCache) cleanupExpired() {
 		return true
 	})
 
-	if expiredCount > 0 {
+	if expiredCount > 0 && logger.Log != nil {
 		logger.Log.Debugf("Cache cleanup: removed %d expired entries", expiredCount)
 	}
 }

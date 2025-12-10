@@ -44,6 +44,12 @@ data:
   PROMETHEUS_METRICS_CACHE_MAX_SIZE: "0"
   # Interval for background cleanup of expired Prometheus cache entries (default: "1m")
   PROMETHEUS_METRICS_CACHE_CLEANUP_INTERVAL: "1m"
+  # Background fetch interval - how often to fetch metrics in background (default: "30s", 0 = disable)
+  PROMETHEUS_METRICS_CACHE_FETCH_INTERVAL: "30s"
+  # Freshness thresholds - when metrics are considered fresh/stale/unavailable
+  PROMETHEUS_METRICS_CACHE_FRESH_THRESHOLD: "1m"
+  PROMETHEUS_METRICS_CACHE_STALE_THRESHOLD: "2m"
+  PROMETHEUS_METRICS_CACHE_UNAVAILABLE_THRESHOLD: "5m"
 
   # EPP metrics cache configuration (for future EPP collector)
   # EPP_METRICS_CACHE_ENABLED: "true"

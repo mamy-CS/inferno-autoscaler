@@ -276,6 +276,28 @@ spec:
                     description: MaxBatch is the maximum batch size currently allocated.
                     minimum: 0
                     type: integer
+                  metadata:
+                    description: Metadata contains freshness information about the
+                      metrics (optional)
+                    properties:
+                      ageSeconds:
+                        description: |-
+                          Age is the age of the metrics at the time they were returned (calculated field, not stored in API)
+                          Serialized as string to avoid float type issues in CRDs
+                        type: string
+                      collectedAt:
+                        description: CollectedAt is when the metrics were collected
+                          from the source (Prometheus/EPP)
+                        format: date-time
+                        type: string
+                      freshnessStatus:
+                        description: |-
+                          FreshnessStatus indicates the freshness status of the metrics
+                          Values: "fresh", "stale", "unavailable"
+                        type: string
+                    required:
+                    - collectedAt
+                    type: object
                   numReplicas:
                     description: NumReplicas is the number of replicas currently allocated.
                     minimum: 0

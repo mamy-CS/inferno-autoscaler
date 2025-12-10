@@ -45,6 +45,12 @@ data:
   PROMETHEUS_METRICS_CACHE_MAX_SIZE: {{ if and .Values.wva.prometheus .Values.wva.prometheus.metricsCache }}{{ .Values.wva.prometheus.metricsCache.maxSize | default "0" | quote }}{{ else }}"0"{{ end }}
   # Interval for background cleanup of expired Prometheus cache entries (default: "1m")
   PROMETHEUS_METRICS_CACHE_CLEANUP_INTERVAL: {{ if and .Values.wva.prometheus .Values.wva.prometheus.metricsCache }}{{ .Values.wva.prometheus.metricsCache.cleanupInterval | default "1m" | quote }}{{ else }}"1m"{{ end }}
+  # Background fetch interval - how often to fetch metrics in background (default: "30s", 0 = disable)
+  PROMETHEUS_METRICS_CACHE_FETCH_INTERVAL: {{ if and .Values.wva.prometheus .Values.wva.prometheus.metricsCache }}{{ .Values.wva.prometheus.metricsCache.fetchInterval | default "30s" | quote }}{{ else }}"30s"{{ end }}
+  # Freshness thresholds - when metrics are considered fresh/stale/unavailable
+  PROMETHEUS_METRICS_CACHE_FRESH_THRESHOLD: {{ if and .Values.wva.prometheus .Values.wva.prometheus.metricsCache }}{{ .Values.wva.prometheus.metricsCache.freshThreshold | default "1m" | quote }}{{ else }}"1m"{{ end }}
+  PROMETHEUS_METRICS_CACHE_STALE_THRESHOLD: {{ if and .Values.wva.prometheus .Values.wva.prometheus.metricsCache }}{{ .Values.wva.prometheus.metricsCache.staleThreshold | default "2m" | quote }}{{ else }}"2m"{{ end }}
+  PROMETHEUS_METRICS_CACHE_UNAVAILABLE_THRESHOLD: {{ if and .Values.wva.prometheus .Values.wva.prometheus.metricsCache }}{{ .Values.wva.prometheus.metricsCache.unavailableThreshold | default "5m" | quote }}{{ else }}"5m"{{ end }}
 
   # EPP metrics cache configuration (for future EPP collector)
   # Uncomment and configure when EPP collector is implemented - future implementation

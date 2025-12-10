@@ -12,6 +12,7 @@ import (
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/constants"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logger"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/saturation"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/utils"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	"github.com/prometheus/common/model"
@@ -375,7 +376,7 @@ func (cmc *SaturationMetricsCollector) mergeMetrics(
 		}
 
 		// Look up cost by variant name, default to DefaultVariantCost if not found
-		cost := 10.0
+		cost := saturation.DefaultVariantCost
 		if variantCosts != nil {
 			if c, ok := variantCosts[variantName]; ok {
 				cost = c

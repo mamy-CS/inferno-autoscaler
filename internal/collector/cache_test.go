@@ -5,9 +5,16 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"go.uber.org/zap"
+
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logger"
 )
 
 var _ = Describe("Cache", func() {
+	BeforeEach(func() {
+		logger.Log = zap.NewNop().Sugar()
+	})
+
 	Describe("CacheKey", func() {
 		It("should create cache key correctly", func() {
 			key := NewCacheKey("model1", "ns1", "variant1", "allocation")
@@ -204,11 +211,14 @@ var _ = Describe("Cache", func() {
 			key3 := NewCacheKey("model1", "ns1", "variant3", "allocation")
 
 			limitedCache.Set(key1, "data1", 0)
+			Expect(limitedCache.Size()).To(Equal(1))
 			limitedCache.Set(key2, "data2", 0)
-			// Should allow growth beyond max (simple implementation)
+			Expect(limitedCache.Size()).To(Equal(2))
+			// When maxSize is set and reached, the current implementation allows growth beyond max
+			// This is a simple implementation that logs a warning but doesn't enforce the limit strictly
 			limitedCache.Set(key3, "data3", 0)
-
-			Expect(limitedCache.Size()).To(Equal(3))
+			// Verify it doesn't enforce strict limit (allows growth)
+			Expect(limitedCache.Size()).To(BeNumerically(">=", 3))
 		})
 	})
 
