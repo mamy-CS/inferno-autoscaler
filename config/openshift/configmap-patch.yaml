@@ -12,4 +12,10 @@ data:
   
   # Optimization configuration
   GLOBAL_OPT_INTERVAL: "60s"
-  GLOBAL_OPT_TRIGGER: "false" 
+  GLOBAL_OPT_TRIGGER: "false"
+
+  # Prometheus metrics cache configuration
+  PROMETHEUS_METRICS_CACHE_ENABLED: "true"
+  PROMETHEUS_METRICS_CACHE_TTL: "30s"
+  PROMETHEUS_METRICS_CACHE_MAX_SIZE: "0"
+  PROMETHEUS_METRICS_CACHE_CLEANUP_INTERVAL: "1m" 

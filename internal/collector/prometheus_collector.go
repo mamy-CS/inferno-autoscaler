@@ -23,19 +23,84 @@ import (
 type PrometheusCollector struct {
 	promAPI   promv1.API
 	k8sClient client.Client
+	cache     MetricsCache // Internal cache for metrics
 }
 
-// NewPrometheusCollector creates a new Prometheus metrics collector
+// CacheConfig holds configuration for the metrics cache
+type CacheConfig struct {
+	Enabled         bool
+	TTL             time.Duration
+	MaxSize         int
+	CleanupInterval time.Duration
+}
+
+// getDefaultCacheConfig returns default cache configuration
+func getDefaultCacheConfig() CacheConfig {
+	return CacheConfig{
+		Enabled:         true, // enabled by default
+		TTL:             30 * time.Second,
+		MaxSize:         0, // unlimited by default
+		CleanupInterval: 1 * time.Minute,
+	}
+}
+
+// NewPrometheusCollector creates a new Prometheus metrics collector with default cache config
+// Deprecated: Use NewPrometheusCollectorWithConfig instead
 func NewPrometheusCollector(promAPI promv1.API) *PrometheusCollector {
+	return NewPrometheusCollectorWithConfig(promAPI, nil)
+}
+
+// NewPrometheusCollectorWithConfig creates a new Prometheus metrics collector
+// If cacheConfig is nil, uses default cache settings
+func NewPrometheusCollectorWithConfig(promAPI promv1.API, cacheConfig *CacheConfig) *PrometheusCollector {
+	// Use provided config or defaults
+	config := getDefaultCacheConfig()
+	if cacheConfig != nil {
+		config = *cacheConfig
+	}
+
+	var cache MetricsCache
+
+	if config.Enabled {
+		cache = NewMemoryCache(config.TTL, config.MaxSize, config.CleanupInterval)
+		logger.Log.Infof("Metrics cache enabled: TTL=%v, MaxSize=%d, CleanupInterval=%v",
+			config.TTL, config.MaxSize, config.CleanupInterval)
+	} else {
+		// Use a no-op cache implementation when disabled
+		cache = &noOpCache{}
+		logger.Log.Info("Metrics cache disabled")
+	}
+
 	return &PrometheusCollector{
 		promAPI:   promAPI,
 		k8sClient: nil, // Will be set when available
+		cache:     cache,
 	}
 }
 
 // SetK8sClient sets the Kubernetes client for pod ownership lookups
 func (pc *PrometheusCollector) SetK8sClient(k8sClient client.Client) {
 	pc.k8sClient = k8sClient
+}
+
+// InvalidateCacheForVariant invalidates cache entries for a specific variant
+// This should be called when replica counts change or deployments are updated
+func (pc *PrometheusCollector) InvalidateCacheForVariant(modelID, namespace, variantName string) {
+	if pc.cache != nil {
+		pc.cache.InvalidateForVariant(modelID, namespace, variantName)
+		logger.Log.Debugf("Invalidated cache for variant: model=%s, namespace=%s, variant=%s",
+			modelID, namespace, variantName)
+	}
+}
+
+// InvalidateCacheForModel invalidates all cache entries for a model
+// This should be called when model-level changes occur
+func (pc *PrometheusCollector) InvalidateCacheForModel(modelID, namespace string) {
+	if pc.cache != nil {
+		pc.cache.InvalidateForModel(modelID, namespace)
+		logger.Log.Debugf("Invalidated cache for model: model=%s, namespace=%s",
+			modelID, namespace)
+	}
 }
 
 // ValidateMetricsAvailability implements MetricsCollector interface
@@ -123,6 +188,24 @@ func (pc *PrometheusCollector) AddMetricsToOptStatus(
 ) (llmdVariantAutoscalingV1alpha1.Allocation, error) {
 	deployNamespace := deployment.Namespace
 	modelName := va.Spec.ModelID
+	variantName := va.Name
+
+	// Check cache first
+	cacheKey := NewCacheKey(modelName, deployNamespace, variantName, "allocation")
+	if cached, found := pc.cache.Get(cacheKey); found {
+		logger.Log.Debugf("Cache hit for allocation metrics: model=%s, variant=%s, age=%v",
+			modelName, variantName, cached.Age())
+		// Type assert to Allocation
+		if alloc, ok := cached.Data.(llmdVariantAutoscalingV1alpha1.Allocation); ok {
+			return alloc, nil
+		}
+		// If type assertion fails, continue to query
+		logger.Log.Warnf("Cache entry has wrong type, querying Prometheus: model=%s, variant=%s",
+			modelName, variantName)
+	}
+
+	logger.Log.Debugf("Cache miss for allocation metrics, querying Prometheus: model=%s, variant=%s",
+		modelName, variantName)
 
 	// --- 1. Define Queries ---
 
@@ -244,6 +327,12 @@ func (pc *PrometheusCollector) AddMetricsToOptStatus(
 			AvgOutputTokens: avgOutputTokensStr,
 		},
 	}
+
+	// Store in cache (use default TTL from cache config)
+	pc.cache.Set(cacheKey, currentAlloc, 0) // 0 means use cache's default TTL
+	logger.Log.Debugf("Cached allocation metrics: model=%s, variant=%s",
+		modelName, variantName)
+
 	return currentAlloc, nil
 }
 
@@ -257,6 +346,23 @@ func (pc *PrometheusCollector) CollectReplicaMetrics(
 	variantAutoscalings map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling,
 	variantCosts map[string]float64,
 ) ([]interfaces.ReplicaMetrics, error) {
+	// Check cache first (cache key is model-level, not variant-level)
+	cacheKey := NewCacheKey(modelID, namespace, "all", "replica-metrics")
+	if cached, found := pc.cache.Get(cacheKey); found {
+		logger.Log.Debugf("Cache hit for replica metrics: model=%s, namespace=%s, age=%v",
+			modelID, namespace, cached.Age())
+		// Type assert to []ReplicaMetrics
+		if replicaMetrics, ok := cached.Data.([]interfaces.ReplicaMetrics); ok {
+			return replicaMetrics, nil
+		}
+		// If type assertion fails, continue to query
+		logger.Log.Warnf("Cache entry has wrong type, querying Prometheus: model=%s, namespace=%s",
+			modelID, namespace)
+	}
+
+	logger.Log.Debugf("Cache miss for replica metrics, querying Prometheus: model=%s, namespace=%s",
+		modelID, namespace)
+
 	// Use the existing SaturationMetricsCollector implementation
 	// We'll refactor this to be part of PrometheusCollector later, but for now
 	// we maintain compatibility by using the existing struct
@@ -264,7 +370,17 @@ func (pc *PrometheusCollector) CollectReplicaMetrics(
 		promAPI:   pc.promAPI,
 		k8sClient: pc.k8sClient,
 	}
-	return saturationCollector.CollectReplicaMetrics(ctx, modelID, namespace, deployments, variantAutoscalings, variantCosts)
+	replicaMetrics, err := saturationCollector.CollectReplicaMetrics(ctx, modelID, namespace, deployments, variantAutoscalings, variantCosts)
+	if err != nil {
+		return nil, err
+	}
+
+	// Store in cache (use default TTL from cache config)
+	pc.cache.Set(cacheKey, replicaMetrics, 0) // 0 means use cache's default TTL
+	logger.Log.Debugf("Cached replica metrics: model=%s, namespace=%s, count=%d",
+		modelID, namespace, len(replicaMetrics))
+
+	return replicaMetrics, nil
 }
 
 // queryAndExtractMetric performs a Prometheus query and extracts the float value

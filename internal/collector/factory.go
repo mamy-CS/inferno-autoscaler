@@ -19,8 +19,9 @@ const (
 
 // Config holds configuration for creating a metrics collector plugin
 type Config struct {
-	Type    CollectorType // Type of collector plugin to create
-	PromAPI promv1.API    // Required for Prometheus collector plugin
+	Type        CollectorType // Type of collector plugin to create
+	PromAPI     promv1.API    // Required for Prometheus collector plugin
+	CacheConfig *CacheConfig  // Optional cache configuration (nil = use defaults)
 	// K8sClient will be set via SetK8sClient method after creation if needed
 }
 
@@ -37,7 +38,7 @@ func NewMetricsCollector(config Config) (interfaces.MetricsCollector, error) {
 		if config.PromAPI == nil {
 			return nil, fmt.Errorf("PromAPI is required for Prometheus collector")
 		}
-		return NewPrometheusCollector(config.PromAPI), nil
+		return NewPrometheusCollectorWithConfig(config.PromAPI, config.CacheConfig), nil
 	case CollectorTypeEPP:
 		return nil, fmt.Errorf("EPP collector plugin is not yet implemented")
 	default:
@@ -45,12 +46,12 @@ func NewMetricsCollector(config Config) (interfaces.MetricsCollector, error) {
 		if config.PromAPI == nil {
 			return nil, fmt.Errorf("PromAPI is required for Prometheus collector")
 		}
-		return NewPrometheusCollector(config.PromAPI), nil
+		return NewPrometheusCollectorWithConfig(config.PromAPI, config.CacheConfig), nil
 	}
 }
 
 // NewPrometheusMetricsCollector is a convenience function to create a Prometheus collector.
 // This maintains backward compatibility with existing code.
 func NewPrometheusMetricsCollector(promAPI promv1.API) interfaces.MetricsCollector {
-	return NewPrometheusCollector(promAPI)
+	return NewPrometheusCollectorWithConfig(promAPI, nil) // Use defaults
 }

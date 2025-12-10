@@ -34,3 +34,21 @@ data:
 
   # Option to use experimental hybrid optimization (default: false)
   EXPERIMENTAL_HYBRID_OPTIMIZATION: {{ .Values.wva.experimentalHybridOptimization | default "off" | quote }}
+
+  # Prometheus metrics cache configuration
+  # Each collector (Prometheus, EPP, etc.) has its own cache configuration
+  # Enable/disable Prometheus metrics caching (default: "true")
+  PROMETHEUS_METRICS_CACHE_ENABLED: {{ if and .Values.wva.prometheus .Values.wva.prometheus.metricsCache }}{{ .Values.wva.prometheus.metricsCache.enabled | default "true" | quote }}{{ else }}"true"{{ end }}
+  # Prometheus cache TTL - how long metrics are cached before expiring (default: "30s")
+  PROMETHEUS_METRICS_CACHE_TTL: {{ if and .Values.wva.prometheus .Values.wva.prometheus.metricsCache }}{{ .Values.wva.prometheus.metricsCache.ttl | default "30s" | quote }}{{ else }}"30s"{{ end }}
+  # Maximum number of Prometheus cache entries (0 = unlimited, default: "0")
+  PROMETHEUS_METRICS_CACHE_MAX_SIZE: {{ if and .Values.wva.prometheus .Values.wva.prometheus.metricsCache }}{{ .Values.wva.prometheus.metricsCache.maxSize | default "0" | quote }}{{ else }}"0"{{ end }}
+  # Interval for background cleanup of expired Prometheus cache entries (default: "1m")
+  PROMETHEUS_METRICS_CACHE_CLEANUP_INTERVAL: {{ if and .Values.wva.prometheus .Values.wva.prometheus.metricsCache }}{{ .Values.wva.prometheus.metricsCache.cleanupInterval | default "1m" | quote }}{{ else }}"1m"{{ end }}
+
+  # EPP metrics cache configuration (for future EPP collector)
+  # Uncomment and configure when EPP collector is implemented - future implementation
+  # EPP_METRICS_CACHE_ENABLED: "true"
+  # EPP_METRICS_CACHE_TTL: "15s"
+  # EPP_METRICS_CACHE_MAX_SIZE: "500"
+  # EPP_METRICS_CACHE_CLEANUP_INTERVAL: "30s"

@@ -903,6 +903,19 @@ func (r *VariantAutoscalingReconciler) applySaturationDecisions(
 
 		logger.Log.Infof("Applied Saturation decision: variant=%s, action=%s, current=%d, target=%d, reason=%s",
 			decision.VariantName, decision.Action, decision.CurrentReplicas, decision.TargetReplicas, decision.Reason)
+
+		// Invalidate cache when scaling occurs (replica count changes)
+		if decision.Action != interfaces.ActionNoChange {
+			// Type assert to PrometheusCollector to access cache invalidation
+			if promCollector, ok := r.MetricsCollector.(*collector.PrometheusCollector); ok {
+				modelID := decision.ModelID
+				namespace := decision.Namespace
+				variantName := decision.VariantName
+				promCollector.InvalidateCacheForVariant(modelID, namespace, variantName)
+				logger.Log.Debugf("Invalidated metrics cache after scaling: variant=%s, action=%s",
+					variantName, decision.Action)
+			}
+		}
 	}
 
 	return nil
@@ -1158,11 +1171,20 @@ func (r *VariantAutoscalingReconciler) SetupWithManager(mgr ctrl.Manager) error 
 	}
 	logger.Log.Info("Prometheus client and API wrapper initialized and validated successfully")
 
+	// Read Prometheus cache configuration from ConfigMap
+	// Each collector (Prometheus, EPP, etc.) has its own cache configuration
+	cacheConfig, err := r.readPrometheusCacheConfig(context.Background())
+	if err != nil {
+		logger.Log.Warnf("Failed to read Prometheus cache config from ConfigMap, using defaults: %v", err)
+		cacheConfig = nil // Use defaults
+	}
+
 	// Initialize metrics collector plugin (defaults to Prometheus)
 	// This can be extended to support other collector plugins (e.g., EPP) via configuration
 	metricsCollector, err := collector.NewMetricsCollector(collector.Config{
-		Type:    collector.CollectorTypePrometheus,
-		PromAPI: r.PromAPI,
+		Type:        collector.CollectorTypePrometheus,
+		PromAPI:     r.PromAPI,
+		CacheConfig: cacheConfig,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create metrics collector: %w", err)
@@ -1448,6 +1470,56 @@ func (r *VariantAutoscalingReconciler) readOptimizationConfig(ctx context.Contex
 
 	interval = cm.Data["GLOBAL_OPT_INTERVAL"]
 	return interval, nil
+}
+
+// readPrometheusCacheConfig reads Prometheus collector cache configuration from the ConfigMap
+func (r *VariantAutoscalingReconciler) readPrometheusCacheConfig(ctx context.Context) (*collector.CacheConfig, error) {
+	cm := corev1.ConfigMap{}
+	err := utils.GetConfigMapWithBackoff(ctx, r.Client, configMapName, configMapNamespace, &cm)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get configmap for Prometheus cache config: %w", err)
+	}
+
+	config := &collector.CacheConfig{
+		Enabled:         true, // default
+		TTL:             30 * time.Second,
+		MaxSize:         0, // unlimited
+		CleanupInterval: 1 * time.Minute,
+	}
+
+	// PROMETHEUS_METRICS_CACHE_ENABLED (default: true)
+	if enabled := utils.GetConfigValue(cm.Data, "PROMETHEUS_METRICS_CACHE_ENABLED", "true"); enabled != "" {
+		config.Enabled = enabled == "true" || enabled == "1"
+	}
+
+	// PROMETHEUS_METRICS_CACHE_TTL (default: 30s)
+	if ttlStr := utils.GetConfigValue(cm.Data, "PROMETHEUS_METRICS_CACHE_TTL", "30s"); ttlStr != "" {
+		if ttl, err := time.ParseDuration(ttlStr); err == nil {
+			config.TTL = ttl
+		} else {
+			logger.Log.Warnf("Invalid PROMETHEUS_METRICS_CACHE_TTL value '%s' in ConfigMap, using default: %v", ttlStr, config.TTL)
+		}
+	}
+
+	// PROMETHEUS_METRICS_CACHE_MAX_SIZE (default: 0 = unlimited)
+	if maxSizeStr := utils.GetConfigValue(cm.Data, "PROMETHEUS_METRICS_CACHE_MAX_SIZE", "0"); maxSizeStr != "" {
+		if maxSize, err := strconv.Atoi(maxSizeStr); err == nil && maxSize >= 0 {
+			config.MaxSize = maxSize
+		} else {
+			logger.Log.Warnf("Invalid PROMETHEUS_METRICS_CACHE_MAX_SIZE value '%s' in ConfigMap, using default: %d", maxSizeStr, config.MaxSize)
+		}
+	}
+
+	// PROMETHEUS_METRICS_CACHE_CLEANUP_INTERVAL (default: 1m)
+	if cleanupStr := utils.GetConfigValue(cm.Data, "PROMETHEUS_METRICS_CACHE_CLEANUP_INTERVAL", "1m"); cleanupStr != "" {
+		if cleanup, err := time.ParseDuration(cleanupStr); err == nil {
+			config.CleanupInterval = cleanup
+		} else {
+			logger.Log.Warnf("Invalid PROMETHEUS_METRICS_CACHE_CLEANUP_INTERVAL value '%s' in ConfigMap, using default: %v", cleanupStr, config.CleanupInterval)
+		}
+	}
+
+	return config, nil
 }
 
 // handleServiceMonitorEvent handles events for the controller's own ServiceMonitor.
