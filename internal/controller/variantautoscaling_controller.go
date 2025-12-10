@@ -72,6 +72,10 @@ type VariantAutoscalingReconciler struct {
 
 	PromAPI promv1.API
 
+	// MetricsCollector is the interface for collecting metrics from various backends
+	// Defaults to Prometheus collector, but can be swapped for other backends (e.g., EPP)
+	MetricsCollector interfaces.MetricsCollector
+
 	// Saturation scaling config cache (thread-safe, updated on ConfigMap changes)
 	saturationConfigCache      map[string]interfaces.SaturationScalingConfig
 	saturationConfigCacheMutex sync.RWMutex
@@ -678,10 +682,8 @@ func (r *VariantAutoscalingReconciler) runSaturationAnalysis(
 		variantAutoscalings[va.Name] = va
 	}
 
-	// Collect Saturation metrics from Prometheus
-	metricsCollector := collector.NewSaturationMetricsCollector(r.PromAPI)
-	metricsCollector.SetK8sClient(r.Client)
-	replicaMetrics, err := metricsCollector.CollectReplicaMetrics(ctx, modelID, namespace, deployments, variantAutoscalings, variantCosts)
+	// Collect Saturation metrics using the configured collector
+	replicaMetrics, err := r.MetricsCollector.CollectReplicaMetrics(ctx, modelID, namespace, deployments, variantAutoscalings, variantCosts)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to collect Saturation metrics for model %s: %w", modelID, err)
 	}
@@ -768,7 +770,7 @@ func (r *VariantAutoscalingReconciler) collectMetricsForSaturationMode(
 		}
 
 		// Validate metrics availability before collecting
-		metricsValidation := collector.ValidateMetricsAvailability(ctx, r.PromAPI, modelName, deploy.Namespace)
+		metricsValidation := r.MetricsCollector.ValidateMetricsAvailability(ctx, modelName, deploy.Namespace)
 
 		// Update MetricsAvailable condition based on validation result
 		if metricsValidation.Available {
@@ -791,7 +793,7 @@ func (r *VariantAutoscalingReconciler) collectMetricsForSaturationMode(
 		}
 
 		// Collect metrics and populate CurrentAlloc
-		currentAllocation, err := collector.AddMetricsToOptStatus(ctx, &updateVA, deploy, cost, r.PromAPI)
+		currentAllocation, err := r.MetricsCollector.AddMetricsToOptStatus(ctx, &updateVA, deploy, cost)
 		if err != nil {
 			logger.Log.Debugf("Unable to fetch metrics for VA: variant=%s, error=%v", updateVA.Name, err)
 			continue
@@ -1070,7 +1072,7 @@ func (r *VariantAutoscalingReconciler) prepareVariantAutoscalings(
 		}
 
 		// Validate metrics availability before collecting metrics
-		metricsValidation := collector.ValidateMetricsAvailability(ctx, r.PromAPI, modelName, deploy.Namespace)
+		metricsValidation := r.MetricsCollector.ValidateMetricsAvailability(ctx, modelName, deploy.Namespace)
 
 		// Update MetricsAvailable condition based on validation result
 		if metricsValidation.Available {
@@ -1091,7 +1093,7 @@ func (r *VariantAutoscalingReconciler) prepareVariantAutoscalings(
 			continue
 		}
 
-		currentAllocation, err := collector.AddMetricsToOptStatus(ctx, &updateVA, deploy, acceleratorCostValFloat, r.PromAPI)
+		currentAllocation, err := r.MetricsCollector.AddMetricsToOptStatus(ctx, &updateVA, deploy, acceleratorCostValFloat)
 		if err != nil {
 			logger.Log.Errorf("unable to fetch metrics, skipping this variantAutoscaling loop: error=%v", err)
 			// Don't update status here - will be updated in next reconcile when metrics are available
@@ -1155,6 +1157,24 @@ func (r *VariantAutoscalingReconciler) SetupWithManager(mgr ctrl.Manager) error 
 		return fmt.Errorf("critical: failed to validate Prometheus API connection - autoscaling functionality requires Prometheus: %w", err)
 	}
 	logger.Log.Info("Prometheus client and API wrapper initialized and validated successfully")
+
+	// Initialize metrics collector plugin (defaults to Prometheus)
+	// This can be extended to support other collector plugins (e.g., EPP) via configuration
+	metricsCollector, err := collector.NewMetricsCollector(collector.Config{
+		Type:    collector.CollectorTypePrometheus,
+		PromAPI: r.PromAPI,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create metrics collector: %w", err)
+	}
+	r.MetricsCollector = metricsCollector
+
+	// Set K8sClient on the collector if it supports it (for pod discovery in saturation metrics)
+	if promCollector, ok := metricsCollector.(*collector.PrometheusCollector); ok {
+		promCollector.SetK8sClient(mgr.GetClient())
+	}
+
+	logger.Log.Info("Metrics collector initialized successfully")
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&llmdVariantAutoscalingV1alpha1.VariantAutoscaling{}).
