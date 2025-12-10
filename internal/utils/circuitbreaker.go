@@ -113,21 +113,26 @@ func NewPrometheusCircuitBreaker(promAPI promv1.API, config CircuitBreakerConfig
 // Returns the query result or an error if the circuit is open or the query fails.
 // This method wraps QueryPrometheusWithBackoff with circuit breaker logic.
 func (cb *PrometheusCircuitBreaker) QueryPrometheus(ctx context.Context, query string) (interface{}, promv1.Warnings, error) {
-	// Check circuit state before attempting query
-	state := cb.getState()
+	// Check circuit state and handle transitions atomically
+	cb.mu.Lock()
+	state := cb.state
 	if state == StateOpen {
 		// Check if timeout has elapsed to transition to half-open
-		cb.mu.RLock()
 		timeSinceOpen := time.Since(cb.lastStateChangeTime)
-		cb.mu.RUnlock()
-
 		if timeSinceOpen >= cb.timeout {
-			cb.transitionToHalfOpen()
+			// Transition to half-open state atomically
+			logger.Log.Infof("Circuit breaker transitioning to half-open: timeout=%v elapsed", cb.timeout)
+			cb.state = StateHalfOpen
+			cb.lastStateChangeTime = time.Now()
+			cb.failureCount = 0
+			cb.successCount = 0
 			state = StateHalfOpen
 		} else {
+			cb.mu.Unlock()
 			return nil, nil, ErrCircuitBreakerOpen
 		}
 	}
+	cb.mu.Unlock()
 
 	// Execute query with timeout in half-open state
 	if state == StateHalfOpen {
@@ -209,21 +214,6 @@ func (cb *PrometheusCircuitBreaker) recordSuccess() {
 		if cb.failureCount > 0 {
 			cb.failureCount = 0
 		}
-	}
-}
-
-// transitionToHalfOpen transitions the circuit from open to half-open state
-func (cb *PrometheusCircuitBreaker) transitionToHalfOpen() {
-	cb.mu.Lock()
-	defer cb.mu.Unlock()
-
-	if cb.state == StateOpen {
-		logger.Log.Infof("Circuit breaker transitioning to half-open: timeout=%v elapsed",
-			cb.timeout)
-		cb.state = StateHalfOpen
-		cb.lastStateChangeTime = time.Now()
-		cb.failureCount = 0
-		cb.successCount = 0
 	}
 }
 

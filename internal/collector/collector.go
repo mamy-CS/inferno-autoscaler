@@ -291,16 +291,17 @@ func AddMetricsToOptStatusWithCircuitBreaker(ctx context.Context,
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		var val float64
+		var err error
 		// Check context cancellation before starting query
 		if ctx.Err() != nil {
-			mu.Lock()
-			results.arrivalErr = fmt.Errorf("context cancelled: %w", ctx.Err())
-			mu.Unlock()
-			return
+			err = fmt.Errorf("context cancelled: %w", ctx.Err())
+		} else {
+			val, err = queryAndExtractMetricWithCircuitBreaker(ctx, promAPI, arrivalQuery, "ArrivalRate", circuitBreaker)
+			val = val * 60 // convert from req/sec to req/min
 		}
-		val, err := queryAndExtractMetricWithCircuitBreaker(ctx, promAPI, arrivalQuery, "ArrivalRate", circuitBreaker)
 		mu.Lock()
-		results.arrivalVal = val * 60 // convert from req/sec to req/min
+		results.arrivalVal = val
 		results.arrivalErr = err
 		mu.Unlock()
 	}()
@@ -309,14 +310,14 @@ func AddMetricsToOptStatusWithCircuitBreaker(ctx context.Context,
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		var val float64
+		var err error
 		// Check context cancellation before starting query
 		if ctx.Err() != nil {
-			mu.Lock()
-			results.avgInputErr = fmt.Errorf("context cancelled: %w", ctx.Err())
-			mu.Unlock()
-			return
+			err = fmt.Errorf("context cancelled: %w", ctx.Err())
+		} else {
+			val, err = queryAndExtractMetricWithCircuitBreaker(ctx, promAPI, avgPromptToksQuery, "AvgInputTokens", circuitBreaker)
 		}
-		val, err := queryAndExtractMetricWithCircuitBreaker(ctx, promAPI, avgPromptToksQuery, "AvgInputTokens", circuitBreaker)
 		mu.Lock()
 		results.avgInputTokens = val
 		results.avgInputErr = err
@@ -327,14 +328,14 @@ func AddMetricsToOptStatusWithCircuitBreaker(ctx context.Context,
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		var val float64
+		var err error
 		// Check context cancellation before starting query
 		if ctx.Err() != nil {
-			mu.Lock()
-			results.avgOutputErr = fmt.Errorf("context cancelled: %w", ctx.Err())
-			mu.Unlock()
-			return
+			err = fmt.Errorf("context cancelled: %w", ctx.Err())
+		} else {
+			val, err = queryAndExtractMetricWithCircuitBreaker(ctx, promAPI, avgDecToksQuery, "AvgOutputTokens", circuitBreaker)
 		}
-		val, err := queryAndExtractMetricWithCircuitBreaker(ctx, promAPI, avgDecToksQuery, "AvgOutputTokens", circuitBreaker)
 		mu.Lock()
 		results.avgOutputTokens = val
 		results.avgOutputErr = err
@@ -345,16 +346,17 @@ func AddMetricsToOptStatusWithCircuitBreaker(ctx context.Context,
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		var val float64
+		var err error
 		// Check context cancellation before starting query
 		if ctx.Err() != nil {
-			mu.Lock()
-			results.ttftErr = fmt.Errorf("context cancelled: %w", ctx.Err())
-			mu.Unlock()
-			return
+			err = fmt.Errorf("context cancelled: %w", ctx.Err())
+		} else {
+			val, err = queryAndExtractMetricWithCircuitBreaker(ctx, promAPI, ttftQuery, "TTFTAverageTime", circuitBreaker)
+			val = val * 1000 // convert to msec
 		}
-		val, err := queryAndExtractMetricWithCircuitBreaker(ctx, promAPI, ttftQuery, "TTFTAverageTime", circuitBreaker)
 		mu.Lock()
-		results.ttftAverageTime = val * 1000 // convert to msec
+		results.ttftAverageTime = val
 		results.ttftErr = err
 		mu.Unlock()
 	}()
@@ -363,16 +365,17 @@ func AddMetricsToOptStatusWithCircuitBreaker(ctx context.Context,
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		var val float64
+		var err error
 		// Check context cancellation before starting query
 		if ctx.Err() != nil {
-			mu.Lock()
-			results.itlErr = fmt.Errorf("context cancelled: %w", ctx.Err())
-			mu.Unlock()
-			return
+			err = fmt.Errorf("context cancelled: %w", ctx.Err())
+		} else {
+			val, err = queryAndExtractMetricWithCircuitBreaker(ctx, promAPI, itlQuery, "ITLAverage", circuitBreaker)
+			val = val * 1000 // convert to msec
 		}
-		val, err := queryAndExtractMetricWithCircuitBreaker(ctx, promAPI, itlQuery, "ITLAverage", circuitBreaker)
 		mu.Lock()
-		results.itlAverage = val * 1000 // convert to msec
+		results.itlAverage = val
 		results.itlErr = err
 		mu.Unlock()
 	}()
