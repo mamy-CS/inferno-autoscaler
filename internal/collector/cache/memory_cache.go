@@ -25,7 +25,6 @@ type MemoryCache struct {
 
 	// stopCleanup is used to stop the background cleanup goroutine
 	stopCleanup context.CancelFunc
-	cleanupCtx  context.Context
 	cleanupOnce sync.Once
 }
 
@@ -37,12 +36,11 @@ func NewMemoryCache(defaultTTL time.Duration, maxSize int, cleanupInterval time.
 		maxSize:         maxSize,
 		cleanupInterval: cleanupInterval,
 		stopCleanup:     cancel,
-		cleanupCtx:      ctx,
 	}
 
 	// Start background cleanup if interval is set
 	if cleanupInterval > 0 {
-		go c.startCleanup()
+		go c.startCleanup(ctx)
 	}
 
 	return c
@@ -159,13 +157,13 @@ func (mc *MemoryCache) Size() int {
 }
 
 // startCleanup runs a background goroutine to periodically clean up expired entries
-func (mc *MemoryCache) startCleanup() {
+func (mc *MemoryCache) startCleanup(ctx context.Context) {
 	ticker := time.NewTicker(mc.cleanupInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
-		case <-mc.cleanupCtx.Done():
+		case <-ctx.Done():
 			return
 		case <-ticker.C:
 			mc.cleanupExpired()
