@@ -668,7 +668,7 @@ func (pc *PrometheusCollector) ValidateMetricsAvailability(
 		return interfaces.MetricsValidationResult{
 			Available: false,
 			Reason:    llmdVariantAutoscalingV1alpha1.ReasonPrometheusError,
-			Message:   fmt.Sprintf("Prometheus query returned unexpected type (expected Vector, got %s)", val.Type().String()),
+			Message:   fmt.Sprintf("prometheus query returned unexpected type (expected Vector, got %s)", val.Type().String()),
 		}
 	}
 	// If no results with namespace label, try without it (for vllme emulator compatibility)
@@ -878,7 +878,7 @@ func (pc *PrometheusCollector) queryAndExtractMetric(ctx context.Context, query 
 	vec, ok := val.(model.Vector)
 	if !ok {
 		// Type mismatch - should not happen but handle gracefully
-		return 0.0, fmt.Errorf("Prometheus query returned unexpected type (expected Vector, got %s)", val.Type().String())
+		return 0.0, fmt.Errorf("prometheus query returned unexpected type (expected Vector, got %s)", val.Type().String())
 	}
 	resultVal := 0.0
 	if len(vec) > 0 {
