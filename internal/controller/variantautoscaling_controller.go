@@ -41,6 +41,7 @@ import (
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
 	actuator "github.com/llm-d-incubation/workload-variant-autoscaler/internal/actuator"
 	collector "github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector"
+	collectorconfig "github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/config"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/prometheus"
 	interfaces "github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logger"
@@ -1487,7 +1488,7 @@ func (r *VariantAutoscalingReconciler) readOptimizationConfig(ctx context.Contex
 }
 
 // readPrometheusCacheConfig reads Prometheus collector cache configuration from the ConfigMap
-func (r *VariantAutoscalingReconciler) readPrometheusCacheConfig(ctx context.Context) (*collector.CacheConfig, error) {
+func (r *VariantAutoscalingReconciler) readPrometheusCacheConfig(ctx context.Context) (*collectorconfig.CacheConfig, error) {
 	cm := corev1.ConfigMap{}
 	err := utils.GetConfigMapWithBackoff(ctx, r.Client, configMapName, configMapNamespace, &cm)
 	if err != nil {
@@ -1495,8 +1496,8 @@ func (r *VariantAutoscalingReconciler) readPrometheusCacheConfig(ctx context.Con
 	}
 
 	// Initialize with defaults including freshness thresholds
-	defaultThresholds := collector.DefaultFreshnessThresholds()
-	config := &collector.CacheConfig{
+	defaultThresholds := collectorconfig.DefaultFreshnessThresholds()
+	config := &collectorconfig.CacheConfig{
 		Enabled:             true, // default
 		TTL:                 30 * time.Second,
 		MaxSize:             0, // unlimited

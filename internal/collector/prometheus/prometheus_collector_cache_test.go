@@ -12,6 +12,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/config"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/constants"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logger"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/test/utils"
@@ -42,7 +43,7 @@ var _ = Describe("PrometheusCollector Cache Integration", func() {
 		}
 
 		// Create collector with cache enabled, but disable background fetching for tests
-		testConfig := &CacheConfig{
+		testConfig := &config.CacheConfig{
 			Enabled:         true,
 			TTL:             30 * time.Second,
 			MaxSize:         0,
@@ -138,7 +139,7 @@ var _ = Describe("PrometheusCollector Cache Integration", func() {
 			acceleratorCost := 10.0
 
 			// Create collector with very short TTL using NewPrometheusCollectorWithConfig
-			shortTTLConfig := &CacheConfig{
+			shortTTLConfig := &config.CacheConfig{
 				Enabled:         true,
 				TTL:             100 * time.Millisecond,
 				MaxSize:         0,

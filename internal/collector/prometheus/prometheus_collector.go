@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/cache"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/config"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/utils"
 
@@ -24,44 +25,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// CacheConfig holds configuration for the metrics cache.
-// This is a duplicate of collector.CacheConfig, defined here to avoid import cycles.
-//
-// IMPORTANT: This type must stay in sync with collector.CacheConfig in internal/collector/types.go.
-// The factory (factory.go) converts collector.CacheConfig → prometheus.CacheConfig at the boundary.
-// When modifying this type, ensure collector.CacheConfig is updated identically.
-type CacheConfig struct {
-	Enabled         bool
-	TTL             time.Duration
-	MaxSize         int
-	CleanupInterval time.Duration
-	// FetchInterval is how often to fetch metrics in background (0 = disable background fetching)
-	FetchInterval time.Duration
-	// FreshnessThresholds define when metrics are considered fresh/stale/unavailable
-	FreshnessThresholds FreshnessThresholds
-}
-
-// FreshnessThresholds defines when metrics are considered fresh, stale, or unavailable.
-// This is a duplicate of collector.FreshnessThresholds, defined here to avoid import cycles.
-//
-// IMPORTANT: This type must stay in sync with collector.FreshnessThresholds in internal/collector/types.go.
-// The factory (factory.go) converts collector.FreshnessThresholds → prometheus.FreshnessThresholds at the boundary.
-// When modifying this type, ensure collector.FreshnessThresholds is updated identically.
-type FreshnessThresholds struct {
-	FreshThreshold       time.Duration // Metrics are fresh if age < this (default: 1 minute)
-	StaleThreshold       time.Duration // Metrics are stale if age >= this but < unavailable (default: 2 minutes)
-	UnavailableThreshold time.Duration // Metrics are unavailable if age >= this (default: 5 minutes)
-}
-
-// DefaultFreshnessThresholds returns default freshness thresholds
-func DefaultFreshnessThresholds() FreshnessThresholds {
-	return FreshnessThresholds{
-		FreshThreshold:       1 * time.Minute,
-		StaleThreshold:       2 * time.Minute,
-		UnavailableThreshold: 5 * time.Minute,
-	}
-}
-
 // PrometheusCollector implements MetricsCollector interface for Prometheus backend
 type PrometheusCollector struct {
 	promAPI   promv1.API
@@ -70,7 +33,7 @@ type PrometheusCollector struct {
 
 	// Background fetching
 	fetchInterval       time.Duration
-	freshnessThresholds FreshnessThresholds
+	freshnessThresholds config.FreshnessThresholds
 	fetchExecutor       executor.Executor // Polling executor for background metric fetching
 	trackedVAs          sync.Map          // map[string]*TrackedVA - tracks VAs for background fetching
 	trackedModels       sync.Map          // map[string]*TrackedModel - tracks models for replica metrics background fetching
@@ -95,14 +58,14 @@ type TrackedModel struct {
 }
 
 // getDefaultCacheConfig returns default cache configuration
-func getDefaultCacheConfig() CacheConfig {
-	return CacheConfig{
+func getDefaultCacheConfig() *config.CacheConfig {
+	return &config.CacheConfig{
 		Enabled:             true, // enabled by default
 		TTL:                 30 * time.Second,
 		MaxSize:             0, // unlimited by default
 		CleanupInterval:     1 * time.Minute,
 		FetchInterval:       30 * time.Second, // Fetch every 30s by default
-		FreshnessThresholds: DefaultFreshnessThresholds(),
+		FreshnessThresholds: config.DefaultFreshnessThresholds(),
 	}
 }
 
@@ -114,19 +77,19 @@ func NewPrometheusCollector(promAPI promv1.API) *PrometheusCollector {
 
 // NewPrometheusCollectorWithConfig creates a new Prometheus metrics collector
 // If cacheConfig is nil, uses default cache settings
-func NewPrometheusCollectorWithConfig(promAPI promv1.API, cacheConfig *CacheConfig) *PrometheusCollector {
+func NewPrometheusCollectorWithConfig(promAPI promv1.API, cacheConfig *config.CacheConfig) *PrometheusCollector {
 	// Use provided config or defaults
-	config := getDefaultCacheConfig()
+	cfg := getDefaultCacheConfig()
 	if cacheConfig != nil {
-		config = *cacheConfig
+		cfg = cacheConfig
 	}
 
 	var metricsCache cache.MetricsCache
 
-	if config.Enabled {
-		metricsCache = cache.NewMemoryCache(config.TTL, config.MaxSize, config.CleanupInterval)
+	if cfg.Enabled {
+		metricsCache = cache.NewMemoryCache(cfg.TTL, cfg.MaxSize, cfg.CleanupInterval)
 		logger.Log.Infof("Metrics cache enabled: TTL=%v, MaxSize=%d, CleanupInterval=%v",
-			config.TTL, config.MaxSize, config.CleanupInterval)
+			cfg.TTL, cfg.MaxSize, cfg.CleanupInterval)
 	} else {
 		// Use a no-op cache implementation when disabled
 		metricsCache = &cache.NoOpCache{}
@@ -137,12 +100,12 @@ func NewPrometheusCollectorWithConfig(promAPI promv1.API, cacheConfig *CacheConf
 		promAPI:             promAPI,
 		k8sClient:           nil, // Will be set when available
 		cache:               metricsCache,
-		fetchInterval:       config.FetchInterval,
-		freshnessThresholds: config.FreshnessThresholds,
+		fetchInterval:       cfg.FetchInterval,
+		freshnessThresholds: cfg.FreshnessThresholds,
 	}
 
 	// Initialize background fetching executor if fetch interval is configured
-	if config.FetchInterval > 0 {
+	if cfg.FetchInterval > 0 {
 		pc.fetchExecutor = executor.NewPollingExecutor(executor.PollingConfig{
 			Config: executor.Config{
 				OptimizeFunc: func(ctx context.Context) error {
@@ -152,10 +115,10 @@ func NewPrometheusCollectorWithConfig(promAPI promv1.API, cacheConfig *CacheConf
 					return nil // Fire-and-forget, errors are logged per-VA/per-model
 				},
 			},
-			Interval:     config.FetchInterval,
+			Interval:     cfg.FetchInterval,
 			RetryBackoff: 500 * time.Millisecond, // Initial backoff for retries (doubles, capped at 4s)
 		})
-		logger.Log.Infof("Initialized background fetching executor with interval: %v", config.FetchInterval)
+		logger.Log.Infof("Initialized background fetching executor with interval: %v", cfg.FetchInterval)
 	}
 
 	return pc
