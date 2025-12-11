@@ -81,7 +81,7 @@ func (mc *MemoryCache) Set(key CacheKey, data interface{}, ttl time.Duration) {
 			// Evict oldest entry (simple strategy: remove first expired, or random)
 			// For now, we'll just allow it to grow (can improve later)
 			if logger.Log != nil {
-				logger.Log.Debugf("Cache at max size (%d), allowing growth", mc.maxSize)
+				logger.Log.Debugw("Cache at max size, allowing growth", "maxSize", mc.maxSize)
 			}
 		}
 	}
@@ -190,7 +190,7 @@ func (mc *MemoryCache) cleanupExpired() {
 	})
 
 	if expiredCount > 0 && logger.Log != nil {
-		logger.Log.Debugf("Cache cleanup: removed %d expired entries", expiredCount)
+		logger.Log.Debugw("Cache cleanup: removed expired entries", "count", expiredCount)
 	}
 }
 
