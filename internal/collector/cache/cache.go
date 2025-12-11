@@ -1,4 +1,4 @@
-package collector
+package cache
 
 import (
 	"fmt"
@@ -17,8 +17,8 @@ func NewCacheKey(modelID, namespace, variantName, metricType string) CacheKey {
 // CachedMetrics holds cached metric data with metadata
 type CachedMetrics struct {
 	// Data is the actual cached metric value
-	// For Allocation: stores the Allocation struct
-	// For ReplicaMetrics: stores the slice of ReplicaMetrics
+	// For Allocation: stores the Allocation struct (used by Model-based optimizer for proactive scaling)
+	// For ReplicaMetrics: stores the slice of ReplicaMetrics (Used by the saturation analyzer for reactive scaling)
 	Data interface{}
 
 	// CollectedAt is when the data was collected
@@ -64,7 +64,7 @@ type MetricsCache interface {
 	// InvalidateForVariant removes all cache entries for a specific variant
 	InvalidateForVariant(modelID, namespace, variantName string)
 
-	// Clear removes all cache entries
+	// Clear removes all entries from the cache
 	Clear()
 
 	// Size returns the number of entries in the cache

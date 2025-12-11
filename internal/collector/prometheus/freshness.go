@@ -1,4 +1,4 @@
-package collector
+package prometheus
 
 import (
 	"fmt"
@@ -7,22 +7,6 @@ import (
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
-
-// FreshnessThresholds defines when metrics are considered fresh, stale, or unavailable
-type FreshnessThresholds struct {
-	FreshThreshold       time.Duration // Metrics are fresh if age < this (default: 1 minute)
-	StaleThreshold       time.Duration // Metrics are stale if age >= this but < unavailable (default: 2 minutes)
-	UnavailableThreshold time.Duration // Metrics are unavailable if age >= this (default: 5 minutes)
-}
-
-// DefaultFreshnessThresholds returns default freshness thresholds
-func DefaultFreshnessThresholds() FreshnessThresholds {
-	return FreshnessThresholds{
-		FreshThreshold:       1 * time.Minute,
-		StaleThreshold:       2 * time.Minute,
-		UnavailableThreshold: 5 * time.Minute,
-	}
-}
 
 // DetermineFreshnessStatus determines the freshness status based on age
 func DetermineFreshnessStatus(age time.Duration, thresholds FreshnessThresholds) string {

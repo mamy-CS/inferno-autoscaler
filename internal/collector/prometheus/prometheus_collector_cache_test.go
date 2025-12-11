@@ -1,4 +1,4 @@
-package collector
+package prometheus
 
 import (
 	"context"

@@ -1,4 +1,4 @@
-package collector
+package prometheus
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/cache"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/utils"
 
@@ -23,11 +24,49 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+// CacheConfig holds configuration for the metrics cache.
+// This is a duplicate of collector.CacheConfig, defined here to avoid import cycles.
+//
+// IMPORTANT: This type must stay in sync with collector.CacheConfig in internal/collector/types.go.
+// The factory (factory.go) converts collector.CacheConfig → prometheus.CacheConfig at the boundary.
+// When modifying this type, ensure collector.CacheConfig is updated identically.
+type CacheConfig struct {
+	Enabled         bool
+	TTL             time.Duration
+	MaxSize         int
+	CleanupInterval time.Duration
+	// FetchInterval is how often to fetch metrics in background (0 = disable background fetching)
+	FetchInterval time.Duration
+	// FreshnessThresholds define when metrics are considered fresh/stale/unavailable
+	FreshnessThresholds FreshnessThresholds
+}
+
+// FreshnessThresholds defines when metrics are considered fresh, stale, or unavailable.
+// This is a duplicate of collector.FreshnessThresholds, defined here to avoid import cycles.
+//
+// IMPORTANT: This type must stay in sync with collector.FreshnessThresholds in internal/collector/types.go.
+// The factory (factory.go) converts collector.FreshnessThresholds → prometheus.FreshnessThresholds at the boundary.
+// When modifying this type, ensure collector.FreshnessThresholds is updated identically.
+type FreshnessThresholds struct {
+	FreshThreshold       time.Duration // Metrics are fresh if age < this (default: 1 minute)
+	StaleThreshold       time.Duration // Metrics are stale if age >= this but < unavailable (default: 2 minutes)
+	UnavailableThreshold time.Duration // Metrics are unavailable if age >= this (default: 5 minutes)
+}
+
+// DefaultFreshnessThresholds returns default freshness thresholds
+func DefaultFreshnessThresholds() FreshnessThresholds {
+	return FreshnessThresholds{
+		FreshThreshold:       1 * time.Minute,
+		StaleThreshold:       2 * time.Minute,
+		UnavailableThreshold: 5 * time.Minute,
+	}
+}
+
 // PrometheusCollector implements MetricsCollector interface for Prometheus backend
 type PrometheusCollector struct {
 	promAPI   promv1.API
 	k8sClient client.Client
-	cache     MetricsCache // Internal cache for metrics
+	cache     cache.MetricsCache // Internal cache for metrics
 
 	// Background fetching
 	fetchInterval       time.Duration
@@ -53,18 +92,6 @@ type TrackedModel struct {
 	ModelID   string
 	Namespace string
 	LastFetch time.Time
-}
-
-// CacheConfig holds configuration for the metrics cache
-type CacheConfig struct {
-	Enabled         bool
-	TTL             time.Duration
-	MaxSize         int
-	CleanupInterval time.Duration
-	// FetchInterval is how often to fetch metrics in background (0 = disable background fetching)
-	FetchInterval time.Duration
-	// FreshnessThresholds define when metrics are considered fresh/stale/unavailable
-	FreshnessThresholds FreshnessThresholds
 }
 
 // getDefaultCacheConfig returns default cache configuration
@@ -94,22 +121,22 @@ func NewPrometheusCollectorWithConfig(promAPI promv1.API, cacheConfig *CacheConf
 		config = *cacheConfig
 	}
 
-	var cache MetricsCache
+	var metricsCache cache.MetricsCache
 
 	if config.Enabled {
-		cache = NewMemoryCache(config.TTL, config.MaxSize, config.CleanupInterval)
+		metricsCache = cache.NewMemoryCache(config.TTL, config.MaxSize, config.CleanupInterval)
 		logger.Log.Infof("Metrics cache enabled: TTL=%v, MaxSize=%d, CleanupInterval=%v",
 			config.TTL, config.MaxSize, config.CleanupInterval)
 	} else {
 		// Use a no-op cache implementation when disabled
-		cache = &noOpCache{}
+		metricsCache = &cache.NoOpCache{}
 		logger.Log.Info("Metrics cache disabled")
 	}
 
 	pc := &PrometheusCollector{
 		promAPI:             promAPI,
 		k8sClient:           nil, // Will be set when available
-		cache:               cache,
+		cache:               metricsCache,
 		fetchInterval:       config.FetchInterval,
 		freshnessThresholds: config.FreshnessThresholds,
 	}
@@ -411,7 +438,7 @@ func (pc *PrometheusCollector) fetchReplicaMetrics(
 		cacheMetrics[i] = replicaMetrics[i]
 		cacheMetrics[i].Metadata = nil // Don't store metadata in cache
 	}
-	cacheKey := NewCacheKey(modelID, namespace, "all", "replica-metrics")
+	cacheKey := cache.NewCacheKey(modelID, namespace, "all", "replica-metrics")
 	pc.cache.Set(cacheKey, cacheMetrics, 0) // 0 means use cache's default TTL
 
 	return replicaMetrics, nil
@@ -440,7 +467,7 @@ func (pc *PrometheusCollector) fetchVAMetricsWithRetry(parentCtx context.Context
 		// Store in cache without metadata (metadata added on retrieval)
 		cacheAlloc := alloc
 		cacheAlloc.Metadata = nil // Don't store metadata in cache
-		cacheKey := NewCacheKey(tracked.ModelID, tracked.Namespace, tracked.VariantName, "allocation")
+		cacheKey := cache.NewCacheKey(tracked.ModelID, tracked.Namespace, tracked.VariantName, "allocation")
 		pc.cache.Set(cacheKey, cacheAlloc, 0) // 0 means use cache's default TTL
 
 		return true, nil // Success, stop retrying
@@ -710,7 +737,7 @@ func (pc *PrometheusCollector) AddMetricsToOptStatus(
 	variantName := va.Name
 
 	// Check cache first (always non-blocking)
-	cacheKey := NewCacheKey(modelName, deployNamespace, variantName, "allocation")
+	cacheKey := cache.NewCacheKey(modelName, deployNamespace, variantName, "allocation")
 	if cached, found := pc.cache.Get(cacheKey); found {
 		logger.Log.Debugf("Cache hit for allocation metrics: model=%s, variant=%s, age=%v",
 			modelName, variantName, cached.Age())
@@ -765,7 +792,7 @@ func (pc *PrometheusCollector) CollectReplicaMetrics(
 	variantCosts map[string]float64,
 ) ([]interfaces.ReplicaMetrics, error) {
 	// Check cache first (cache key is model-level, not variant-level)
-	cacheKey := NewCacheKey(modelID, namespace, "all", "replica-metrics")
+	cacheKey := cache.NewCacheKey(modelID, namespace, "all", "replica-metrics")
 	if cached, found := pc.cache.Get(cacheKey); found {
 		logger.Log.Debugf("Cache hit for replica metrics: model=%s, namespace=%s, age=%v",
 			modelID, namespace, cached.Age())

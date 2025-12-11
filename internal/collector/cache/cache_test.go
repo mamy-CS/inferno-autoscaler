@@ -1,4 +1,4 @@
-package collector
+package cache
 
 import (
 	"time"
@@ -222,11 +222,11 @@ var _ = Describe("Cache", func() {
 		})
 	})
 
-	Describe("noOpCache", func() {
-		var noOp *noOpCache
+	Describe("NoOpCache", func() {
+		var noOp *NoOpCache
 
 		BeforeEach(func() {
-			noOp = &noOpCache{}
+			noOp = &NoOpCache{}
 		})
 
 		It("should always return false for Get", func() {
@@ -246,6 +246,11 @@ var _ = Describe("Cache", func() {
 		It("should have no effect on Invalidate", func() {
 			key := NewCacheKey("model1", "ns1", "variant1", "allocation")
 			noOp.Invalidate(key)
+			// Should not panic
+		})
+
+		It("should have no effect on Clear", func() {
+			noOp.Clear()
 			// Should not panic
 		})
 

@@ -41,6 +41,7 @@ import (
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
 	actuator "github.com/llm-d-incubation/workload-variant-autoscaler/internal/actuator"
 	collector "github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/prometheus"
 	interfaces "github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logger"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/metrics"
@@ -908,7 +909,7 @@ func (r *VariantAutoscalingReconciler) applySaturationDecisions(
 		// Invalidate cache when scaling occurs (replica count changes)
 		if decision.Action != interfaces.ActionNoChange {
 			// Type assert to PrometheusCollector to access cache invalidation
-			if promCollector, ok := r.MetricsCollector.(*collector.PrometheusCollector); ok {
+			if promCollector, ok := r.MetricsCollector.(*prometheus.PrometheusCollector); ok {
 				modelID := decision.ModelID
 				namespace := decision.Namespace
 				variantName := decision.VariantName
@@ -1193,7 +1194,7 @@ func (r *VariantAutoscalingReconciler) SetupWithManager(mgr ctrl.Manager) error 
 	r.MetricsCollector = metricsCollector
 
 	// Set K8sClient on the collector if it supports it (for pod discovery in saturation metrics)
-	if promCollector, ok := metricsCollector.(*collector.PrometheusCollector); ok {
+	if promCollector, ok := metricsCollector.(*prometheus.PrometheusCollector); ok {
 		promCollector.SetK8sClient(mgr.GetClient())
 
 		// Start background fetching executor using manager context

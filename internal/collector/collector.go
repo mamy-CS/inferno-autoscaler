@@ -1,4 +1,16 @@
+// Package collector provides metrics collection functionality.
+//
+// The collector package provides a pluggable metrics collection system with support for
+// multiple backends (Prometheus, EPP). Use factory.NewMetricsCollector() to create collector
+// instances, and the MetricsCollector interface from internal/interfaces to interact with them.
+//
+// Note: Some legacy functions in this package (ValidateMetricsAvailability, AddMetricsToOptStatus)
+// are deprecated. See individual function documentation for details.
 package collector
+
+// This file contains deprecated compatibility functions that delegate to the new
+// MetricsCollector interface. These functions are kept for backward compatibility
+// but should not be used in new code.
 
 import (
 	"context"
@@ -54,8 +66,19 @@ type MetricsValidationResult = interfaces.MetricsValidationResult
 // New code should use MetricsCollector interface via interfaces.MetricsCollector.
 // This function delegates to PrometheusCollector for backward compatibility.
 func ValidateMetricsAvailability(ctx context.Context, promAPI promv1.API, modelName, namespace string) MetricsValidationResult {
-	collector := NewPrometheusCollector(promAPI)
-	return collector.ValidateMetricsAvailability(ctx, modelName, namespace)
+	// Use factory to create collector to avoid import cycle
+	pc, err := NewMetricsCollector(Config{
+		Type:    CollectorTypePrometheus,
+		PromAPI: promAPI,
+	})
+	if err != nil {
+		return MetricsValidationResult{
+			Available: false,
+			Reason:    "Error",
+			Message:   err.Error(),
+		}
+	}
+	return pc.ValidateMetricsAvailability(ctx, modelName, namespace)
 }
 
 // AddMetricsToOptStatus collects metrics for optimization and populates the Allocation status.
@@ -68,8 +91,15 @@ func AddMetricsToOptStatus(ctx context.Context,
 	deployment appsv1.Deployment,
 	acceleratorCostVal float64,
 	promAPI promv1.API) (llmdVariantAutoscalingV1alpha1.Allocation, error) {
-	collector := NewPrometheusCollector(promAPI)
-	return collector.AddMetricsToOptStatus(ctx, opt, deployment, acceleratorCostVal)
+	// Use factory to create collector to avoid import cycle
+	pc, err := NewMetricsCollector(Config{
+		Type:    CollectorTypePrometheus,
+		PromAPI: promAPI,
+	})
+	if err != nil {
+		return llmdVariantAutoscalingV1alpha1.Allocation{}, err
+	}
+	return pc.AddMetricsToOptStatus(ctx, opt, deployment, acceleratorCostVal)
 }
 
 // Helper to handle if a value is NaN or infinite
