@@ -35,11 +35,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
 	actuator "github.com/llm-d-incubation/workload-variant-autoscaler/internal/actuator"
 	collector "github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector"
+	collectorconfig "github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/config"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/prometheus"
 	interfaces "github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logger"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/metrics"
@@ -71,6 +74,10 @@ type VariantAutoscalingReconciler struct {
 	Recorder record.EventRecorder
 
 	PromAPI promv1.API
+
+	// MetricsCollector is the interface for collecting metrics from various backends
+	// Defaults to Prometheus collector, but can be swapped for other backends (e.g., EPP)
+	MetricsCollector interfaces.MetricsCollector
 
 	// Saturation scaling config cache (thread-safe, updated on ConfigMap changes)
 	saturationConfigCache      map[string]interfaces.SaturationScalingConfig
@@ -659,7 +666,7 @@ func (r *VariantAutoscalingReconciler) runSaturationAnalysis(
 
 	for i := range modelVAs {
 		va := &modelVAs[i]
-		cost := 10.0 // default
+		cost := saturation.DefaultVariantCost // default
 		if va.Spec.VariantCost != "" {
 			if parsedCost, err := strconv.ParseFloat(va.Spec.VariantCost, 64); err == nil {
 				cost = parsedCost
@@ -678,10 +685,8 @@ func (r *VariantAutoscalingReconciler) runSaturationAnalysis(
 		variantAutoscalings[va.Name] = va
 	}
 
-	// Collect Saturation metrics from Prometheus
-	metricsCollector := collector.NewSaturationMetricsCollector(r.PromAPI)
-	metricsCollector.SetK8sClient(r.Client)
-	replicaMetrics, err := metricsCollector.CollectReplicaMetrics(ctx, modelID, namespace, deployments, variantAutoscalings, variantCosts)
+	// Collect Saturation metrics using the configured collector
+	replicaMetrics, err := r.MetricsCollector.CollectReplicaMetrics(ctx, modelID, namespace, deployments, variantAutoscalings, variantCosts)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to collect Saturation metrics for model %s: %w", modelID, err)
 	}
@@ -768,7 +773,7 @@ func (r *VariantAutoscalingReconciler) collectMetricsForSaturationMode(
 		}
 
 		// Validate metrics availability before collecting
-		metricsValidation := collector.ValidateMetricsAvailability(ctx, r.PromAPI, modelName, deploy.Namespace)
+		metricsValidation := r.MetricsCollector.ValidateMetricsAvailability(ctx, modelName, deploy.Namespace)
 
 		// Update MetricsAvailable condition based on validation result
 		if metricsValidation.Available {
@@ -790,10 +795,17 @@ func (r *VariantAutoscalingReconciler) collectMetricsForSaturationMode(
 			continue
 		}
 
-		// Collect metrics and populate CurrentAlloc
-		currentAllocation, err := collector.AddMetricsToOptStatus(ctx, &updateVA, deploy, cost, r.PromAPI)
+		// Collect raw metrics from collector
+		metrics, err := r.MetricsCollector.AddMetricsToOptStatus(ctx, &updateVA, deploy, cost)
 		if err != nil {
 			logger.Log.Debugf("Unable to fetch metrics for VA: variant=%s, error=%v", updateVA.Name, err)
+			continue
+		}
+
+		// Assemble Allocation struct from raw metrics
+		currentAllocation, err := BuildAllocationFromMetrics(metrics, &updateVA, deploy, cost)
+		if err != nil {
+			logger.Log.Debugf("Unable to build allocation for VA: variant=%s, error=%v", updateVA.Name, err)
 			continue
 		}
 
@@ -901,6 +913,19 @@ func (r *VariantAutoscalingReconciler) applySaturationDecisions(
 
 		logger.Log.Infof("Applied Saturation decision: variant=%s, action=%s, current=%d, target=%d, reason=%s",
 			decision.VariantName, decision.Action, decision.CurrentReplicas, decision.TargetReplicas, decision.Reason)
+
+		// Invalidate cache when scaling occurs (replica count changes)
+		if decision.Action != interfaces.ActionNoChange {
+			// Type assert to PrometheusCollector to access cache invalidation
+			if promCollector, ok := r.MetricsCollector.(*prometheus.PrometheusCollector); ok {
+				modelID := decision.ModelID
+				namespace := decision.Namespace
+				variantName := decision.VariantName
+				promCollector.InvalidateCacheForVariant(modelID, namespace, variantName)
+				logger.Log.Debugf("Invalidated metrics cache after scaling: variant=%s, action=%s",
+					variantName, decision.Action)
+			}
+		}
 	}
 
 	return nil
@@ -1070,7 +1095,7 @@ func (r *VariantAutoscalingReconciler) prepareVariantAutoscalings(
 		}
 
 		// Validate metrics availability before collecting metrics
-		metricsValidation := collector.ValidateMetricsAvailability(ctx, r.PromAPI, modelName, deploy.Namespace)
+		metricsValidation := r.MetricsCollector.ValidateMetricsAvailability(ctx, modelName, deploy.Namespace)
 
 		// Update MetricsAvailable condition based on validation result
 		if metricsValidation.Available {
@@ -1091,10 +1116,18 @@ func (r *VariantAutoscalingReconciler) prepareVariantAutoscalings(
 			continue
 		}
 
-		currentAllocation, err := collector.AddMetricsToOptStatus(ctx, &updateVA, deploy, acceleratorCostValFloat, r.PromAPI)
+		// Collect raw metrics from collector
+		metrics, err := r.MetricsCollector.AddMetricsToOptStatus(ctx, &updateVA, deploy, acceleratorCostValFloat)
 		if err != nil {
 			logger.Log.Errorf("unable to fetch metrics, skipping this variantAutoscaling loop: error=%v", err)
 			// Don't update status here - will be updated in next reconcile when metrics are available
+			continue
+		}
+
+		// Assemble Allocation struct from raw metrics
+		currentAllocation, err := BuildAllocationFromMetrics(metrics, &updateVA, deploy, acceleratorCostValFloat)
+		if err != nil {
+			logger.Log.Errorf("unable to build allocation, skipping this variantAutoscaling loop: error=%v", err)
 			continue
 		}
 		updateVA.Status.CurrentAlloc = currentAllocation
@@ -1155,6 +1188,45 @@ func (r *VariantAutoscalingReconciler) SetupWithManager(mgr ctrl.Manager) error 
 		return fmt.Errorf("critical: failed to validate Prometheus API connection - autoscaling functionality requires Prometheus: %w", err)
 	}
 	logger.Log.Info("Prometheus client and API wrapper initialized and validated successfully")
+
+	// Read Prometheus cache configuration from ConfigMap
+	// Each collector (Prometheus, EPP, etc.) has its own cache configuration
+	cacheConfig, err := r.readPrometheusCacheConfig(context.Background())
+	if err != nil {
+		logger.Log.Warnf("Failed to read Prometheus cache config from ConfigMap, using defaults: %v", err)
+		cacheConfig = nil // Use defaults
+	}
+
+	// Initialize metrics collector plugin (defaults to Prometheus)
+	// This can be extended to support other collector plugins (e.g., EPP) via configuration
+	metricsCollector, err := collector.NewMetricsCollector(collector.Config{
+		Type:        collector.CollectorTypePrometheus,
+		PromAPI:     r.PromAPI,
+		CacheConfig: cacheConfig,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create metrics collector: %w", err)
+	}
+	r.MetricsCollector = metricsCollector
+
+	// Set K8sClient on the collector if it supports it (for pod discovery in saturation metrics)
+	if promCollector, ok := metricsCollector.(*prometheus.PrometheusCollector); ok {
+		promCollector.SetK8sClient(mgr.GetClient())
+
+		// Start background fetching executor using manager context
+		// This ensures the executor stops gracefully when the manager stops
+		if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
+			promCollector.StartBackgroundWorker(ctx)
+			<-ctx.Done() // Wait for context cancellation
+			return nil
+		})); err != nil {
+			logger.Log.Warnf("Failed to register background fetching executor with manager: %v", err)
+		} else {
+			logger.Log.Info("Registered background fetching executor with manager")
+		}
+	}
+
+	logger.Log.Info("Metrics collector initialized successfully")
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&llmdVariantAutoscalingV1alpha1.VariantAutoscaling{}).
@@ -1428,6 +1500,49 @@ func (r *VariantAutoscalingReconciler) readOptimizationConfig(ctx context.Contex
 
 	interval = cm.Data["GLOBAL_OPT_INTERVAL"]
 	return interval, nil
+}
+
+// readPrometheusCacheConfig reads Prometheus collector cache configuration from the ConfigMap
+func (r *VariantAutoscalingReconciler) readPrometheusCacheConfig(ctx context.Context) (*collectorconfig.CacheConfig, error) {
+	cm := corev1.ConfigMap{}
+	err := utils.GetConfigMapWithBackoff(ctx, r.Client, configMapName, configMapNamespace, &cm)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get configmap for Prometheus cache config: %w", err)
+	}
+
+	// Initialize with defaults including freshness thresholds
+	defaultThresholds := collectorconfig.DefaultFreshnessThresholds()
+	config := &collectorconfig.CacheConfig{
+		Enabled:             true, // default
+		TTL:                 30 * time.Second,
+		CleanupInterval:     1 * time.Minute,
+		FetchInterval:       30 * time.Second, // default fetch interval
+		FreshnessThresholds: defaultThresholds,
+	}
+
+	// PROMETHEUS_METRICS_CACHE_ENABLED (default: true)
+	config.Enabled = utils.ParseBoolFromConfig(cm.Data, "PROMETHEUS_METRICS_CACHE_ENABLED", true)
+
+	// PROMETHEUS_METRICS_CACHE_TTL (default: 30s)
+	config.TTL = utils.ParseDurationFromConfig(cm.Data, "PROMETHEUS_METRICS_CACHE_TTL", 30*time.Second)
+
+	// PROMETHEUS_METRICS_CACHE_CLEANUP_INTERVAL (default: 1m)
+	config.CleanupInterval = utils.ParseDurationFromConfig(cm.Data, "PROMETHEUS_METRICS_CACHE_CLEANUP_INTERVAL", 1*time.Minute)
+
+	// PROMETHEUS_METRICS_CACHE_FETCH_INTERVAL (default: 30s, 0 = disable background fetching)
+	config.FetchInterval = utils.ParseDurationFromConfig(cm.Data, "PROMETHEUS_METRICS_CACHE_FETCH_INTERVAL", 30*time.Second)
+
+	// Freshness thresholds
+	// PROMETHEUS_METRICS_CACHE_FRESH_THRESHOLD (default: 1m)
+	config.FreshnessThresholds.FreshThreshold = utils.ParseDurationFromConfig(cm.Data, "PROMETHEUS_METRICS_CACHE_FRESH_THRESHOLD", 1*time.Minute)
+
+	// PROMETHEUS_METRICS_CACHE_STALE_THRESHOLD (default: 2m)
+	config.FreshnessThresholds.StaleThreshold = utils.ParseDurationFromConfig(cm.Data, "PROMETHEUS_METRICS_CACHE_STALE_THRESHOLD", 2*time.Minute)
+
+	// PROMETHEUS_METRICS_CACHE_UNAVAILABLE_THRESHOLD (default: 5m)
+	config.FreshnessThresholds.UnavailableThreshold = utils.ParseDurationFromConfig(cm.Data, "PROMETHEUS_METRICS_CACHE_UNAVAILABLE_THRESHOLD", 5*time.Minute)
+
+	return config, nil
 }
 
 // handleServiceMonitorEvent handles events for the controller's own ServiceMonitor.

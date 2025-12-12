@@ -25,6 +25,10 @@ type Executor interface {
 }
 
 // OptimizeFunc is the function to be executed.
+//
+// Deprecated: This name is misleading as it's used for generic task execution,
+// not just optimization (e.g., metric fetching, background workers).
+// It will be renamed in the future to better reflect its generic purpose.
 type OptimizeFunc func(ctx context.Context) error
 
 // Config holds common executor configuration.

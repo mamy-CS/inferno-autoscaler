@@ -294,8 +294,12 @@ var _ = Describe("Optimizer", Ordered, func() {
 				err = utils.GetVariantAutoscalingWithBackoff(ctx, k8sClient, deploy.Name, deploy.Namespace, &updateVA)
 				Expect(err).NotTo(HaveOccurred(), "failed to get variantAutoscaling for deployment - ", "deployment-name: ", deploy.Name)
 
-				currentAllocation, err := collector.AddMetricsToOptStatus(ctx, &updateVA, deploy, acceleratorCostValFloat, &testutils.MockPromAPI{})
+				// Use MetricsCollector interface instead of deprecated function
+				metricsCollector := collector.NewPrometheusCollector(&testutils.MockPromAPI{})
+				metrics, err := metricsCollector.AddMetricsToOptStatus(ctx, &updateVA, deploy, acceleratorCostValFloat)
 				Expect(err).NotTo(HaveOccurred(), "unable to fetch metrics and add to Optimizer status for variantAutoscaling - ", "variantAutoscaling-name: ", va.Name)
+				currentAllocation, err := utils.BuildAllocationFromMetrics(metrics, &updateVA, deploy, acceleratorCostValFloat)
+				Expect(err).NotTo(HaveOccurred(), "unable to build allocation from metrics for variantAutoscaling - ", "variantAutoscaling-name: ", va.Name)
 				updateVA.Status.CurrentAlloc = currentAllocation
 
 				err = utils.AddServerInfoToSystemData(systemData, &updateVA, className)
@@ -416,8 +420,12 @@ var _ = Describe("Optimizer", Ordered, func() {
 					&model.Sample{Value: model.SampleValue(0.008)},
 				}
 
-				currentAllocation, err := collector.AddMetricsToOptStatus(ctx, &updateVA, deploy, acceleratorCostValFloat, mockProm)
+				// Use MetricsCollector interface instead of deprecated function
+				metricsCollector := collector.NewPrometheusCollector(mockProm)
+				metrics, err := metricsCollector.AddMetricsToOptStatus(ctx, &updateVA, deploy, acceleratorCostValFloat)
 				Expect(err).NotTo(HaveOccurred(), "unable to fetch metrics and add to Optimizer status for variantAutoscaling - ", "variantAutoscaling-name: ", va.Name)
+				currentAllocation, err := utils.BuildAllocationFromMetrics(metrics, &updateVA, deploy, acceleratorCostValFloat)
+				Expect(err).NotTo(HaveOccurred(), "unable to build allocation from metrics for variantAutoscaling - ", "variantAutoscaling-name: ", va.Name)
 				updateVA.Status.CurrentAlloc = currentAllocation
 
 				err = utils.AddServerInfoToSystemData(systemData, &updateVA, className)

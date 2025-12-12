@@ -32,4 +32,28 @@ data:
   # Option to scale variants to zero replicas (default: true)
   WVA_SCALE_TO_ZERO: "false"
   # Option to use experimental hybrid optimization (default: "off")
+
+  # Prometheus metrics cache configuration
+  # Each collector (Prometheus, EPP, etc.) has its own cache configuration
+  # Enable/disable Prometheus metrics caching (default: "true")
+  # Adding ability to disable flag for debugging purposes and testing, coule be removed in the future for production
+  PROMETHEUS_METRICS_CACHE_ENABLED: "true"
+  # Prometheus cache TTL - how long metrics are cached before expiring (default: "30s")
+  PROMETHEUS_METRICS_CACHE_TTL: "30s"
+  # Maximum number of Prometheus cache entries (0 = unlimited, default: "0")
+  PROMETHEUS_METRICS_CACHE_MAX_SIZE: "0"
+  # Interval for background cleanup of expired Prometheus cache entries (default: "1m")
+  PROMETHEUS_METRICS_CACHE_CLEANUP_INTERVAL: "1m"
+  # Background fetch interval - how often to fetch metrics in background (default: "30s", 0 = disable)
+  PROMETHEUS_METRICS_CACHE_FETCH_INTERVAL: "30s"
+  # Freshness thresholds - when metrics are considered fresh/stale/unavailable
+  PROMETHEUS_METRICS_CACHE_FRESH_THRESHOLD: "1m"
+  PROMETHEUS_METRICS_CACHE_STALE_THRESHOLD: "2m"
+  PROMETHEUS_METRICS_CACHE_UNAVAILABLE_THRESHOLD: "5m"
+
+  # EPP metrics cache configuration (for future EPP collector)
+  # EPP_METRICS_CACHE_ENABLED: "true"
+  # EPP_METRICS_CACHE_TTL: "15s"
+  # EPP_METRICS_CACHE_MAX_SIZE: "500"
+  # EPP_METRICS_CACHE_CLEANUP_INTERVAL: "30s"
   EXPERIMENTAL_HYBRID_OPTIMIZATION: "off"

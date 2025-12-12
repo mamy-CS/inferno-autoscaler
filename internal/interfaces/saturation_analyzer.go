@@ -15,6 +15,18 @@ type ReplicaMetrics struct {
 	ModelID         string  // Model ID for grouping variants
 	AcceleratorName string  // Accelerator type for this variant
 	Cost            float64 // Cost per replica (from CRD spec, default 10)
+	// Metadata contains freshness information (optional)
+	Metadata *ReplicaMetricsMetadata `json:"metadata,omitempty"`
+}
+
+// ReplicaMetricsMetadata contains freshness information for replica metrics
+type ReplicaMetricsMetadata struct {
+	// CollectedAt is when the metrics were collected
+	CollectedAt time.Time
+	// Age is the age of the metrics
+	Age time.Duration
+	// FreshnessStatus indicates freshness: "fresh", "stale", "unavailable"
+	FreshnessStatus string
 }
 
 // ModelSaturationAnalysis holds saturation analysis results for a model (across all variants)

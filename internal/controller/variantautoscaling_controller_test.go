@@ -39,6 +39,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
+	collector "github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector"
 	interfaces "github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
 	logger "github.com/llm-d-incubation/workload-variant-autoscaler/internal/logger"
 	utils "github.com/llm-d-incubation/workload-variant-autoscaler/internal/utils"
@@ -159,10 +160,13 @@ var _ = Describe("VariantAutoscalings Controller", func() {
 				QueryResults: map[string]model.Value{},
 				QueryErrors:  map[string]error{},
 			}
+			// Initialize MetricsCollector with mock Prometheus API
+			metricsCollector := collector.NewPrometheusCollector(mockPromAPI)
 			controllerReconciler := &VariantAutoscalingReconciler{
-				Client:  k8sClient,
-				Scheme:  k8sClient.Scheme(),
-				PromAPI: mockPromAPI,
+				Client:           k8sClient,
+				Scheme:           k8sClient.Scheme(),
+				PromAPI:          mockPromAPI,
+				MetricsCollector: metricsCollector,
 			}
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
@@ -700,10 +704,13 @@ data:
 				QueryErrors:  map[string]error{},
 			}
 
+			// Initialize MetricsCollector with mock Prometheus API
+			metricsCollector := collector.NewPrometheusCollector(mockPromAPI)
 			controllerReconciler := &VariantAutoscalingReconciler{
-				Client:  k8sClient,
-				Scheme:  k8sClient.Scheme(),
-				PromAPI: mockPromAPI,
+				Client:           k8sClient,
+				Scheme:           k8sClient.Scheme(),
+				PromAPI:          mockPromAPI,
+				MetricsCollector: metricsCollector,
 			}
 
 			By("Reading the required configmaps")
@@ -753,10 +760,13 @@ data:
 				QueryErrors: map[string]error{},
 			}
 
+			// Initialize MetricsCollector with mock Prometheus API
+			metricsCollector := collector.NewPrometheusCollector(mockPromAPI)
 			controllerReconciler := &VariantAutoscalingReconciler{
-				Client:  k8sClient,
-				Scheme:  k8sClient.Scheme(),
-				PromAPI: mockPromAPI,
+				Client:           k8sClient,
+				Scheme:           k8sClient.Scheme(),
+				PromAPI:          mockPromAPI,
+				MetricsCollector: metricsCollector,
 			}
 
 			By("Performing a full reconciliation")
