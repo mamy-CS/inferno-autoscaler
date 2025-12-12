@@ -16,13 +16,14 @@ var _ = Describe("Cache", func() {
 	})
 
 	Describe("CacheKey", func() {
-		It("should create cache key correctly", func() {
-			key := NewCacheKey("model1", "ns1", "variant1", "allocation")
+		It("should be a string type that can be constructed directly", func() {
+			// CacheKey is generic - collectors construct keys in their own format
+			key := CacheKey("model1/ns1/variant1/allocation")
 			Expect(key).To(Equal(CacheKey("model1/ns1/variant1/allocation")))
 		})
 
 		It("should handle special characters in cache key", func() {
-			key := NewCacheKey("model-1", "ns_1", "variant.1", "replica-metrics")
+			key := CacheKey("model-1/ns_1/variant.1/replica-metrics")
 			Expect(key).To(Equal(CacheKey("model-1/ns_1/variant.1/replica-metrics")))
 		})
 	})
@@ -79,7 +80,7 @@ var _ = Describe("Cache", func() {
 		})
 
 		It("should store and retrieve cached metrics", func() {
-			key := NewCacheKey("model1", "ns1", "variant1", "allocation")
+			key := CacheKey("model1/ns1/variant1/allocation")
 			data := "test-allocation-data"
 
 			cache.Set(key, data, 0) // Use default TTL
@@ -91,13 +92,13 @@ var _ = Describe("Cache", func() {
 		})
 
 		It("should return false for non-existent keys", func() {
-			key := NewCacheKey("model1", "ns1", "variant1", "allocation")
+			key := CacheKey("model1/ns1/variant1/allocation")
 			_, found := cache.Get(key)
 			Expect(found).To(BeFalse())
 		})
 
 		It("should expire metrics after TTL", func() {
-			key := NewCacheKey("model1", "ns1", "variant1", "allocation")
+			key := CacheKey("model1/ns1/variant1/allocation")
 			data := "test-data"
 
 			// Set with short TTL
@@ -116,8 +117,8 @@ var _ = Describe("Cache", func() {
 		})
 
 		It("should invalidate specific cache entries", func() {
-			key1 := NewCacheKey("model1", "ns1", "variant1", "allocation")
-			key2 := NewCacheKey("model1", "ns1", "variant2", "allocation")
+			key1 := CacheKey("model1/ns1/variant1/allocation")
+			key2 := CacheKey("model1/ns1/variant2/allocation")
 
 			cache.Set(key1, "data1", 0)
 			cache.Set(key2, "data2", 0)
@@ -130,16 +131,17 @@ var _ = Describe("Cache", func() {
 			Expect(found2).To(BeTrue())
 		})
 
-		It("should invalidate all entries for a model", func() {
-			key1 := NewCacheKey("model1", "ns1", "variant1", "allocation")
-			key2 := NewCacheKey("model1", "ns1", "variant2", "allocation")
-			key3 := NewCacheKey("model2", "ns1", "variant1", "allocation")
+		It("should invalidate entries by prefix", func() {
+			key1 := CacheKey("model1/ns1/variant1/allocation")
+			key2 := CacheKey("model1/ns1/variant2/allocation")
+			key3 := CacheKey("model2/ns1/variant1/allocation")
 
 			cache.Set(key1, "data1", 0)
 			cache.Set(key2, "data2", 0)
 			cache.Set(key3, "data3", 0)
 
-			cache.InvalidateForModel("model1", "ns1")
+			// Invalidate all entries for model1/ns1 (using prefix matching)
+			cache.InvalidateByPrefix("model1/ns1/")
 
 			_, found1 := cache.Get(key1)
 			_, found2 := cache.Get(key2)
@@ -149,16 +151,17 @@ var _ = Describe("Cache", func() {
 			Expect(found3).To(BeTrue())
 		})
 
-		It("should invalidate all entries for a variant", func() {
-			key1 := NewCacheKey("model1", "ns1", "variant1", "allocation")
-			key2 := NewCacheKey("model1", "ns1", "variant1", "replica-metrics")
-			key3 := NewCacheKey("model1", "ns1", "variant2", "allocation")
+		It("should invalidate entries by more specific prefix", func() {
+			key1 := CacheKey("model1/ns1/variant1/allocation")
+			key2 := CacheKey("model1/ns1/variant1/replica-metrics")
+			key3 := CacheKey("model1/ns1/variant2/allocation")
 
 			cache.Set(key1, "data1", 0)
 			cache.Set(key2, "data2", 0)
 			cache.Set(key3, "data3", 0)
 
-			cache.InvalidateForVariant("model1", "ns1", "variant1")
+			// Invalidate all entries for model1/ns1/variant1 (using prefix matching)
+			cache.InvalidateByPrefix("model1/ns1/variant1/")
 
 			_, found1 := cache.Get(key1)
 			_, found2 := cache.Get(key2)
@@ -169,8 +172,8 @@ var _ = Describe("Cache", func() {
 		})
 
 		It("should clear all cache entries", func() {
-			key1 := NewCacheKey("model1", "ns1", "variant1", "allocation")
-			key2 := NewCacheKey("model2", "ns2", "variant2", "allocation")
+			key1 := CacheKey("model1/ns1/variant1/allocation")
+			key2 := CacheKey("model2/ns2/variant2/allocation")
 
 			cache.Set(key1, "data1", 0)
 			cache.Set(key2, "data2", 0)
@@ -189,8 +192,8 @@ var _ = Describe("Cache", func() {
 		It("should track cache size correctly", func() {
 			Expect(cache.Size()).To(Equal(0))
 
-			key1 := NewCacheKey("model1", "ns1", "variant1", "allocation")
-			key2 := NewCacheKey("model1", "ns1", "variant2", "allocation")
+			key1 := CacheKey("model1/ns1/variant1/allocation")
+			key2 := CacheKey("model1/ns1/variant2/allocation")
 
 			cache.Set(key1, "data1", 0)
 			Expect(cache.Size()).To(Equal(1))
@@ -212,13 +215,13 @@ var _ = Describe("Cache", func() {
 		})
 
 		It("should always return false for Get", func() {
-			key := NewCacheKey("model1", "ns1", "variant1", "allocation")
+			key := CacheKey("model1/ns1/variant1/allocation")
 			_, found := noOp.Get(key)
 			Expect(found).To(BeFalse())
 		})
 
 		It("should have no effect on Set", func() {
-			key := NewCacheKey("model1", "ns1", "variant1", "allocation")
+			key := CacheKey("model1/ns1/variant1/allocation")
 			noOp.Set(key, "data", 30*time.Second)
 			// Should not panic and should not store anything
 			_, found := noOp.Get(key)
@@ -226,7 +229,7 @@ var _ = Describe("Cache", func() {
 		})
 
 		It("should have no effect on Invalidate", func() {
-			key := NewCacheKey("model1", "ns1", "variant1", "allocation")
+			key := CacheKey("model1/ns1/variant1/allocation")
 			noOp.Invalidate(key)
 			// Should not panic
 		})

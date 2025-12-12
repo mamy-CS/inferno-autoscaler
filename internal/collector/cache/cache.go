@@ -1,18 +1,13 @@
 package cache
 
 import (
-	"fmt"
 	"time"
 )
 
-// CacheKey represents a unique key for cached metrics
-// Format: {modelID}/{namespace}/{variantName}/{metricType}
+// CacheKey represents a unique key for cached metrics.
+// The cache is generic and does not enforce any specific key format.
+// Each collector implementation is responsible for constructing keys in its own format.
 type CacheKey string
-
-// NewCacheKey creates a cache key from components
-func NewCacheKey(modelID, namespace, variantName, metricType string) CacheKey {
-	return CacheKey(fmt.Sprintf("%s/%s/%s/%s", modelID, namespace, variantName, metricType))
-}
 
 // CachedMetrics holds cached metric data with metadata
 type CachedMetrics struct {
@@ -58,11 +53,10 @@ type MetricsCache interface {
 	// Invalidate removes a specific cache entry
 	Invalidate(key CacheKey)
 
-	// InvalidateForModel removes all cache entries for a specific model
-	InvalidateForModel(modelID, namespace string)
-
-	// InvalidateForVariant removes all cache entries for a specific variant
-	InvalidateForVariant(modelID, namespace, variantName string)
+	// InvalidateByPrefix removes all cache entries whose keys start with the given prefix.
+	// This allows collectors to invalidate groups of related cache entries without
+	// the cache needing to know about domain-specific concepts (e.g., models, variants).
+	InvalidateByPrefix(prefix string)
 
 	// Clear removes all entries from the cache
 	Clear()

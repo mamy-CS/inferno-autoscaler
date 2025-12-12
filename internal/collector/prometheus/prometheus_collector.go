@@ -167,7 +167,9 @@ func (pc *PrometheusCollector) SetK8sClient(k8sClient client.Client) {
 // This should be called when replica counts change or deployments are updated
 func (pc *PrometheusCollector) InvalidateCacheForVariant(modelID, namespace, variantName string) {
 	if pc.cache != nil {
-		pc.cache.InvalidateForVariant(modelID, namespace, variantName)
+		// Construct prefix using PrometheusCollector's key format: {modelID}/{namespace}/{variantName}/
+		prefix := fmt.Sprintf("%s/%s/%s/", modelID, namespace, variantName)
+		pc.cache.InvalidateByPrefix(prefix)
 		logger.Log.Debugw("Invalidated cache for variant", "model", modelID, "namespace", namespace, "variant", variantName)
 	}
 }
@@ -176,7 +178,9 @@ func (pc *PrometheusCollector) InvalidateCacheForVariant(modelID, namespace, var
 // This should be called when model-level changes occur
 func (pc *PrometheusCollector) InvalidateCacheForModel(modelID, namespace string) {
 	if pc.cache != nil {
-		pc.cache.InvalidateForModel(modelID, namespace)
+		// Construct prefix using PrometheusCollector's key format: {modelID}/{namespace}/
+		prefix := fmt.Sprintf("%s/%s/", modelID, namespace)
+		pc.cache.InvalidateByPrefix(prefix)
 		logger.Log.Debugw("Invalidated cache for model", "model", modelID, "namespace", namespace)
 	}
 }
@@ -434,7 +438,8 @@ func (pc *PrometheusCollector) fetchReplicaMetrics(
 		cacheMetrics[i] = replicaMetrics[i]
 		cacheMetrics[i].Metadata = nil // Don't store metadata in cache
 	}
-	cacheKey := cache.NewCacheKey(modelID, namespace, "all", "replica-metrics")
+	// Construct cache key using PrometheusCollector's format: {modelID}/{namespace}/{variantName}/{metricType}
+	cacheKey := cache.CacheKey(fmt.Sprintf("%s/%s/all/replica-metrics", modelID, namespace))
 	pc.cache.Set(cacheKey, cacheMetrics, 0) // 0 means use cache's default TTL
 
 	return replicaMetrics, nil
@@ -465,7 +470,8 @@ func (pc *PrometheusCollector) fetchVAMetricsWithRetry(parentCtx context.Context
 			"collectedAt", collectedAt.Format(time.RFC3339))
 
 		// Store in cache
-		cacheKey := cache.NewCacheKey(tracked.ModelID, tracked.Namespace, tracked.VariantName, "allocation-metrics")
+		// Construct cache key using PrometheusCollector's format: {modelID}/{namespace}/{variantName}/{metricType}
+		cacheKey := cache.CacheKey(fmt.Sprintf("%s/%s/%s/allocation-metrics", tracked.ModelID, tracked.Namespace, tracked.VariantName))
 		pc.cache.Set(cacheKey, metrics, 0) // 0 means use cache's default TTL
 
 		return true, nil // Success, stop retrying
@@ -696,7 +702,8 @@ func (pc *PrometheusCollector) AddMetricsToOptStatus(
 	variantName := va.Name
 
 	// Check cache first (always non-blocking)
-	cacheKey := cache.NewCacheKey(modelName, deployNamespace, variantName, "allocation-metrics")
+	// Construct cache key using PrometheusCollector's format: {modelID}/{namespace}/{variantName}/{metricType}
+	cacheKey := cache.CacheKey(fmt.Sprintf("%s/%s/%s/allocation-metrics", modelName, deployNamespace, variantName))
 	if cached, found := pc.cache.Get(cacheKey); found {
 		age := cached.Age()
 		freshnessStatus := DetermineFreshnessStatus(age, pc.freshnessThresholds)
@@ -751,8 +758,9 @@ func (pc *PrometheusCollector) CollectReplicaMetrics(
 	variantCosts map[string]float64,
 ) ([]interfaces.ReplicaMetrics, error) {
 	// Check cache first (cache key is model-level, not variant-level)
-	cacheKey := cache.NewCacheKey(modelID, namespace, "all", "replica-metrics")
-	if cached, found := pc.cache.Get(cacheKey); found {
+	// Construct cache key using PrometheusCollector's format: {modelID}/{namespace}/{variantName}/{metricType}
+	replicaCacheKey := cache.CacheKey(fmt.Sprintf("%s/%s/all/replica-metrics", modelID, namespace))
+	if cached, found := pc.cache.Get(replicaCacheKey); found {
 		age := cached.Age()
 		freshnessStatus := DetermineFreshnessStatus(age, pc.freshnessThresholds)
 		// Type assert to []ReplicaMetrics
@@ -811,7 +819,8 @@ func (pc *PrometheusCollector) CollectReplicaMetrics(
 		cacheMetrics[i] = replicaMetrics[i]
 		cacheMetrics[i].Metadata = nil // Don't store metadata in cache
 	}
-	pc.cache.Set(cacheKey, cacheMetrics, 0) // 0 means use cache's default TTL
+	// Reuse the same cache key constructed above for storing
+	pc.cache.Set(replicaCacheKey, cacheMetrics, 0) // 0 means use cache's default TTL
 	logger.Log.Debugw("Collected and cached replica metrics",
 		"model", modelID,
 		"namespace", namespace,

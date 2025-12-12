@@ -17,11 +17,7 @@ func (n *NoOpCache) Invalidate(key CacheKey) {
 	// No-op
 }
 
-func (n *NoOpCache) InvalidateForModel(modelID, namespace string) {
-	// No-op
-}
-
-func (n *NoOpCache) InvalidateForVariant(modelID, namespace, variantName string) {
+func (n *NoOpCache) InvalidateByPrefix(prefix string) {
 	// No-op
 }
 

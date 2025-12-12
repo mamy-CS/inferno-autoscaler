@@ -2,7 +2,6 @@ package cache
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
@@ -87,9 +86,8 @@ func (mc *MemoryCache) Invalidate(key CacheKey) {
 	mc.cache.Delete(key)
 }
 
-// InvalidateForModel removes all cache entries for a specific model
-func (mc *MemoryCache) InvalidateForModel(modelID, namespace string) {
-	prefix := fmt.Sprintf("%s/%s/", modelID, namespace)
+// InvalidateByPrefix removes all cache entries whose keys start with the given prefix
+func (mc *MemoryCache) InvalidateByPrefix(prefix string) {
 	mc.cache.Range(func(key, value interface{}) bool {
 		cacheKey, ok := key.(CacheKey)
 		if !ok {
@@ -98,26 +96,7 @@ func (mc *MemoryCache) InvalidateForModel(modelID, namespace string) {
 			return true
 		}
 		keyStr := string(cacheKey)
-		// Check if key starts with modelID/namespace
-		if len(keyStr) >= len(prefix) && keyStr[:len(prefix)] == prefix {
-			mc.cache.Delete(key)
-		}
-		return true
-	})
-}
-
-// InvalidateForVariant removes all cache entries for a specific variant
-func (mc *MemoryCache) InvalidateForVariant(modelID, namespace, variantName string) {
-	prefix := fmt.Sprintf("%s/%s/%s/", modelID, namespace, variantName)
-	mc.cache.Range(func(key, value interface{}) bool {
-		cacheKey, ok := key.(CacheKey)
-		if !ok {
-			// Invalid key type, delete it
-			mc.cache.Delete(key)
-			return true
-		}
-		keyStr := string(cacheKey)
-		// Check if key matches modelID/namespace/variantName
+		// Check if key starts with prefix
 		if len(keyStr) >= len(prefix) && keyStr[:len(prefix)] == prefix {
 			mc.cache.Delete(key)
 		}
