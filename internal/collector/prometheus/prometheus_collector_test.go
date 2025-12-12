@@ -19,7 +19,7 @@ import (
 	"github.com/llm-d-incubation/workload-variant-autoscaler/test/utils"
 )
 
-var _ = Describe("PrometheusCollector Cache Integration", func() {
+var _ = Describe("PrometheusCollector", func() {
 	var (
 		ctx         context.Context
 		mockPromAPI *utils.MockPromAPI

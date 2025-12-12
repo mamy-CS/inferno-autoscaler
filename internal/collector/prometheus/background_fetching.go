@@ -22,7 +22,7 @@ import (
 // This should be called with a context that will be cancelled when the collector is stopped
 func (pc *PrometheusCollector) StartBackgroundWorker(ctx context.Context) {
 	if pc.fetchExecutor == nil {
-		logger.Log.Info("Background worker not started: fetch executor not initialized (fetch interval is 0 or negative)")
+		logger.Log.Infow("Background worker not started: fetch executor not initialized (fetch interval is 0 or negative)")
 		return
 	}
 
@@ -33,7 +33,7 @@ func (pc *PrometheusCollector) StartBackgroundWorker(ctx context.Context) {
 // StopBackgroundWorker stops the background worker gracefully
 // Note: With PollingExecutor, stopping is handled via context cancellation
 func (pc *PrometheusCollector) StopBackgroundWorker() {
-	logger.Log.Info("Background fetching executor will stop when context is cancelled")
+	logger.Log.Infow("Background fetching executor will stop when context is cancelled")
 }
 
 // fetchTrackedVAs fetches metrics for all tracked VAs with exponential backoff retry
@@ -69,8 +69,8 @@ func (pc *PrometheusCollector) fetchTrackedVAs(ctx context.Context) {
 // fetchTrackedModels fetches replica metrics for all tracked models with exponential backoff retry
 // This is called by the PollingExecutor at configured intervals
 func (pc *PrometheusCollector) fetchTrackedModels(ctx context.Context) {
-	if pc.k8sClient == nil {
-		logger.Log.Debug("Skipping replica metrics background fetch: K8s client not set")
+	if pc.getK8sClient() == nil {
+		logger.Log.Debugw("Skipping replica metrics background fetch: K8s client not set")
 		return
 	}
 
@@ -208,12 +208,17 @@ func (pc *PrometheusCollector) buildModelMaps(ctx context.Context, modelID, name
 	variantAutoscalings = make(map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling)
 	variantCosts = make(map[string]float64)
 
+	k8sClient := pc.getK8sClient()
+	if k8sClient == nil {
+		return nil, nil, nil, fmt.Errorf("kubernetes client is not set")
+	}
+
 	// List all VAs in the namespace
 	var vaList llmdVariantAutoscalingV1alpha1.VariantAutoscalingList
 	listOpts := []client.ListOption{
 		client.InNamespace(namespace),
 	}
-	if err := pc.k8sClient.List(ctx, &vaList, listOpts...); err != nil {
+	if err := k8sClient.List(ctx, &vaList, listOpts...); err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to list VariantAutoscaling resources: %w", err)
 	}
 
@@ -235,7 +240,7 @@ func (pc *PrometheusCollector) buildModelMaps(ctx context.Context, modelID, name
 
 		// Get the deployment for this VA
 		var deploy appsv1.Deployment
-		if err := utils.GetDeploymentWithBackoff(ctx, pc.k8sClient, va.GetScaleTargetName(), va.Namespace, &deploy); err != nil {
+		if err := utils.GetDeploymentWithBackoff(ctx, k8sClient, va.GetScaleTargetName(), va.Namespace, &deploy); err != nil {
 			logger.Log.Debugw("Could not get deployment for VA in background fetch", "variant", va.Name, "deployment", va.GetScaleTargetName(), "error", err)
 			continue // Skip this VA if we can't get its deployment
 		}
@@ -260,7 +265,7 @@ func (pc *PrometheusCollector) fetchReplicaMetrics(
 	// Use the existing SaturationMetricsCollector implementation
 	saturationCollector := &SaturationMetricsCollector{
 		promAPI:   pc.promAPI,
-		k8sClient: pc.k8sClient,
+		k8sClient: pc.getK8sClient(),
 	}
 	replicaMetrics, err := saturationCollector.CollectReplicaMetrics(ctx, modelID, namespace, deployments, variantAutoscalings, variantCosts)
 	if err != nil {

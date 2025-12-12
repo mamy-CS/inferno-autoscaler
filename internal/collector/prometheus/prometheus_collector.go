@@ -23,9 +23,13 @@ import (
 
 // PrometheusCollector implements MetricsCollector interface for Prometheus backend
 type PrometheusCollector struct {
-	promAPI   promv1.API
-	k8sClient client.Client
-	cache     cache.MetricsCache // Internal cache for metrics
+	promAPI promv1.API
+	cache   cache.MetricsCache // Internal cache for metrics
+
+	// k8sClient is accessed by background goroutines, so we use atomic.Value for thread-safe access
+	// We use a mutex to protect writes (SetK8sClient)
+	k8sClientMu sync.RWMutex
+	k8sClient   client.Client
 
 	// Background fetching
 	fetchInterval       time.Duration
@@ -58,7 +62,7 @@ func NewPrometheusCollectorWithConfig(promAPI promv1.API, cacheConfig *config.Ca
 	} else {
 		// Use a no-op cache implementation when disabled
 		metricsCache = &cache.NoOpCache{}
-		logger.Log.Info("Metrics cache disabled")
+		logger.Log.Infow("Metrics cache disabled")
 	}
 
 	pc := &PrometheusCollector{
@@ -90,8 +94,18 @@ func NewPrometheusCollectorWithConfig(promAPI promv1.API, cacheConfig *config.Ca
 }
 
 // SetK8sClient sets the Kubernetes client for pod ownership lookups
+// This is thread-safe and can be called concurrently with background fetching
 func (pc *PrometheusCollector) SetK8sClient(k8sClient client.Client) {
+	pc.k8sClientMu.Lock()
+	defer pc.k8sClientMu.Unlock()
 	pc.k8sClient = k8sClient
+}
+
+// getK8sClient returns the Kubernetes client in a thread-safe manner
+func (pc *PrometheusCollector) getK8sClient() client.Client {
+	pc.k8sClientMu.RLock()
+	defer pc.k8sClientMu.RUnlock()
+	return pc.k8sClient
 }
 
 // fetchOptimizerMetricsCore contains the core logic for fetching raw optimizer metrics from Prometheus
@@ -205,8 +219,8 @@ func (pc *PrometheusCollector) ValidateMetricsAvailability(
 
 	val, _, err := utils.QueryPrometheusWithBackoff(ctx, pc.promAPI, testQuery)
 	if err != nil {
-		logger.Log.Error(err, "Error querying Prometheus for metrics validation",
-			"model", modelName, "namespace", namespace)
+		logger.Log.Errorw("Error querying Prometheus for metrics validation",
+			"model", modelName, "namespace", namespace, "error", err)
 		return interfaces.MetricsValidationResult{
 			Available: false,
 			Reason:    llmdVariantAutoscalingV1alpha1.ReasonPrometheusError,
@@ -302,7 +316,7 @@ func (pc *PrometheusCollector) AddMetricsToOptStatus(
 	cacheKey := cache.CacheKey(fmt.Sprintf("%s/%s/%s/allocation-metrics", modelName, deployNamespace, variantName))
 	if cached, found := pc.cache.Get(cacheKey); found {
 		age := cached.Age()
-		freshnessStatus := DetermineFreshnessStatus(age, pc.freshnessThresholds)
+		freshnessStatus := pc.freshnessThresholds.DetermineStatus(age)
 		logger.Log.Debugw("Cache hit for allocation metrics",
 			"model", modelName,
 			"variant", variantName,
@@ -358,7 +372,7 @@ func (pc *PrometheusCollector) CollectReplicaMetrics(
 	replicaCacheKey := cache.CacheKey(fmt.Sprintf("%s/%s/all/replica-metrics", modelID, namespace))
 	if cached, found := pc.cache.Get(replicaCacheKey); found {
 		age := cached.Age()
-		freshnessStatus := DetermineFreshnessStatus(age, pc.freshnessThresholds)
+		freshnessStatus := pc.freshnessThresholds.DetermineStatus(age)
 		// Type assert to []ReplicaMetrics
 		if replicaMetrics, ok := cached.Data.([]interfaces.ReplicaMetrics); ok {
 			logger.Log.Debugw("Cache hit for replica metrics",
@@ -390,7 +404,7 @@ func (pc *PrometheusCollector) CollectReplicaMetrics(
 	// we maintain compatibility by using the existing struct
 	saturationCollector := &SaturationMetricsCollector{
 		promAPI:   pc.promAPI,
-		k8sClient: pc.k8sClient,
+		k8sClient: pc.getK8sClient(),
 	}
 	replicaMetrics, err := saturationCollector.CollectReplicaMetrics(ctx, modelID, namespace, deployments, variantAutoscalings, variantCosts)
 	if err != nil {

@@ -22,6 +22,17 @@ type FreshnessThresholds struct {
 	UnavailableThreshold time.Duration // Metrics are unavailable if age >= this (default: 5 minutes)
 }
 
+// DetermineStatus determines the freshness status based on age.
+// Returns "fresh", "stale", or "unavailable" based on the configured thresholds.
+func (ft FreshnessThresholds) DetermineStatus(age time.Duration) string {
+	if age < ft.FreshThreshold {
+		return "fresh"
+	} else if age < ft.UnavailableThreshold {
+		return "stale"
+	}
+	return "unavailable"
+}
+
 // DefaultFreshnessThresholds returns default freshness thresholds
 func DefaultFreshnessThresholds() FreshnessThresholds {
 	return FreshnessThresholds{

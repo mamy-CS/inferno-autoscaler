@@ -18,12 +18,12 @@ func (pc *PrometheusCollector) queryAndExtractMetric(ctx context.Context, query 
 	}
 
 	if warn != nil {
-		logger.Log.Warn("Prometheus warnings", "metric", metricName, "warnings", warn)
+		logger.Log.Warnw("Prometheus warnings", "metric", metricName, "warnings", warn)
 	}
 
 	// Check if the result type is a Vector
 	if val.Type() != model.ValVector {
-		logger.Log.Debug("Prometheus query returned non-vector type", "metric", metricName, "type", val.Type().String())
+		logger.Log.Debugw("Prometheus query returned non-vector type", "metric", metricName, "type", val.Type().String())
 		return 0.0, nil
 	}
 
