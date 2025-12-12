@@ -7,7 +7,6 @@ import "time"
 type CacheConfig struct {
 	Enabled         bool
 	TTL             time.Duration
-	MaxSize         int
 	CleanupInterval time.Duration
 	// FetchInterval is how often to fetch metrics in background (0 = disable background fetching)
 	FetchInterval time.Duration

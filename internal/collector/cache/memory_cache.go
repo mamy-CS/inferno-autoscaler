@@ -14,11 +14,10 @@ type MemoryCache struct {
 	// cache stores the cached metrics
 	cache sync.Map // map[CacheKey]*CachedMetrics
 
-	// defaultTTL is the default time-to-live for cache entries
-	defaultTTL time.Duration
-
-	// maxSize is the maximum number of entries (0 = unlimited)
-	maxSize int
+	// configuredTTL is the time-to-live for cache entries configured at creation time.
+	// This value is used when Set() is called with ttl=0 (meaning "use configured TTL").
+	// It comes from CacheConfig.TTL but is stored here to avoid keeping a reference to the config.
+	configuredTTL time.Duration
 
 	// cleanupInterval is how often to run cleanup of expired entries
 	cleanupInterval time.Duration
@@ -29,11 +28,10 @@ type MemoryCache struct {
 }
 
 // NewMemoryCache creates a new in-memory cache
-func NewMemoryCache(defaultTTL time.Duration, maxSize int, cleanupInterval time.Duration) *MemoryCache {
+func NewMemoryCache(configuredTTL time.Duration, cleanupInterval time.Duration) *MemoryCache {
 	ctx, cancel := context.WithCancel(context.Background())
 	c := &MemoryCache{
-		defaultTTL:      defaultTTL,
-		maxSize:         maxSize,
+		configuredTTL:   configuredTTL,
 		cleanupInterval: cleanupInterval,
 		stopCleanup:     cancel,
 	}
@@ -70,20 +68,9 @@ func (mc *MemoryCache) Get(key CacheKey) (*CachedMetrics, bool) {
 
 // Set stores metrics in the cache with a TTL
 func (mc *MemoryCache) Set(key CacheKey, data interface{}, ttl time.Duration) {
-	// Use default TTL if not specified
+	// Use configured TTL if not specified (ttl=0 means "use configured value")
 	if ttl == 0 {
-		ttl = mc.defaultTTL
-	}
-
-	// Check max size limit
-	if mc.maxSize > 0 {
-		if mc.Size() >= mc.maxSize {
-			// Evict oldest entry (simple strategy: remove first expired, or random)
-			// For now, we'll just allow it to grow (can improve later)
-			if logger.Log != nil {
-				logger.Log.Debugw("Cache at max size, allowing growth", "maxSize", mc.maxSize)
-			}
-		}
+		ttl = mc.configuredTTL
 	}
 
 	cached := &CachedMetrics{

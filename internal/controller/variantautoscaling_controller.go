@@ -1515,7 +1515,6 @@ func (r *VariantAutoscalingReconciler) readPrometheusCacheConfig(ctx context.Con
 	config := &collectorconfig.CacheConfig{
 		Enabled:             true, // default
 		TTL:                 30 * time.Second,
-		MaxSize:             0, // unlimited
 		CleanupInterval:     1 * time.Minute,
 		FetchInterval:       30 * time.Second, // default fetch interval
 		FreshnessThresholds: defaultThresholds,
@@ -1526,9 +1525,6 @@ func (r *VariantAutoscalingReconciler) readPrometheusCacheConfig(ctx context.Con
 
 	// PROMETHEUS_METRICS_CACHE_TTL (default: 30s)
 	config.TTL = utils.ParseDurationFromConfig(cm.Data, "PROMETHEUS_METRICS_CACHE_TTL", 30*time.Second)
-
-	// PROMETHEUS_METRICS_CACHE_MAX_SIZE (default: 0 = unlimited)
-	config.MaxSize = utils.ParseIntFromConfig(cm.Data, "PROMETHEUS_METRICS_CACHE_MAX_SIZE", 0, 0)
 
 	// PROMETHEUS_METRICS_CACHE_CLEANUP_INTERVAL (default: 1m)
 	config.CleanupInterval = utils.ParseDurationFromConfig(cm.Data, "PROMETHEUS_METRICS_CACHE_CLEANUP_INTERVAL", 1*time.Minute)

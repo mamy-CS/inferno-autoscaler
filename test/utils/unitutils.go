@@ -145,12 +145,12 @@ type MockPromAPI struct {
 }
 
 func (m *MockPromAPI) Query(ctx context.Context, query string, ts time.Time, opts ...promv1.Option) (model.Value, promv1.Warnings, error) {
+	m.mu.Lock()
 	// Initialize call count if not exists
 	if m.QueryCallCounts == nil {
 		m.QueryCallCounts = make(map[string]int)
 	}
 
-	m.mu.Lock()
 	m.QueryCallCounts[query]++
 	callCount := m.QueryCallCounts[query]
 
@@ -166,21 +166,34 @@ func (m *MockPromAPI) Query(ctx context.Context, query string, ts time.Time, opt
 		}
 	}
 
+	// Check for permanent errors
+	var permErr error
+	if err, exists := m.QueryErrors[query]; exists {
+		permErr = err
+	}
+
+	// Get successful result
+	var result model.Value
+	var hasResult bool
+	if val, exists := m.QueryResults[query]; exists {
+		result = val
+		hasResult = true
+	}
+
 	m.mu.Unlock()
 
 	if shouldFail {
 		return nil, nil, fmt.Errorf("transient error (attempt %d/%d)", callCount, failCount+1)
 	}
 
-	// Check for permanent errors
-	if err, exists := m.QueryErrors[query]; exists {
-		return nil, nil, err
+	if permErr != nil {
+		return nil, nil, permErr
 	}
 
-	// Return successful result
-	if val, exists := m.QueryResults[query]; exists {
-		return val, nil, nil
+	if hasResult {
+		return result, nil, nil
 	}
+
 	// Default return vector with one sample (to pass metrics validation)
 	// This simulates Prometheus having scraped at least one metric
 	return model.Vector{

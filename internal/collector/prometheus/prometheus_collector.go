@@ -98,7 +98,6 @@ func getDefaultCacheConfig() *config.CacheConfig {
 	return &config.CacheConfig{
 		Enabled:             true, // enabled by default
 		TTL:                 30 * time.Second,
-		MaxSize:             0, // unlimited by default
 		CleanupInterval:     1 * time.Minute,
 		FetchInterval:       30 * time.Second, // Fetch every 30s by default
 		FreshnessThresholds: config.DefaultFreshnessThresholds(),
@@ -123,8 +122,8 @@ func NewPrometheusCollectorWithConfig(promAPI promv1.API, cacheConfig *config.Ca
 	var metricsCache cache.MetricsCache
 
 	if cfg.Enabled {
-		metricsCache = cache.NewMemoryCache(cfg.TTL, cfg.MaxSize, cfg.CleanupInterval)
-		logger.Log.Infow("Metrics cache enabled", "TTL", cfg.TTL, "maxSize", cfg.MaxSize, "cleanupInterval", cfg.CleanupInterval)
+		metricsCache = cache.NewMemoryCache(cfg.TTL, cfg.CleanupInterval)
+		logger.Log.Infow("Metrics cache enabled", "TTL", cfg.TTL, "cleanupInterval", cfg.CleanupInterval)
 	} else {
 		// Use a no-op cache implementation when disabled
 		metricsCache = &cache.NoOpCache{}
@@ -335,8 +334,13 @@ func (pc *PrometheusCollector) fetchModelReplicaMetricsWithRetry(parentCtx conte
 		}
 
 		// Success - update last fetch time (thread-safe)
-		tracked.setLastFetch(time.Now())
-		logger.Log.Debugw("Background replica metrics fetch succeeded for model", "model", tracked.ModelID, "namespace", tracked.Namespace)
+		collectedAt := time.Now()
+		tracked.setLastFetch(collectedAt)
+		logger.Log.Debugw("Background replica metrics fetch succeeded for model",
+			"model", tracked.ModelID,
+			"namespace", tracked.Namespace,
+			"freshnessStatus", "fresh",
+			"collectedAt", collectedAt.Format(time.RFC3339))
 
 		return true, nil // Success, stop retrying
 	})
@@ -452,8 +456,13 @@ func (pc *PrometheusCollector) fetchVAMetricsWithRetry(parentCtx context.Context
 		}
 
 		// Success - update last fetch time (thread-safe)
-		tracked.setLastFetch(time.Now())
-		logger.Log.Debugw("Background fetch succeeded for VA", "model", tracked.ModelID, "variant", tracked.VariantName)
+		collectedAt := time.Now()
+		tracked.setLastFetch(collectedAt)
+		logger.Log.Debugw("Background fetch succeeded for VA",
+			"model", tracked.ModelID,
+			"variant", tracked.VariantName,
+			"freshnessStatus", "fresh",
+			"collectedAt", collectedAt.Format(time.RFC3339))
 
 		// Store in cache
 		cacheKey := cache.NewCacheKey(tracked.ModelID, tracked.Namespace, tracked.VariantName, "allocation-metrics")
@@ -689,7 +698,15 @@ func (pc *PrometheusCollector) AddMetricsToOptStatus(
 	// Check cache first (always non-blocking)
 	cacheKey := cache.NewCacheKey(modelName, deployNamespace, variantName, "allocation-metrics")
 	if cached, found := pc.cache.Get(cacheKey); found {
-		logger.Log.Debugw("Cache hit for allocation metrics", "model", modelName, "variant", variantName, "age", cached.Age())
+		age := cached.Age()
+		freshnessStatus := DetermineFreshnessStatus(age, pc.freshnessThresholds)
+		logger.Log.Debugw("Cache hit for allocation metrics",
+			"model", modelName,
+			"variant", variantName,
+			"age", age.String(),
+			"ageSeconds", age.Seconds(),
+			"freshnessStatus", freshnessStatus,
+			"collectedAt", cached.CollectedAt.Format(time.RFC3339))
 		// Type assert to OptimizerMetrics
 		if metrics, ok := cached.Data.(interfaces.OptimizerMetrics); ok {
 			// Track VA for background fetching
@@ -710,7 +727,12 @@ func (pc *PrometheusCollector) AddMetricsToOptStatus(
 
 	// Store in cache (use default TTL from cache config)
 	pc.cache.Set(cacheKey, metrics, 0) // 0 means use cache's default TTL
-	logger.Log.Debugw("Cached allocation metrics", "model", modelName, "variant", variantName)
+	collectedAt := time.Now()
+	logger.Log.Debugw("Collected and cached allocation metrics",
+		"model", modelName,
+		"variant", variantName,
+		"freshnessStatus", "fresh",
+		"collectedAt", collectedAt.Format(time.RFC3339))
 
 	// Track VA for background fetching
 	pc.TrackVA(va, deployment, acceleratorCostVal)
@@ -731,12 +753,19 @@ func (pc *PrometheusCollector) CollectReplicaMetrics(
 	// Check cache first (cache key is model-level, not variant-level)
 	cacheKey := cache.NewCacheKey(modelID, namespace, "all", "replica-metrics")
 	if cached, found := pc.cache.Get(cacheKey); found {
-		logger.Log.Debugw("Cache hit for replica metrics", "model", modelID, "namespace", namespace, "age", cached.Age())
+		age := cached.Age()
+		freshnessStatus := DetermineFreshnessStatus(age, pc.freshnessThresholds)
 		// Type assert to []ReplicaMetrics
 		if replicaMetrics, ok := cached.Data.([]interfaces.ReplicaMetrics); ok {
+			logger.Log.Debugw("Cache hit for replica metrics",
+				"model", modelID,
+				"namespace", namespace,
+				"age", age.String(),
+				"ageSeconds", age.Seconds(),
+				"freshnessStatus", freshnessStatus,
+				"collectedAt", cached.CollectedAt.Format(time.RFC3339),
+				"replicaCount", len(replicaMetrics))
 			// Add freshness metadata to each replica metric
-			age := cached.Age()
-			freshnessStatus := DetermineFreshnessStatus(age, pc.freshnessThresholds)
 			for i := range replicaMetrics {
 				replicaMetrics[i].Metadata = &interfaces.ReplicaMetricsMetadata{
 					CollectedAt:     cached.CollectedAt,
@@ -783,7 +812,12 @@ func (pc *PrometheusCollector) CollectReplicaMetrics(
 		cacheMetrics[i].Metadata = nil // Don't store metadata in cache
 	}
 	pc.cache.Set(cacheKey, cacheMetrics, 0) // 0 means use cache's default TTL
-	logger.Log.Debugw("Cached replica metrics", "model", modelID, "namespace", namespace, "count", len(replicaMetrics))
+	logger.Log.Debugw("Collected and cached replica metrics",
+		"model", modelID,
+		"namespace", namespace,
+		"replicaCount", len(replicaMetrics),
+		"freshnessStatus", freshnessStatus,
+		"collectedAt", collectedAt.Format(time.RFC3339))
 
 	// Track model for background fetching
 	pc.TrackModel(modelID, namespace)

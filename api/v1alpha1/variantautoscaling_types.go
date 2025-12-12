@@ -116,10 +116,6 @@ type Allocation struct {
 
 	// Load describes the workload characteristics for the current allocation.
 	Load LoadProfile `json:"load"`
-
-	// Metadata contains freshness information about the metrics (optional)
-	// +kubebuilder:validation:Optional
-	Metadata *MetricsMetadata `json:"metadata,omitempty"`
 }
 
 // LoadProfile represents the configuration for workload characteristics,
@@ -135,22 +131,6 @@ type LoadProfile struct {
 
 	// AvgOutputTokens is the average number of output(decode) tokens per request in inference server.
 	AvgOutputTokens string `json:"avgOutputTokens"`
-}
-
-// MetricsMetadata contains freshness information about collected metrics
-type MetricsMetadata struct {
-	// CollectedAt is when the metrics were collected from the source (Prometheus/EPP)
-	CollectedAt metav1.Time `json:"collectedAt"`
-
-	// Age is the age of the metrics at the time they were returned (calculated field, not stored in API)
-	// Serialized as string to avoid float type issues in CRDs
-	// +kubebuilder:validation:Optional
-	AgeSeconds string `json:"ageSeconds,omitempty"`
-
-	// FreshnessStatus indicates the freshness status of the metrics
-	// Values: "fresh", "stale", "unavailable"
-	// +kubebuilder:validation:Optional
-	FreshnessStatus string `json:"freshnessStatus,omitempty"`
 }
 
 // OptimizedAlloc describes the target optimized allocation for a model variant.

@@ -47,7 +47,6 @@ var _ = Describe("PrometheusCollector Cache Integration", func() {
 		testConfig := &config.CacheConfig{
 			Enabled:         true,
 			TTL:             30 * time.Second,
-			MaxSize:         0,
 			CleanupInterval: 1 * time.Minute,
 			FetchInterval:   0, // Disable background fetching in tests
 		}
@@ -136,9 +135,6 @@ var _ = Describe("PrometheusCollector Cache Integration", func() {
 			Expect(alloc2.ITLAverage).To(Equal(alloc1.ITLAverage))
 			Expect(alloc2.TTFTAverage).To(Equal(alloc1.TTFTAverage))
 			Expect(alloc2.Load).To(Equal(alloc1.Load))
-			// Metadata should exist but age will differ slightly
-			Expect(alloc2.Metadata).NotTo(BeNil())
-			Expect(alloc2.Metadata.FreshnessStatus).To(Equal(alloc1.Metadata.FreshnessStatus))
 		})
 
 		It("should query again after cache expiration", func() {
@@ -148,7 +144,6 @@ var _ = Describe("PrometheusCollector Cache Integration", func() {
 			shortTTLConfig := &config.CacheConfig{
 				Enabled:         true,
 				TTL:             100 * time.Millisecond,
-				MaxSize:         0,
 				CleanupInterval: 1 * time.Minute,
 			}
 			collector = NewPrometheusCollectorWithConfig(mockPromAPI, shortTTLConfig)

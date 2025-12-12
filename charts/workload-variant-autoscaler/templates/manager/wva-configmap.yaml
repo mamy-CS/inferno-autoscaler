@@ -41,8 +41,6 @@ data:
   PROMETHEUS_METRICS_CACHE_ENABLED: {{ if and .Values.wva.prometheus .Values.wva.prometheus.metricsCache }}{{ .Values.wva.prometheus.metricsCache.enabled | default "true" | quote }}{{ else }}"true"{{ end }}
   # Prometheus cache TTL - how long metrics are cached before expiring (default: "30s")
   PROMETHEUS_METRICS_CACHE_TTL: {{ if and .Values.wva.prometheus .Values.wva.prometheus.metricsCache }}{{ .Values.wva.prometheus.metricsCache.ttl | default "30s" | quote }}{{ else }}"30s"{{ end }}
-  # Maximum number of Prometheus cache entries (0 = unlimited, default: "0")
-  PROMETHEUS_METRICS_CACHE_MAX_SIZE: {{ if and .Values.wva.prometheus .Values.wva.prometheus.metricsCache }}{{ .Values.wva.prometheus.metricsCache.maxSize | default "0" | quote }}{{ else }}"0"{{ end }}
   # Interval for background cleanup of expired Prometheus cache entries (default: "1m")
   PROMETHEUS_METRICS_CACHE_CLEANUP_INTERVAL: {{ if and .Values.wva.prometheus .Values.wva.prometheus.metricsCache }}{{ .Values.wva.prometheus.metricsCache.cleanupInterval | default "1m" | quote }}{{ else }}"1m"{{ end }}
   # Background fetch interval - how often to fetch metrics in background (default: "30s", 0 = disable)

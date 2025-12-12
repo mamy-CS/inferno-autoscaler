@@ -69,7 +69,7 @@ var _ = Describe("Cache", func() {
 		var cache *MemoryCache
 
 		BeforeEach(func() {
-			cache = NewMemoryCache(30*time.Second, 0, 1*time.Minute)
+			cache = NewMemoryCache(30*time.Second, 1*time.Minute)
 		})
 
 		AfterEach(func() {
@@ -202,24 +202,6 @@ var _ = Describe("Cache", func() {
 			Expect(cache.Size()).To(Equal(1))
 		})
 
-		It("should respect max size limit", func() {
-			limitedCache := NewMemoryCache(30*time.Second, 2, 1*time.Minute)
-			defer limitedCache.Stop()
-
-			key1 := NewCacheKey("model1", "ns1", "variant1", "allocation")
-			key2 := NewCacheKey("model1", "ns1", "variant2", "allocation")
-			key3 := NewCacheKey("model1", "ns1", "variant3", "allocation")
-
-			limitedCache.Set(key1, "data1", 0)
-			Expect(limitedCache.Size()).To(Equal(1))
-			limitedCache.Set(key2, "data2", 0)
-			Expect(limitedCache.Size()).To(Equal(2))
-			// When maxSize is set and reached, the current implementation allows growth beyond max
-			// This is a simple implementation that logs a warning but doesn't enforce the limit strictly
-			limitedCache.Set(key3, "data3", 0)
-			// Verify it doesn't enforce strict limit (allows growth)
-			Expect(limitedCache.Size()).To(BeNumerically(">=", 3))
-		})
 	})
 
 	Describe("NoOpCache", func() {
