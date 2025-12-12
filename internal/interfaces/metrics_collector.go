@@ -14,6 +14,21 @@ type MetricsValidationResult struct {
 	Message   string
 }
 
+// OptimizerMetrics contains raw metrics collected from Prometheus/EPP for the optimizer.
+// These metrics are used by the controller to assemble the Allocation struct.
+type OptimizerMetrics struct {
+	// ArrivalRate is the arrival rate in requests per minute
+	ArrivalRate float64
+	// AvgInputTokens is the average number of input tokens per request
+	AvgInputTokens float64
+	// AvgOutputTokens is the average number of output tokens per request
+	AvgOutputTokens float64
+	// TTFTSeconds is the average time to first token in seconds (will be converted to milliseconds by controller)
+	TTFTSeconds float64
+	// ITLSeconds is the average inter-token latency in seconds (will be converted to milliseconds by controller)
+	ITLSeconds float64
+}
+
 // MetricsCollector defines the interface for collecting metrics from various backends.
 // Implementations can collect metrics from Prometheus, EPP, or other backends.
 type MetricsCollector interface {
@@ -25,15 +40,15 @@ type MetricsCollector interface {
 		namespace string,
 	) MetricsValidationResult
 
-	// AddMetricsToOptStatus collects metrics for optimization and populates the Allocation status.
+	// AddMetricsToOptStatus collects raw metrics for optimization.
 	// This is used by the model-based optimizer to gather current metrics for a variant.
-	// Returns the current allocation with metrics populated.
+	// Returns raw metrics (OptimizerMetrics) that the controller will use to assemble the Allocation struct.
 	AddMetricsToOptStatus(
 		ctx context.Context,
 		va *llmdVariantAutoscalingV1alpha1.VariantAutoscaling,
 		deployment appsv1.Deployment,
 		acceleratorCostVal float64,
-	) (llmdVariantAutoscalingV1alpha1.Allocation, error)
+	) (OptimizerMetrics, error)
 
 	// CollectReplicaMetrics collects capacity-related metrics for all replicas of a model.
 	// This is used by the saturation analyzer to gather KV cache usage and queue length metrics.

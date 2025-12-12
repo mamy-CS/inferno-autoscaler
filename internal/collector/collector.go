@@ -17,6 +17,7 @@ import (
 	"math"
 
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/utils"
 
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
@@ -99,7 +100,13 @@ func AddMetricsToOptStatus(ctx context.Context,
 	if err != nil {
 		return llmdVariantAutoscalingV1alpha1.Allocation{}, err
 	}
-	return pc.AddMetricsToOptStatus(ctx, opt, deployment, acceleratorCostVal)
+	// Get raw metrics from collector
+	metrics, err := pc.AddMetricsToOptStatus(ctx, opt, deployment, acceleratorCostVal)
+	if err != nil {
+		return llmdVariantAutoscalingV1alpha1.Allocation{}, err
+	}
+	// Build Allocation from metrics (using utils to avoid import cycle)
+	return utils.BuildAllocationFromMetrics(metrics, opt, deployment, acceleratorCostVal)
 }
 
 // Helper to handle if a value is NaN or infinite

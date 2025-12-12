@@ -410,8 +410,8 @@ func (pc *PrometheusCollector) fetchVAMetricsWithRetry(parentCtx context.Context
 	// Use standard Prometheus query backoff for consistency with existing patterns
 	// This uses exponential backoff with jitter: 500ms, 1s, 2s, 4s, 8s (with jitter)
 	err := wait.ExponentialBackoffWithContext(ctx, utils.PrometheusQueryBackoff, func(ctx context.Context) (bool, error) {
-		// Try to fetch allocation metrics
-		alloc, err := pc.fetchAllocationMetrics(ctx, tracked.VA, tracked.Deployment, tracked.AcceleratorCost)
+		// Try to fetch optimizer metrics
+		metrics, err := pc.fetchOptimizerMetrics(ctx, tracked.VA, tracked.Deployment)
 		if err != nil {
 			logger.Log.Debugw("Background fetch failed for VA (will retry)", "variant", tracked.VariantName, "error", err)
 			return false, nil // Retry
@@ -421,11 +421,9 @@ func (pc *PrometheusCollector) fetchVAMetricsWithRetry(parentCtx context.Context
 		tracked.LastFetch = time.Now()
 		logger.Log.Debugw("Background fetch succeeded for VA", "model", tracked.ModelID, "variant", tracked.VariantName)
 
-		// Store in cache without metadata (metadata added on retrieval)
-		cacheAlloc := alloc
-		cacheAlloc.Metadata = nil // Don't store metadata in cache
-		cacheKey := cache.NewCacheKey(tracked.ModelID, tracked.Namespace, tracked.VariantName, "allocation")
-		pc.cache.Set(cacheKey, cacheAlloc, 0) // 0 means use cache's default TTL
+		// Store in cache
+		cacheKey := cache.NewCacheKey(tracked.ModelID, tracked.Namespace, tracked.VariantName, "allocation-metrics")
+		pc.cache.Set(cacheKey, metrics, 0) // 0 means use cache's default TTL
 
 		return true, nil // Success, stop retrying
 	})
@@ -442,26 +440,25 @@ func (pc *PrometheusCollector) fetchVAMetricsWithRetry(parentCtx context.Context
 	}
 }
 
-// fetchAllocationMetrics fetches allocation metrics (internal method used by background worker)
-// This calls the core fetching logic without adding metadata or tracking
-func (pc *PrometheusCollector) fetchAllocationMetrics(
+// fetchOptimizerMetrics fetches optimizer metrics (internal method used by background worker)
+// This calls the core fetching logic without cache check or tracking
+func (pc *PrometheusCollector) fetchOptimizerMetrics(
 	ctx context.Context,
 	va *llmdVariantAutoscalingV1alpha1.VariantAutoscaling,
 	deployment appsv1.Deployment,
-	acceleratorCostVal float64,
-) (llmdVariantAutoscalingV1alpha1.Allocation, error) {
-	// Call core fetching logic (skip cache check, skip metadata, skip tracking)
-	return pc.fetchAllocationMetricsCore(ctx, va, deployment, acceleratorCostVal)
+) (interfaces.OptimizerMetrics, error) {
+	// Call core fetching logic (skip cache check, skip tracking)
+	return pc.fetchOptimizerMetricsCore(ctx, va, deployment)
 }
 
-// fetchAllocationMetricsCore contains the core logic for fetching allocation metrics from Prometheus
+// fetchOptimizerMetricsCore contains the core logic for fetching raw optimizer metrics from Prometheus
 // This is extracted to be reusable by both on-demand and background fetching
-func (pc *PrometheusCollector) fetchAllocationMetricsCore(
+// Returns raw metrics that the controller will use to assemble the Allocation struct
+func (pc *PrometheusCollector) fetchOptimizerMetricsCore(
 	ctx context.Context,
 	va *llmdVariantAutoscalingV1alpha1.VariantAutoscaling,
 	deployment appsv1.Deployment,
-	acceleratorCostVal float64,
-) (llmdVariantAutoscalingV1alpha1.Allocation, error) {
+) (interfaces.OptimizerMetrics, error) {
 	deployNamespace := deployment.Namespace
 	modelName := va.Spec.ModelID
 
@@ -513,80 +510,42 @@ func (pc *PrometheusCollector) fetchAllocationMetricsCore(
 
 	arrivalVal, err := pc.queryAndExtractMetric(ctx, arrivalQuery, "ArrivalRate")
 	if err != nil {
-		return llmdVariantAutoscalingV1alpha1.Allocation{}, err
+		return interfaces.OptimizerMetrics{}, err
 	}
 	arrivalVal *= 60 // convert from req/sec to req/min
 
 	avgInputTokens, err := pc.queryAndExtractMetric(ctx, avgPromptToksQuery, "AvgInputTokens")
 	if err != nil {
-		return llmdVariantAutoscalingV1alpha1.Allocation{}, err
+		return interfaces.OptimizerMetrics{}, err
 	}
 
 	avgOutputTokens, err := pc.queryAndExtractMetric(ctx, avgDecToksQuery, "AvgOutputTokens")
 	if err != nil {
-		return llmdVariantAutoscalingV1alpha1.Allocation{}, err
+		return interfaces.OptimizerMetrics{}, err
 	}
 
-	ttftAverageTime, err := pc.queryAndExtractMetric(ctx, ttftQuery, "TTFTAverageTime")
+	ttftSeconds, err := pc.queryAndExtractMetric(ctx, ttftQuery, "TTFTAverageTime")
 	if err != nil {
-		return llmdVariantAutoscalingV1alpha1.Allocation{}, err
+		return interfaces.OptimizerMetrics{}, err
 	}
-	// Convert from seconds (Prometheus format) to milliseconds (optimizer format)
-	ttftAverageTime *= 1000
+	// Keep in seconds - controller will convert to milliseconds
 
-	itlAverage, err := pc.queryAndExtractMetric(ctx, itlQuery, "ITLAverage")
+	itlSeconds, err := pc.queryAndExtractMetric(ctx, itlQuery, "ITLAverage")
 	if err != nil {
-		return llmdVariantAutoscalingV1alpha1.Allocation{}, err
+		return interfaces.OptimizerMetrics{}, err
 	}
-	// Convert from seconds (Prometheus format) to milliseconds (optimizer format)
-	itlAverage *= 1000
+	// Keep in seconds - controller will convert to milliseconds
 
-	// --- 3. Collect K8s and Static Info ---
-
-	// number of replicas
-	numReplicas := int(*deployment.Spec.Replicas)
-
-	// accelerator type - strict validation required
-	acc := ""
-	if val, ok := va.Labels["inference.optimization/acceleratorName"]; ok && val != "" {
-		acc = val
-	} else {
-		return llmdVariantAutoscalingV1alpha1.Allocation{},
-			fmt.Errorf("missing or empty acceleratorName label on VariantAutoscaling object: %s", va.Name)
+	// Return raw metrics - controller will assemble Allocation struct
+	metrics := interfaces.OptimizerMetrics{
+		ArrivalRate:     arrivalVal, // requests per minute
+		AvgInputTokens:  avgInputTokens,
+		AvgOutputTokens: avgOutputTokens,
+		TTFTSeconds:     ttftSeconds, // seconds (will be converted to ms by controller)
+		ITLSeconds:      itlSeconds,  // seconds (will be converted to ms by controller)
 	}
 
-	// cost
-	discoveredCost := float64(*deployment.Spec.Replicas) * acceleratorCostVal
-
-	// max batch size
-	// TODO: collect value from server
-	maxBatch := 256
-
-	// --- 4. Build Allocation ---
-
-	// Format metric values, ensuring they meet CRD validation regex '^\\d+(\\.\\d+)?$'
-	variantCostStr := strconv.FormatFloat(discoveredCost, 'f', 2, 64)
-	ttftAverageStr := strconv.FormatFloat(ttftAverageTime, 'f', 2, 64)
-	itlAverageStr := strconv.FormatFloat(itlAverage, 'f', 2, 64)
-	arrivalRateStr := strconv.FormatFloat(arrivalVal, 'f', 2, 64)
-	avgInputTokensStr := strconv.FormatFloat(avgInputTokens, 'f', 2, 64)
-	avgOutputTokensStr := strconv.FormatFloat(avgOutputTokens, 'f', 2, 64)
-
-	currentAlloc := llmdVariantAutoscalingV1alpha1.Allocation{
-		Accelerator: acc,
-		NumReplicas: numReplicas,
-		MaxBatch:    maxBatch,
-		VariantCost: variantCostStr,
-		TTFTAverage: ttftAverageStr,
-		ITLAverage:  itlAverageStr,
-		Load: llmdVariantAutoscalingV1alpha1.LoadProfile{
-			ArrivalRate:     arrivalRateStr,
-			AvgInputTokens:  avgInputTokensStr,
-			AvgOutputTokens: avgOutputTokensStr,
-		},
-	}
-
-	return currentAlloc, nil
+	return metrics, nil
 }
 
 // ValidateMetricsAvailability implements MetricsCollector interface
@@ -688,22 +647,20 @@ func (pc *PrometheusCollector) AddMetricsToOptStatus(
 	va *llmdVariantAutoscalingV1alpha1.VariantAutoscaling,
 	deployment appsv1.Deployment,
 	acceleratorCostVal float64,
-) (llmdVariantAutoscalingV1alpha1.Allocation, error) {
+) (interfaces.OptimizerMetrics, error) {
 	deployNamespace := deployment.Namespace
 	modelName := va.Spec.ModelID
 	variantName := va.Name
 
 	// Check cache first (always non-blocking)
-	cacheKey := cache.NewCacheKey(modelName, deployNamespace, variantName, "allocation")
+	cacheKey := cache.NewCacheKey(modelName, deployNamespace, variantName, "allocation-metrics")
 	if cached, found := pc.cache.Get(cacheKey); found {
 		logger.Log.Debugw("Cache hit for allocation metrics", "model", modelName, "variant", variantName, "age", cached.Age())
-		// Type assert to Allocation
-		if alloc, ok := cached.Data.(llmdVariantAutoscalingV1alpha1.Allocation); ok {
-			// Add freshness metadata
-			alloc.Metadata = NewMetricsMetadata(cached.CollectedAt, pc.freshnessThresholds)
+		// Type assert to OptimizerMetrics
+		if metrics, ok := cached.Data.(interfaces.OptimizerMetrics); ok {
 			// Track VA for background fetching
 			pc.TrackVA(va, deployment, acceleratorCostVal)
-			return alloc, nil
+			return metrics, nil
 		}
 		// If type assertion fails, continue to query
 		logger.Log.Warnw("Cache entry has wrong type, querying Prometheus", "model", modelName, "variant", variantName)
@@ -712,26 +669,19 @@ func (pc *PrometheusCollector) AddMetricsToOptStatus(
 	logger.Log.Debugw("Cache miss for allocation metrics, querying Prometheus", "model", modelName, "variant", variantName)
 
 	// Use core fetching logic (extracted for reuse by background worker)
-	currentAlloc, err := pc.fetchAllocationMetricsCore(ctx, va, deployment, acceleratorCostVal)
+	metrics, err := pc.fetchOptimizerMetricsCore(ctx, va, deployment)
 	if err != nil {
-		return llmdVariantAutoscalingV1alpha1.Allocation{}, err
+		return interfaces.OptimizerMetrics{}, err
 	}
 
-	// Add freshness metadata (fresh, just collected)
-	collectedAt := time.Now()
-	currentAlloc.Metadata = NewMetricsMetadata(collectedAt, pc.freshnessThresholds)
-
 	// Store in cache (use default TTL from cache config)
-	// Store without metadata in cache (metadata added when retrieved)
-	cacheAlloc := currentAlloc
-	cacheAlloc.Metadata = nil             // Don't store metadata in cache, recalculate on retrieval
-	pc.cache.Set(cacheKey, cacheAlloc, 0) // 0 means use cache's default TTL
-	logger.Log.Debugw("Cached allocation metrics", "model", modelName, "variant", variantName, "freshness", currentAlloc.Metadata.FreshnessStatus)
+	pc.cache.Set(cacheKey, metrics, 0) // 0 means use cache's default TTL
+	logger.Log.Debugw("Cached allocation metrics", "model", modelName, "variant", variantName)
 
 	// Track VA for background fetching
 	pc.TrackVA(va, deployment, acceleratorCostVal)
 
-	return currentAlloc, nil
+	return metrics, nil
 }
 
 // CollectReplicaMetrics implements MetricsCollector interface

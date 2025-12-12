@@ -795,10 +795,17 @@ func (r *VariantAutoscalingReconciler) collectMetricsForSaturationMode(
 			continue
 		}
 
-		// Collect metrics and populate CurrentAlloc
-		currentAllocation, err := r.MetricsCollector.AddMetricsToOptStatus(ctx, &updateVA, deploy, cost)
+		// Collect raw metrics from collector
+		metrics, err := r.MetricsCollector.AddMetricsToOptStatus(ctx, &updateVA, deploy, cost)
 		if err != nil {
 			logger.Log.Debugf("Unable to fetch metrics for VA: variant=%s, error=%v", updateVA.Name, err)
+			continue
+		}
+
+		// Assemble Allocation struct from raw metrics
+		currentAllocation, err := BuildAllocationFromMetrics(metrics, &updateVA, deploy, cost)
+		if err != nil {
+			logger.Log.Debugf("Unable to build allocation for VA: variant=%s, error=%v", updateVA.Name, err)
 			continue
 		}
 
@@ -1109,10 +1116,18 @@ func (r *VariantAutoscalingReconciler) prepareVariantAutoscalings(
 			continue
 		}
 
-		currentAllocation, err := r.MetricsCollector.AddMetricsToOptStatus(ctx, &updateVA, deploy, acceleratorCostValFloat)
+		// Collect raw metrics from collector
+		metrics, err := r.MetricsCollector.AddMetricsToOptStatus(ctx, &updateVA, deploy, acceleratorCostValFloat)
 		if err != nil {
 			logger.Log.Errorf("unable to fetch metrics, skipping this variantAutoscaling loop: error=%v", err)
 			// Don't update status here - will be updated in next reconcile when metrics are available
+			continue
+		}
+
+		// Assemble Allocation struct from raw metrics
+		currentAllocation, err := BuildAllocationFromMetrics(metrics, &updateVA, deploy, acceleratorCostValFloat)
+		if err != nil {
+			logger.Log.Errorf("unable to build allocation, skipping this variantAutoscaling loop: error=%v", err)
 			continue
 		}
 		updateVA.Status.CurrentAlloc = currentAllocation

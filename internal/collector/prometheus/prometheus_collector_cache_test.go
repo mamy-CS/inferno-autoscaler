@@ -15,6 +15,7 @@ import (
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/config"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/constants"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logger"
+	internalutils "github.com/llm-d-incubation/workload-variant-autoscaler/internal/utils"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/test/utils"
 )
 
@@ -87,13 +88,17 @@ var _ = Describe("PrometheusCollector Cache Integration", func() {
 			acceleratorCost := 10.0
 
 			// First call - should query Prometheus
-			alloc1, err := collector.AddMetricsToOptStatus(ctx, va, deployment, acceleratorCost)
+			metrics1, err := collector.AddMetricsToOptStatus(ctx, va, deployment, acceleratorCost)
+			Expect(err).NotTo(HaveOccurred())
+			alloc1, err := internalutils.BuildAllocationFromMetrics(metrics1, va, deployment, acceleratorCost)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(alloc1.Accelerator).To(Equal("A100"))
 
 			// Verify cache was populated by calling again (should use cache)
 			// We can't directly access private cache field, so we verify behavior
-			alloc2, err := collector.AddMetricsToOptStatus(ctx, va, deployment, acceleratorCost)
+			metrics2, err := collector.AddMetricsToOptStatus(ctx, va, deployment, acceleratorCost)
+			Expect(err).NotTo(HaveOccurred())
+			alloc2, err := internalutils.BuildAllocationFromMetrics(metrics2, va, deployment, acceleratorCost)
 			Expect(err).NotTo(HaveOccurred())
 			// Should return same data (from cache) - compare without metadata timestamps
 			Expect(alloc2.Accelerator).To(Equal(alloc1.Accelerator))
@@ -103,16 +108,15 @@ var _ = Describe("PrometheusCollector Cache Integration", func() {
 			Expect(alloc2.ITLAverage).To(Equal(alloc1.ITLAverage))
 			Expect(alloc2.TTFTAverage).To(Equal(alloc1.TTFTAverage))
 			Expect(alloc2.Load).To(Equal(alloc1.Load))
-			// Metadata should exist but age will differ slightly
-			Expect(alloc2.Metadata).NotTo(BeNil())
-			Expect(alloc2.Metadata.FreshnessStatus).To(Equal(alloc1.Metadata.FreshnessStatus))
 		})
 
 		It("should return cached metrics on second call", func() {
 			acceleratorCost := 10.0
 
 			// First call - query Prometheus
-			alloc1, err := collector.AddMetricsToOptStatus(ctx, va, deployment, acceleratorCost)
+			metrics1, err := collector.AddMetricsToOptStatus(ctx, va, deployment, acceleratorCost)
+			Expect(err).NotTo(HaveOccurred())
+			alloc1, err := internalutils.BuildAllocationFromMetrics(metrics1, va, deployment, acceleratorCost)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Clear mock to ensure we're using cache
@@ -120,7 +124,9 @@ var _ = Describe("PrometheusCollector Cache Integration", func() {
 			mockPromAPI.QueryErrors = make(map[string]error)
 
 			// Second call - should use cache
-			alloc2, err := collector.AddMetricsToOptStatus(ctx, va, deployment, acceleratorCost)
+			metrics2, err := collector.AddMetricsToOptStatus(ctx, va, deployment, acceleratorCost)
+			Expect(err).NotTo(HaveOccurred())
+			alloc2, err := internalutils.BuildAllocationFromMetrics(metrics2, va, deployment, acceleratorCost)
 			Expect(err).NotTo(HaveOccurred())
 			// Compare without metadata timestamps (they differ slightly due to cache retrieval time)
 			Expect(alloc2.Accelerator).To(Equal(alloc1.Accelerator))
@@ -148,7 +154,9 @@ var _ = Describe("PrometheusCollector Cache Integration", func() {
 			collector = NewPrometheusCollectorWithConfig(mockPromAPI, shortTTLConfig)
 
 			// First call
-			alloc1, err := collector.AddMetricsToOptStatus(ctx, va, deployment, acceleratorCost)
+			metrics1, err := collector.AddMetricsToOptStatus(ctx, va, deployment, acceleratorCost)
+			Expect(err).NotTo(HaveOccurred())
+			alloc1, err := internalutils.BuildAllocationFromMetrics(metrics1, va, deployment, acceleratorCost)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Wait for cache expiration
@@ -163,7 +171,9 @@ var _ = Describe("PrometheusCollector Cache Integration", func() {
 			}
 
 			// Second call - should query again
-			alloc2, err := collector.AddMetricsToOptStatus(ctx, va, deployment, acceleratorCost)
+			metrics2, err := collector.AddMetricsToOptStatus(ctx, va, deployment, acceleratorCost)
+			Expect(err).NotTo(HaveOccurred())
+			alloc2, err := internalutils.BuildAllocationFromMetrics(metrics2, va, deployment, acceleratorCost)
 			Expect(err).NotTo(HaveOccurred())
 			// Should have new data (different arrival rate)
 			Expect(alloc2.Load.ArrivalRate).NotTo(Equal(alloc1.Load.ArrivalRate))
@@ -177,12 +187,16 @@ var _ = Describe("PrometheusCollector Cache Integration", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			// Populate cache by calling twice (second call uses cache)
-			alloc1, err := collector.AddMetricsToOptStatus(ctx, va, deployment, acceleratorCost)
+			metrics1, err := collector.AddMetricsToOptStatus(ctx, va, deployment, acceleratorCost)
+			Expect(err).NotTo(HaveOccurred())
+			alloc1, err := internalutils.BuildAllocationFromMetrics(metrics1, va, deployment, acceleratorCost)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Clear mock to verify cache is used
 			mockPromAPI.QueryResults = make(map[string]model.Value)
-			alloc2, err := collector.AddMetricsToOptStatus(ctx, va, deployment, acceleratorCost)
+			metrics2, err := collector.AddMetricsToOptStatus(ctx, va, deployment, acceleratorCost)
+			Expect(err).NotTo(HaveOccurred())
+			alloc2, err := internalutils.BuildAllocationFromMetrics(metrics2, va, deployment, acceleratorCost)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(alloc2).To(Equal(alloc1)) // Should use cache
 
@@ -191,7 +205,9 @@ var _ = Describe("PrometheusCollector Cache Integration", func() {
 
 			// Setup mock again - should query after invalidation
 			setupMockPrometheusQueries(mockPromAPI, modelName, namespace)
-			alloc3, err := collector.AddMetricsToOptStatus(ctx, va, deployment, acceleratorCost)
+			metrics3, err := collector.AddMetricsToOptStatus(ctx, va, deployment, acceleratorCost)
+			Expect(err).NotTo(HaveOccurred())
+			alloc3, err := internalutils.BuildAllocationFromMetrics(metrics3, va, deployment, acceleratorCost)
 			Expect(err).NotTo(HaveOccurred())
 			// Should have queried again (not from cache)
 			Expect(alloc3.Accelerator).To(Equal("A100"))
@@ -203,26 +219,30 @@ var _ = Describe("PrometheusCollector Cache Integration", func() {
 			acceleratorCost := 10.0
 
 			// Populate cache
-			alloc1, err := collector.AddMetricsToOptStatus(ctx, va, deployment, acceleratorCost)
+			metrics1, err := collector.AddMetricsToOptStatus(ctx, va, deployment, acceleratorCost)
+			Expect(err).NotTo(HaveOccurred())
+			alloc1, err := internalutils.BuildAllocationFromMetrics(metrics1, va, deployment, acceleratorCost)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Verify cache works (second call uses cache)
 			mockPromAPI.QueryResults = make(map[string]model.Value)
-			alloc2, err := collector.AddMetricsToOptStatus(ctx, va, deployment, acceleratorCost)
+			metrics2, err := collector.AddMetricsToOptStatus(ctx, va, deployment, acceleratorCost)
+			Expect(err).NotTo(HaveOccurred())
+			alloc2, err := internalutils.BuildAllocationFromMetrics(metrics2, va, deployment, acceleratorCost)
 			Expect(err).NotTo(HaveOccurred())
 			// Compare without metadata timestamps (they differ slightly due to cache retrieval time)
 			Expect(alloc2.Accelerator).To(Equal(alloc1.Accelerator))
 			Expect(alloc2.NumReplicas).To(Equal(alloc1.NumReplicas))
 			Expect(alloc2.Load).To(Equal(alloc1.Load))
-			Expect(alloc2.Metadata).NotTo(BeNil())
-			Expect(alloc2.Metadata.FreshnessStatus).To(Equal(alloc1.Metadata.FreshnessStatus))
 
 			// Invalidate
 			collector.InvalidateCacheForVariant(modelName, namespace, variantName)
 
 			// Setup mock again - should query after invalidation
 			setupMockPrometheusQueries(mockPromAPI, modelName, namespace)
-			alloc3, err := collector.AddMetricsToOptStatus(ctx, va, deployment, acceleratorCost)
+			metrics3, err := collector.AddMetricsToOptStatus(ctx, va, deployment, acceleratorCost)
+			Expect(err).NotTo(HaveOccurred())
+			alloc3, err := internalutils.BuildAllocationFromMetrics(metrics3, va, deployment, acceleratorCost)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(alloc3.Accelerator).To(Equal("A100"))
 		})
@@ -236,35 +256,45 @@ var _ = Describe("PrometheusCollector Cache Integration", func() {
 			va2 := va.DeepCopy()
 			va2.Name = "variant2"
 
-			alloc1, err := collector.AddMetricsToOptStatus(ctx, va1, deployment, acceleratorCost)
+			metrics1, err := collector.AddMetricsToOptStatus(ctx, va1, deployment, acceleratorCost)
 			Expect(err).NotTo(HaveOccurred())
-			alloc2, err := collector.AddMetricsToOptStatus(ctx, va2, deployment, acceleratorCost)
+			alloc1, err := internalutils.BuildAllocationFromMetrics(metrics1, va1, deployment, acceleratorCost)
+			Expect(err).NotTo(HaveOccurred())
+			metrics2, err := collector.AddMetricsToOptStatus(ctx, va2, deployment, acceleratorCost)
+			Expect(err).NotTo(HaveOccurred())
+			alloc2, err := internalutils.BuildAllocationFromMetrics(metrics2, va2, deployment, acceleratorCost)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Verify cache works
 			mockPromAPI.QueryResults = make(map[string]model.Value)
-			alloc1Cached, err := collector.AddMetricsToOptStatus(ctx, va1, deployment, acceleratorCost)
+			metrics1Cached, err := collector.AddMetricsToOptStatus(ctx, va1, deployment, acceleratorCost)
+			Expect(err).NotTo(HaveOccurred())
+			alloc1Cached, err := internalutils.BuildAllocationFromMetrics(metrics1Cached, va1, deployment, acceleratorCost)
 			Expect(err).NotTo(HaveOccurred())
 			// Compare without metadata timestamps (they differ slightly due to cache retrieval time)
 			Expect(alloc1Cached.Accelerator).To(Equal(alloc1.Accelerator))
 			Expect(alloc1Cached.NumReplicas).To(Equal(alloc1.NumReplicas))
 			Expect(alloc1Cached.Load).To(Equal(alloc1.Load))
-			Expect(alloc1Cached.Metadata).NotTo(BeNil())
-			alloc2Cached, err := collector.AddMetricsToOptStatus(ctx, va2, deployment, acceleratorCost)
+			metrics2Cached, err := collector.AddMetricsToOptStatus(ctx, va2, deployment, acceleratorCost)
+			Expect(err).NotTo(HaveOccurred())
+			alloc2Cached, err := internalutils.BuildAllocationFromMetrics(metrics2Cached, va2, deployment, acceleratorCost)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(alloc2Cached.Accelerator).To(Equal(alloc2.Accelerator))
 			Expect(alloc2Cached.NumReplicas).To(Equal(alloc2.NumReplicas))
 			Expect(alloc2Cached.Load).To(Equal(alloc2.Load))
-			Expect(alloc2Cached.Metadata).NotTo(BeNil())
 
 			// Invalidate for entire model
 			collector.InvalidateCacheForModel(modelName, namespace)
 
 			// Setup mock again - should query after invalidation
 			setupMockPrometheusQueries(mockPromAPI, modelName, namespace)
-			alloc1After, err := collector.AddMetricsToOptStatus(ctx, va1, deployment, acceleratorCost)
+			metrics1After, err := collector.AddMetricsToOptStatus(ctx, va1, deployment, acceleratorCost)
 			Expect(err).NotTo(HaveOccurred())
-			alloc2After, err := collector.AddMetricsToOptStatus(ctx, va2, deployment, acceleratorCost)
+			alloc1After, err := internalutils.BuildAllocationFromMetrics(metrics1After, va1, deployment, acceleratorCost)
+			Expect(err).NotTo(HaveOccurred())
+			metrics2After, err := collector.AddMetricsToOptStatus(ctx, va2, deployment, acceleratorCost)
+			Expect(err).NotTo(HaveOccurred())
+			alloc2After, err := internalutils.BuildAllocationFromMetrics(metrics2After, va2, deployment, acceleratorCost)
 			Expect(err).NotTo(HaveOccurred())
 			// Should have queried again
 			Expect(alloc1After.Accelerator).To(Equal("A100"))
