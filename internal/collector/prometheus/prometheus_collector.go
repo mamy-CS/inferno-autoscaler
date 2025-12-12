@@ -41,6 +41,7 @@ type PrometheusCollector struct {
 
 // TrackedVA holds information about a VA that should be fetched in background
 type TrackedVA struct {
+	mu              sync.Mutex // Protects LastFetch and future mutable fields
 	ModelID         string
 	Namespace       string
 	VariantName     string
@@ -50,11 +51,46 @@ type TrackedVA struct {
 	LastFetch       time.Time
 }
 
+// needsFetch checks if the VA needs fetching based on the fetch interval (thread-safe)
+func (t *TrackedVA) needsFetch(fetchInterval time.Duration) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.LastFetch.IsZero() {
+		return true
+	}
+	return time.Since(t.LastFetch) >= fetchInterval
+}
+
+// setLastFetch updates the last fetch time (thread-safe)
+func (t *TrackedVA) setLastFetch(tm time.Time) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.LastFetch = tm
+}
+
 // TrackedModel holds information about a model that should have replica metrics fetched in background
 type TrackedModel struct {
+	mu        sync.Mutex // Protects LastFetch and future mutable fields
 	ModelID   string
 	Namespace string
 	LastFetch time.Time
+}
+
+// needsFetch checks if the model needs fetching based on the fetch interval (thread-safe)
+func (t *TrackedModel) needsFetch(fetchInterval time.Duration) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.LastFetch.IsZero() {
+		return true
+	}
+	return time.Since(t.LastFetch) >= fetchInterval
+}
+
+// setLastFetch updates the last fetch time (thread-safe)
+func (t *TrackedModel) setLastFetch(tm time.Time) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.LastFetch = tm
 }
 
 // getDefaultCacheConfig returns default cache configuration
@@ -174,7 +210,7 @@ func (pc *PrometheusCollector) TrackVA(va *llmdVariantAutoscalingV1alpha1.Varian
 		VA:              va,
 		Deployment:      deployment,
 		AcceleratorCost: acceleratorCost,
-		LastFetch:       time.Time{}, // Never fetched
+		// LastFetch initialized to zero value (never fetched)
 	}
 	pc.trackedVAs.Store(key, tracked)
 	logger.Log.Debugw("Tracking VA for background fetching", "key", key)
@@ -193,7 +229,7 @@ func (pc *PrometheusCollector) TrackModel(modelID, namespace string) {
 	tracked := &TrackedModel{
 		ModelID:   modelID,
 		Namespace: namespace,
-		LastFetch: time.Time{}, // Never fetched
+		// LastFetch initialized to zero value (never fetched)
 	}
 	pc.trackedModels.Store(key, tracked)
 	logger.Log.Debugw("Tracking model for background replica metrics fetching", "key", key)
@@ -209,7 +245,6 @@ func (pc *PrometheusCollector) UntrackModel(modelID, namespace string) {
 // fetchTrackedVAs fetches metrics for all tracked VAs with exponential backoff retry
 // This is called by the PollingExecutor at configured intervals
 func (pc *PrometheusCollector) fetchTrackedVAs(ctx context.Context) {
-	now := time.Now()
 	var wg sync.WaitGroup
 
 	pc.trackedVAs.Range(func(key, value interface{}) bool {
@@ -220,8 +255,8 @@ func (pc *PrometheusCollector) fetchTrackedVAs(ctx context.Context) {
 			return true // continue
 		}
 
-		// Skip if fetched recently (within fetch interval)
-		if !tracked.LastFetch.IsZero() && now.Sub(tracked.LastFetch) < pc.fetchInterval {
+		// Skip if fetched recently (within fetch interval) - thread-safe check
+		if !tracked.needsFetch(pc.fetchInterval) {
 			return true // continue
 		}
 
@@ -245,7 +280,6 @@ func (pc *PrometheusCollector) fetchTrackedModels(ctx context.Context) {
 		return
 	}
 
-	now := time.Now()
 	var wg sync.WaitGroup
 
 	pc.trackedModels.Range(func(key, value interface{}) bool {
@@ -256,8 +290,8 @@ func (pc *PrometheusCollector) fetchTrackedModels(ctx context.Context) {
 			return true // continue
 		}
 
-		// Skip if fetched recently (within fetch interval)
-		if !tracked.LastFetch.IsZero() && now.Sub(tracked.LastFetch) < pc.fetchInterval {
+		// Skip if fetched recently (within fetch interval) - thread-safe check
+		if !tracked.needsFetch(pc.fetchInterval) {
 			return true // continue
 		}
 
@@ -300,8 +334,8 @@ func (pc *PrometheusCollector) fetchModelReplicaMetricsWithRetry(parentCtx conte
 			return false, nil // Retry
 		}
 
-		// Success - update last fetch time
-		tracked.LastFetch = time.Now()
+		// Success - update last fetch time (thread-safe)
+		tracked.setLastFetch(time.Now())
 		logger.Log.Debugw("Background replica metrics fetch succeeded for model", "model", tracked.ModelID, "namespace", tracked.Namespace)
 
 		return true, nil // Success, stop retrying
@@ -417,8 +451,8 @@ func (pc *PrometheusCollector) fetchVAMetricsWithRetry(parentCtx context.Context
 			return false, nil // Retry
 		}
 
-		// Success - update last fetch time
-		tracked.LastFetch = time.Now()
+		// Success - update last fetch time (thread-safe)
+		tracked.setLastFetch(time.Now())
 		logger.Log.Debugw("Background fetch succeeded for VA", "model", tracked.ModelID, "variant", tracked.VariantName)
 
 		// Store in cache
