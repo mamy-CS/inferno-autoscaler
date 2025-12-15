@@ -95,24 +95,3 @@ func ValidateTLSConfig(promConfig *interfaces.PrometheusConfig) error {
 
 	return nil
 }
-
-// ParsePrometheusConfigFromEnv parses Prometheus configuration from environment variables.
-// Supports both direct values and file paths for flexible deployment scenarios.
-func ParsePrometheusConfigFromEnv() *interfaces.PrometheusConfig {
-	config := &interfaces.PrometheusConfig{
-		BaseURL: os.Getenv("PROMETHEUS_BASE_URL"),
-	}
-
-	// TLS is always enabled for HTTPS-only support
-	config.InsecureSkipVerify = os.Getenv("PROMETHEUS_TLS_INSECURE_SKIP_VERIFY") == "true"
-	config.CACertPath = os.Getenv("PROMETHEUS_CA_CERT_PATH")
-	config.ClientCertPath = os.Getenv("PROMETHEUS_CLIENT_CERT_PATH")
-	config.ClientKeyPath = os.Getenv("PROMETHEUS_CLIENT_KEY_PATH")
-	config.ServerName = os.Getenv("PROMETHEUS_SERVER_NAME")
-
-	// Support both direct bearer token and token path
-	config.BearerToken = os.Getenv("PROMETHEUS_BEARER_TOKEN")
-	config.TokenPath = os.Getenv("PROMETHEUS_TOKEN_PATH")
-
-	return config
-}
