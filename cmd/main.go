@@ -43,12 +43,17 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/prometheus"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/controller"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/saturation"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/scalefromzero"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logger"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/metrics"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/utils"
 	promoperator "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
+	"github.com/prometheus/client_golang/api"
+	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	crmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 	//+kubebuilder:scaffold:imports
 )
@@ -299,11 +304,101 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Initialize metrics
+	logger.Log.Infof("Creating metrics emitter instance")
+	// Force initialization of metrics by creating a metrics emitter
+	_ = metrics.NewMetricsEmitter()
+	logger.Log.Infof("Metrics emitter created successfully")
+
+	// Configure Prometheus client using flexible configuration with TLS support
+	promConfig, err := utils.GetPrometheusConfig(context.Background(), mgr.GetClient())
+	if err != nil {
+		setupLog.Error("failed to get Prometheus configuration", zap.Error(err))
+		os.Exit(1)
+	}
+
+	// ensure we have a valid configuration
+	if promConfig == nil {
+		setupLog.Error("no Prometheus configuration found - this should not happen")
+		os.Exit(1)
+	}
+
+	// Always validate TLS configuration since HTTPS is required
+	if err := utils.ValidateTLSConfig(promConfig); err != nil {
+		logger.Log.Errorf("TLS configuration validation failed - HTTPS is required: error=%v", err)
+		setupLog.Error("TLS configuration validation failed", zap.Error(err))
+		os.Exit(1)
+	}
+
+	logger.Log.Infof("Initializing Prometheus client -> address: %s, tls_enabled: true", promConfig.BaseURL)
+
+	// Create Prometheus client with TLS support
+	promClientConfig, err := utils.CreatePrometheusClientConfig(promConfig)
+	if err != nil {
+		setupLog.Error("failed to create prometheus client config", zap.Error(err))
+		os.Exit(1)
+	}
+
+	promClient, err := api.NewClient(*promClientConfig)
+	if err != nil {
+		setupLog.Error("failed to create prometheus client", zap.Error(err))
+		os.Exit(1)
+	}
+
+	promAPI := promv1.NewAPI(promClient)
+
+	// Validate that the API is working by testing a simple query with retry logic
+	if err := utils.ValidatePrometheusAPI(context.Background(), promAPI); err != nil {
+		logger.Log.Errorf("CRITICAL: Failed to connect to Prometheus - Inferno requires Prometheus connectivity for autoscaling decisions: error=%v", err)
+		setupLog.Error("critical: failed to validate Prometheus API connection", zap.Error(err))
+		os.Exit(1)
+	}
+	logger.Log.Info("Prometheus client and API wrapper initialized and validated successfully")
+
+	// Read Prometheus cache configuration from ConfigMap
+	cacheConfig, err := utils.ReadPrometheusCacheConfig(context.Background(), mgr.GetClient())
+	if err != nil {
+		logger.Log.Warnf("Failed to read Prometheus cache config from ConfigMap, using defaults: %v", err)
+		cacheConfig = nil // Use defaults
+	}
+
+	// Initialize metrics collector plugin (defaults to Prometheus)
+	metricsCollector, err := collector.NewMetricsCollector(collector.Config{
+		Type:        collector.CollectorTypePrometheus,
+		PromAPI:     promAPI,
+		CacheConfig: cacheConfig,
+	})
+	if err != nil {
+		setupLog.Error("failed to create metrics collector", zap.Error(err))
+		os.Exit(1)
+	}
+
+	// Set K8sClient on the collector if it supports it (for pod discovery in saturation metrics)
+	if promCollector, ok := metricsCollector.(*prometheus.PrometheusCollector); ok {
+		promCollector.SetK8sClient(mgr.GetClient())
+
+		// Start background fetching executor using manager context
+		// This ensures the executor stops gracefully when the manager stops
+		if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
+			promCollector.StartBackgroundWorker(ctx)
+			<-ctx.Done() // Wait for context cancellation
+			return nil
+		})); err != nil {
+			logger.Log.Warnf("Failed to register background fetching executor with manager: %v", err)
+		} else {
+			logger.Log.Info("Registered background fetching executor with manager")
+		}
+	}
+
+	logger.Log.Info("Metrics collector initialized successfully")
+
 	// Create the reconciler
 	reconciler := &controller.VariantAutoscalingReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("workload-variant-autoscaler-controller-manager"),
+		Client:           mgr.GetClient(),
+		Scheme:           mgr.GetScheme(),
+		Recorder:         mgr.GetEventRecorderFor("workload-variant-autoscaler-controller-manager"),
+		PromAPI:          promAPI,
+		MetricsCollector: metricsCollector,
 	}
 
 	// Setup the controller with the manager

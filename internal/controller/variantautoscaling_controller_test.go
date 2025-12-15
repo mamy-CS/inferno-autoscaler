@@ -307,10 +307,6 @@ var _ = Describe("VariantAutoscalings Controller", func() {
 		})
 
 		It("should return empty on variant autoscaling optimization ConfigMap with missing prometheus base URL", func() {
-			controllerReconciler := &VariantAutoscalingReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-			}
 
 			// delete correct configMap
 			configMap := &v1.ConfigMap{
@@ -338,16 +334,12 @@ var _ = Describe("VariantAutoscalings Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
 
-			prometheusURL, err := controllerReconciler.getPrometheusConfigFromConfigMap(ctx)
+			prometheusURL, err := utils.GetPrometheusConfigFromConfigMap(ctx, k8sClient)
 			Expect(err).NotTo(HaveOccurred(), "Unexpected error when reading variant autoscaling optimization ConfigMap with missing Prometheus URL")
 			Expect(prometheusURL).To(BeNil(), "Expected empty Prometheus URL")
 		})
 
 		It("should return error on VA optimization ConfigMap with missing prometheus base URL and no env variable", func() {
-			controllerReconciler := &VariantAutoscalingReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-			}
 
 			// delete correct configMap
 			configMap := &v1.ConfigMap{
@@ -375,15 +367,11 @@ var _ = Describe("VariantAutoscalings Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
 
-			_, err = controllerReconciler.getPrometheusConfig(ctx)
+			_, err = utils.GetPrometheusConfig(ctx, k8sClient)
 			Expect(err).To(HaveOccurred(), "It should fail when neither env variable nor Prometheus URL are found")
 		})
 
 		It("should return default values on variant autoscaling optimization ConfigMap with missing TLS values", func() {
-			controllerReconciler := &VariantAutoscalingReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-			}
 
 			// delete correct configMap
 			configMap := &v1.ConfigMap{
@@ -413,7 +401,7 @@ var _ = Describe("VariantAutoscalings Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
 
-			prometheusConfig, err := controllerReconciler.getPrometheusConfigFromConfigMap(ctx)
+			prometheusConfig, err := utils.GetPrometheusConfigFromConfigMap(ctx, k8sClient)
 			Expect(err).NotTo(HaveOccurred(), "It should not fail when neither env variable nor Prometheus URL are found")
 
 			Expect(prometheusConfig.BaseURL).To(Equal("https://kube-prometheus-stack-prometheus.workload-variant-autoscaler-monitoring.svc.cluster.local:9090"), "Expected Base URL to be set")
