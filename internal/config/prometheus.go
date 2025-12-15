@@ -1,4 +1,4 @@
-package utils
+package config
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	collectorconfig "github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/config"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logger"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/utils"
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -64,7 +65,7 @@ func GetPrometheusConfigFromEnv() (*interfaces.PrometheusConfig, error) {
 // GetPrometheusConfigFromConfigMap retrieves Prometheus configuration from ConfigMap
 func GetPrometheusConfigFromConfigMap(ctx context.Context, k8sClient client.Client) (*interfaces.PrometheusConfig, error) {
 	cm := corev1.ConfigMap{}
-	err := GetConfigMapWithBackoff(ctx, k8sClient, ConfigMapName, getNamespace(), &cm)
+	err := utils.GetConfigMapWithBackoff(ctx, k8sClient, ConfigMapName, getNamespace(), &cm)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get ConfigMap for Prometheus config: %w", err)
 	}
@@ -98,7 +99,7 @@ func GetPrometheusConfigFromConfigMap(ctx context.Context, k8sClient client.Clie
 // ReadPrometheusCacheConfig reads Prometheus collector cache configuration from the ConfigMap
 func ReadPrometheusCacheConfig(ctx context.Context, k8sClient client.Client) (*collectorconfig.CacheConfig, error) {
 	cm := corev1.ConfigMap{}
-	err := GetConfigMapWithBackoff(ctx, k8sClient, ConfigMapName, getNamespace(), &cm)
+	err := utils.GetConfigMapWithBackoff(ctx, k8sClient, ConfigMapName, getNamespace(), &cm)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get configmap for Prometheus cache config: %w", err)
 	}
@@ -136,4 +137,25 @@ func ReadPrometheusCacheConfig(ctx context.Context, k8sClient client.Client) (*c
 	config.FreshnessThresholds.UnavailableThreshold = ParseDurationFromConfig(cm.Data, "PROMETHEUS_METRICS_CACHE_UNAVAILABLE_THRESHOLD", 5*time.Minute)
 
 	return config, nil
+}
+
+// ParsePrometheusConfigFromEnv parses Prometheus configuration from environment variables.
+// Supports both direct values and file paths for flexible deployment scenarios.
+func ParsePrometheusConfigFromEnv() *interfaces.PrometheusConfig {
+	config := &interfaces.PrometheusConfig{
+		BaseURL: os.Getenv("PROMETHEUS_BASE_URL"),
+	}
+
+	// TLS is always enabled for HTTPS-only support
+	config.InsecureSkipVerify = os.Getenv("PROMETHEUS_TLS_INSECURE_SKIP_VERIFY") == "true"
+	config.CACertPath = os.Getenv("PROMETHEUS_CA_CERT_PATH")
+	config.ClientCertPath = os.Getenv("PROMETHEUS_CLIENT_CERT_PATH")
+	config.ClientKeyPath = os.Getenv("PROMETHEUS_CLIENT_KEY_PATH")
+	config.ServerName = os.Getenv("PROMETHEUS_SERVER_NAME")
+
+	// Support both direct bearer token and token path
+	config.BearerToken = os.Getenv("PROMETHEUS_BEARER_TOKEN")
+	config.TokenPath = os.Getenv("PROMETHEUS_TOKEN_PATH")
+
+	return config
 }

@@ -40,6 +40,7 @@ import (
 
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
 	collector "github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/config"
 	interfaces "github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
 	logger "github.com/llm-d-incubation/workload-variant-autoscaler/internal/logger"
 	utils "github.com/llm-d-incubation/workload-variant-autoscaler/internal/utils"
@@ -334,7 +335,7 @@ var _ = Describe("VariantAutoscalings Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
 
-			prometheusURL, err := utils.GetPrometheusConfigFromConfigMap(ctx, k8sClient)
+			prometheusURL, err := config.GetPrometheusConfigFromConfigMap(ctx, k8sClient)
 			Expect(err).NotTo(HaveOccurred(), "Unexpected error when reading variant autoscaling optimization ConfigMap with missing Prometheus URL")
 			Expect(prometheusURL).To(BeNil(), "Expected empty Prometheus URL")
 		})
@@ -367,7 +368,7 @@ var _ = Describe("VariantAutoscalings Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
 
-			_, err = utils.GetPrometheusConfig(ctx, k8sClient)
+			_, err = config.GetPrometheusConfig(ctx, k8sClient)
 			Expect(err).To(HaveOccurred(), "It should fail when neither env variable nor Prometheus URL are found")
 		})
 
@@ -401,7 +402,7 @@ var _ = Describe("VariantAutoscalings Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
 
-			prometheusConfig, err := utils.GetPrometheusConfigFromConfigMap(ctx, k8sClient)
+			prometheusConfig, err := config.GetPrometheusConfigFromConfigMap(ctx, k8sClient)
 			Expect(err).NotTo(HaveOccurred(), "It should not fail when neither env variable nor Prometheus URL are found")
 
 			Expect(prometheusConfig.BaseURL).To(Equal("https://kube-prometheus-stack-prometheus.workload-variant-autoscaler-monitoring.svc.cluster.local:9090"), "Expected Base URL to be set")

@@ -45,6 +45,7 @@ import (
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/prometheus"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/config"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/controller"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/saturation"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/scalefromzero"
@@ -311,7 +312,7 @@ func main() {
 	logger.Log.Infof("Metrics emitter created successfully")
 
 	// Configure Prometheus client using flexible configuration with TLS support
-	promConfig, err := utils.GetPrometheusConfig(context.Background(), mgr.GetClient())
+	promConfig, err := config.GetPrometheusConfig(context.Background(), mgr.GetClient())
 	if err != nil {
 		setupLog.Error("failed to get Prometheus configuration", zap.Error(err))
 		os.Exit(1)
@@ -349,14 +350,14 @@ func main() {
 
 	// Validate that the API is working by testing a simple query with retry logic
 	if err := utils.ValidatePrometheusAPI(context.Background(), promAPI); err != nil {
-		logger.Log.Errorf("CRITICAL: Failed to connect to Prometheus - Inferno requires Prometheus connectivity for autoscaling decisions: error=%v", err)
+		logger.Log.Errorf("CRITICAL: Failed to connect to Prometheus - WVA requires Prometheus connectivity for autoscaling decisions: error=%v", err)
 		setupLog.Error("critical: failed to validate Prometheus API connection", zap.Error(err))
 		os.Exit(1)
 	}
 	logger.Log.Info("Prometheus client and API wrapper initialized and validated successfully")
 
 	// Read Prometheus cache configuration from ConfigMap
-	cacheConfig, err := utils.ReadPrometheusCacheConfig(context.Background(), mgr.GetClient())
+	cacheConfig, err := config.ReadPrometheusCacheConfig(context.Background(), mgr.GetClient())
 	if err != nil {
 		logger.Log.Warnf("Failed to read Prometheus cache config from ConfigMap, using defaults: %v", err)
 		cacheConfig = nil // Use defaults
