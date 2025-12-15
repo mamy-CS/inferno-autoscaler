@@ -227,6 +227,11 @@ const (
 	ReasonSkippedProcessing = "SkippedProcessing"
 )
 
+// GetScaleTargetAPI returns the API of the scale target resource.
+func (va *VariantAutoscaling) GetScaleTargetAPI() string {
+	return va.Spec.ScaleTargetRef.APIVersion
+}
+
 // GetScaleTargetName returns the name of the scale target resource.
 func (va *VariantAutoscaling) GetScaleTargetName() string {
 	return va.Spec.ScaleTargetRef.Name
