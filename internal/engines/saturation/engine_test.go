@@ -76,7 +76,6 @@ var _ = Describe("Saturation Engine", func() {
 
 	Context("When validating configurations", func() {
 		const configMapName = "workload-variant-autoscaler-variantautoscaling-config"
-		const configResourceName = "config-test-resource"
 		var configMapNamespace = getNamespace()
 
 		BeforeEach(func() {

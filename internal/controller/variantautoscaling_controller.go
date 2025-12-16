@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"os"
 	"strconv"
-	"sync"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -34,20 +33,16 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
-	actuator "github.com/llm-d-incubation/workload-variant-autoscaler/internal/actuator"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/saturation"
 
-	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/prometheus"
 	interfaces "github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logger"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/utils"
-	infernoConfig "github.com/llm-d-incubation/workload-variant-autoscaler/pkg/config"
 	promoperator "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
 // VariantAutoscalingReconciler reconciles a variantAutoscaling object
@@ -67,9 +62,6 @@ type VariantAutoscalingReconciler struct {
 	MetricsCollector interfaces.MetricsCollector
 
 	// Saturation scaling config cache (thread-safe, updated on ConfigMap changes)
-	saturationConfigCache      map[string]interfaces.SaturationScalingConfig
-	saturationConfigCacheMutex sync.RWMutex
-	saturationConfigLoaded     bool // Track if initial load succeeded
 }
 
 // +kubebuilder:rbac:groups=llmd.ai,resources=variantautoscalings,verbs=get;list;watch;create;update;patch;delete
@@ -219,69 +211,6 @@ func BuildVariantStates(
 	}
 
 	return states, nil
-}
-
-// convertSaturationTargetsToDecisions converts saturation-only targets to VariantDecisions.
-// Used when model-based optimizer is disabled (saturation-only mode).
-func convertSaturationTargetsToDecisions(
-	saturationTargets map[string]int,
-	saturationAnalysis *interfaces.ModelSaturationAnalysis,
-	variantStates []interfaces.VariantReplicaState,
-) []interfaces.VariantDecision {
-	decisions := make([]interfaces.VariantDecision, 0, len(saturationTargets))
-
-	// Build variant analysis map for quick lookup
-	vaMap := make(map[string]*interfaces.VariantSaturationAnalysis)
-	for i := range saturationAnalysis.VariantAnalyses {
-		va := &saturationAnalysis.VariantAnalyses[i]
-		vaMap[va.VariantName] = va
-	}
-
-	// Build state map for quick lookup
-	stateMap := make(map[string]interfaces.VariantReplicaState)
-	for _, state := range variantStates {
-		stateMap[state.VariantName] = state
-	}
-
-	for variantName, targetReplicas := range saturationTargets {
-		state := stateMap[variantName]
-		va := vaMap[variantName]
-
-		var action interfaces.SaturationAction
-		if targetReplicas > state.CurrentReplicas {
-			action = interfaces.ActionScaleUp
-		} else if targetReplicas < state.CurrentReplicas {
-			action = interfaces.ActionScaleDown
-		} else {
-			action = interfaces.ActionNoChange
-		}
-
-		decision := interfaces.VariantDecision{
-			VariantName:        variantName,
-			Namespace:          saturationAnalysis.Namespace,
-			ModelID:            saturationAnalysis.ModelID,
-			CurrentReplicas:    state.CurrentReplicas,
-			TargetReplicas:     targetReplicas,
-			DesiredReplicas:    state.DesiredReplicas,
-			Action:             action,
-			SaturationBased:    true,
-			SaturationOnly:     true,
-			ModelBasedDecision: false,
-			SafetyOverride:     false,
-			Reason:             "saturation-only mode: " + string(action),
-		}
-
-		if va != nil {
-			decision.AcceleratorName = va.AcceleratorName
-			decision.Cost = va.Cost
-		} else {
-			logger.Log.Warnf("No variant analysis found for decision: variant=%s (metrics may be unavailable)", variantName)
-		}
-
-		decisions = append(decisions, decision)
-	}
-
-	return decisions
 }
 
 // RunSaturationAnalysis performs saturation analysis for a model and returns Saturation targets.
@@ -467,323 +396,6 @@ func CollectMetricsForSaturationMode(
 	}
 
 	return nil
-}
-
-// applySaturationDecisions updates VA status and emits metrics based on Saturation decisions.
-func (r *VariantAutoscalingReconciler) applySaturationDecisions(
-	ctx context.Context,
-	decisions []interfaces.VariantDecision,
-	vaMap map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling,
-) error {
-	for _, decision := range decisions {
-		logger.Log.Infof("Processing decision: variant=%s, action=%s, current=%d→target=%d",
-			decision.VariantName, decision.Action, decision.CurrentReplicas, decision.TargetReplicas)
-
-		va, ok := vaMap[decision.VariantName]
-		if !ok {
-			logger.Log.Errorf("VA not found in vaMap: variant=%s", decision.VariantName)
-			continue
-		}
-
-		logger.Log.Debugf("Found VA in map: variant=%s, hasCurrentAlloc=%v, accelerator=%s",
-			va.Name, va.Status.CurrentAlloc.Accelerator != "", va.Status.CurrentAlloc.Accelerator)
-
-		// Fetch latest version from API server to avoid conflicts
-		var updateVa llmdVariantAutoscalingV1alpha1.VariantAutoscaling
-		if err := utils.GetVariantAutoscalingWithBackoff(ctx, r.Client, va.Name, va.Namespace, &updateVa); err != nil {
-			logger.Log.Errorf("failed to get latest VA from API server: name=%s, error=%v", va.Name, err)
-			continue
-		}
-
-		// Skip status update if we don't have valid metrics (CurrentAlloc) OR valid decision (AcceleratorName)
-		// This prevents CRD validation errors when accelerator field is invalid
-		if va.Status.CurrentAlloc.Accelerator == "" || decision.AcceleratorName == "" || len(decision.AcceleratorName) < 2 {
-			logger.Log.Warnf("Skipping status update for VA without valid metrics or accelerator: variant=%s, hasCurrentAlloc=%v, decisionAccelerator=%s",
-				decision.VariantName, va.Status.CurrentAlloc.Accelerator != "", decision.AcceleratorName)
-			continue
-		}
-
-		// Update CurrentAlloc from vaMap
-		updateVa.Status.CurrentAlloc = va.Status.CurrentAlloc
-
-		// Update DesiredOptimizedAlloc with Saturation decision
-		acceleratorName := decision.AcceleratorName
-
-		updateVa.Status.DesiredOptimizedAlloc = llmdVariantAutoscalingV1alpha1.OptimizedAlloc{
-			NumReplicas: decision.TargetReplicas,
-			Accelerator: acceleratorName,
-			LastRunTime: metav1.Now(),
-		}
-		updateVa.Status.Actuation.Applied = false
-
-		// Set condition based on decision characteristics
-		if decision.SafetyOverride {
-			llmdVariantAutoscalingV1alpha1.SetCondition(&updateVa,
-				llmdVariantAutoscalingV1alpha1.TypeOptimizationReady,
-				metav1.ConditionTrue,
-				"SaturationSafetyOverride",
-				fmt.Sprintf("saturation safety override: %s", decision.Reason))
-		} else if decision.SaturationOnly {
-			llmdVariantAutoscalingV1alpha1.SetCondition(&updateVa,
-				llmdVariantAutoscalingV1alpha1.TypeOptimizationReady,
-				metav1.ConditionTrue,
-				"SaturationOnlyMode",
-				fmt.Sprintf("saturation-only decision: %s (target: %d replicas)", decision.Reason, decision.TargetReplicas))
-		} else {
-			llmdVariantAutoscalingV1alpha1.SetCondition(&updateVa,
-				llmdVariantAutoscalingV1alpha1.TypeOptimizationReady,
-				metav1.ConditionTrue,
-				llmdVariantAutoscalingV1alpha1.ReasonOptimizationSucceeded,
-				fmt.Sprintf("Hybrid mode: %s (target: %d replicas)", decision.Reason, decision.TargetReplicas))
-		}
-
-		// Emit metrics for external autoscalers
-		act := actuator.NewActuator(r.Client)
-		if err := act.EmitMetrics(ctx, &updateVa); err != nil {
-			logger.Log.Errorf("failed to emit metrics for external autoscalers: variant=%s, error=%v", updateVa.Name, err)
-		} else {
-			logger.Log.Infof("Successfully emitted metrics for external autoscalers: variant=%s, targetReplicas=%d, accelerator=%s, SaturationOnly=%v",
-				updateVa.Name, decision.TargetReplicas, decision.AcceleratorName, decision.SaturationOnly)
-			updateVa.Status.Actuation.Applied = true
-		}
-
-		// Update VA status
-		if err := utils.UpdateStatusWithBackoff(ctx, r.Client, &updateVa, utils.StandardBackoff, "VariantAutoscaling"); err != nil {
-			logger.Log.Errorf("failed to update VA status after retries: name=%s, error=%v", updateVa.Name, err)
-			continue
-		}
-
-		logger.Log.Infof("Applied Saturation decision: variant=%s, action=%s, current=%d, target=%d, reason=%s",
-			decision.VariantName, decision.Action, decision.CurrentReplicas, decision.TargetReplicas, decision.Reason)
-
-		// Invalidate cache when scaling occurs (replica count changes)
-		if decision.Action != interfaces.ActionNoChange {
-			// Type assert to PrometheusCollector to access cache invalidation
-			if promCollector, ok := r.MetricsCollector.(*prometheus.PrometheusCollector); ok {
-				modelID := decision.ModelID
-				namespace := decision.Namespace
-				variantName := decision.VariantName
-				promCollector.InvalidateCacheForVariant(modelID, namespace, variantName)
-				logger.Log.Debugf("Invalidated metrics cache after scaling: variant=%s, action=%s",
-					variantName, decision.Action)
-			}
-		}
-	}
-
-	return nil
-}
-
-// emitSafetyNetMetrics emits fallback metrics when saturation analysis fails.
-// Strategy: Use previous desired replicas if available, otherwise use current replicas.
-// This prevents HPA from using completely stale metrics and provides a safe no-op signal.
-func (r *VariantAutoscalingReconciler) emitSafetyNetMetrics(
-	ctx context.Context,
-	modelVAs []llmdVariantAutoscalingV1alpha1.VariantAutoscaling,
-) {
-	act := actuator.NewActuator(r.Client)
-
-	for _, va := range modelVAs {
-		// Get latest version from API server
-		var updateVa llmdVariantAutoscalingV1alpha1.VariantAutoscaling
-		if err := utils.GetVariantAutoscalingWithBackoff(ctx, r.Client, va.Name, va.Namespace, &updateVa); err != nil {
-			logger.Log.Errorf("Safety net: failed to get latest VA from API server: name=%s, error=%v", va.Name, err)
-			continue
-		}
-
-		// Determine fallback desired replicas
-		var desiredReplicas int32
-		var fallbackSource string
-
-		// Strategy 1: Use previous desired replicas if available
-		if updateVa.Status.DesiredOptimizedAlloc.NumReplicas > 0 {
-			desiredReplicas = int32(updateVa.Status.DesiredOptimizedAlloc.NumReplicas)
-			fallbackSource = "previous-desired"
-		} else {
-			// Strategy 2: Use current replicas from deployment (safe no-op)
-			currentReplicas, err := act.GetCurrentDeploymentReplicas(ctx, &updateVa)
-			if err != nil {
-				logger.Log.Warnf("Safety net: failed to get current replicas, using VA status: variant=%s, error=%v",
-					updateVa.Name, err)
-				currentReplicas = int32(updateVa.Status.CurrentAlloc.NumReplicas)
-			}
-			desiredReplicas = currentReplicas
-			fallbackSource = "current-replicas"
-		}
-
-		// Get current replicas for metric emission
-		currentReplicas, err := act.GetCurrentDeploymentReplicas(ctx, &updateVa)
-		if err != nil {
-			logger.Log.Warnf("Safety net: failed to get current replicas for metrics: variant=%s, error=%v",
-				updateVa.Name, err)
-			currentReplicas = int32(updateVa.Status.CurrentAlloc.NumReplicas)
-		}
-
-		// Determine accelerator - try status first, then labels, skip if unavailable
-		accelerator := updateVa.Status.DesiredOptimizedAlloc.Accelerator
-		if accelerator == "" {
-			accelerator = updateVa.Status.CurrentAlloc.Accelerator
-		}
-		if accelerator == "" {
-			// Try to get from VA labels as last resort
-			if val, ok := updateVa.Labels["inference.optimization/acceleratorName"]; ok && val != "" {
-				accelerator = val
-			}
-		}
-		if accelerator == "" {
-			logger.Log.Warnf("Safety net: skipping metric emission - no accelerator name available: variant=%s",
-				updateVa.Name)
-			continue
-		}
-
-		// Emit safety net metrics
-		if err := act.MetricsEmitter.EmitReplicaMetrics(
-			ctx,
-			&updateVa,
-			currentReplicas,
-			desiredReplicas,
-			accelerator,
-		); err != nil {
-			logger.Log.Errorf("Safety net: failed to emit metrics: variant=%s, error=%v", updateVa.Name, err)
-			continue
-		}
-
-		logger.Log.Infof("Safety net activated: emitted fallback metrics: variant=%s, currentReplicas=%d, desiredReplicas=%d, accelerator=%s, fallbackSource=%s",
-			updateVa.Name,
-			currentReplicas,
-			desiredReplicas,
-			accelerator,
-			fallbackSource)
-	}
-}
-
-// prepareVariantAutoscalings collects and prepares all data for optimization.
-func (r *VariantAutoscalingReconciler) prepareVariantAutoscalings(
-	ctx context.Context,
-	activeVAs []llmdVariantAutoscalingV1alpha1.VariantAutoscaling,
-	acceleratorCm map[string]map[string]string,
-	serviceClassCm map[string]string,
-	systemData *infernoConfig.SystemData,
-) (*llmdVariantAutoscalingV1alpha1.VariantAutoscalingList, map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling, map[string]*interfaces.ModelAnalyzeResponse, error) {
-	var updateList llmdVariantAutoscalingV1alpha1.VariantAutoscalingList
-	allAnalyzerResponses := make(map[string]*interfaces.ModelAnalyzeResponse)
-	vaMap := make(map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling)
-
-	for _, va := range activeVAs {
-		modelName := va.Spec.ModelID
-		if modelName == "" {
-			logger.Log.Infof("variantAutoscaling missing modelName label, skipping optimization: variantAutoscaling-name=%s", va.Name)
-			continue
-		}
-
-		entry, className, err := utils.FindModelSLO(serviceClassCm, modelName)
-		if err != nil {
-			logger.Log.Errorf("failed to locate SLO for model: variantAutoscaling-name=%s, modelName=%s, error=%v", va.Name, modelName, err)
-			continue
-		}
-		logger.Log.Infof("Found SLO for model: model=%s, class=%s, slo-tpot=%d, slo-ttft=%d", modelName, className, entry.SLOTPOT, entry.SLOTTFT)
-
-		for _, modelAcceleratorProfile := range va.Spec.ModelProfile.Accelerators {
-			if utils.AddModelAcceleratorProfileToSystemData(systemData, modelName, &modelAcceleratorProfile) != nil {
-				logger.Log.Errorf("variantAutoscaling bad model accelerator profile data, skipping optimization: variantAutoscaling-name=%s", va.Name)
-				continue
-			}
-		}
-
-		accName := va.Labels["inference.optimization/acceleratorName"]
-		acceleratorCostVal, ok := acceleratorCm[accName]["cost"]
-		if !ok {
-			logger.Log.Errorf("variantAutoscaling missing accelerator cost in configMap, skipping optimization: variantAutoscaling-name=%s", va.Name)
-			continue
-		}
-		acceleratorCostValFloat, err := strconv.ParseFloat(acceleratorCostVal, 32)
-		if err != nil {
-			logger.Log.Errorf("variantAutoscaling unable to parse accelerator cost in configMap, skipping optimization: variantAutoscaling-name=%s", va.Name)
-			continue
-		}
-
-		// Get Deployment using ScaleTargetRef
-		var deploy appsv1.Deployment
-		err = utils.GetDeploymentWithBackoff(ctx, r.Client, va.GetScaleTargetName(), va.Namespace, &deploy)
-		if err != nil {
-			logger.Log.Errorf("failed to get Deployment after retries: variantAutoscaling-name=%s, deployment=%s, error=%v", va.Name, va.GetScaleTargetName(), err)
-			continue
-		}
-
-		// Fetch latest VA from API server (use VA name, not deployment name - they are now decoupled)
-		var updateVA llmdVariantAutoscalingV1alpha1.VariantAutoscaling
-		err = utils.GetVariantAutoscalingWithBackoff(ctx, r.Client, va.Name, va.Namespace, &updateVA)
-		if err != nil {
-			logger.Log.Errorf("unable to get variantAutoscaling: variantAutoscaling-name=%s, namespace=%s, error=%v", va.Name, va.Namespace, err)
-			continue
-		}
-
-		// Set ownerReference early, before metrics validation, to ensure it's always set
-		// This ensures the VA will be garbage collected when the Deployment is deleted
-		if !metav1.IsControlledBy(&updateVA, &deploy) {
-			original := updateVA.DeepCopy()
-			err := controllerutil.SetControllerReference(&deploy, &updateVA, r.Scheme, controllerutil.WithBlockOwnerDeletion(false))
-			if err != nil {
-				logger.Log.Errorf("failed to set ownerReference: variantAutoscaling-name=%s, error=%v", updateVA.Name, err)
-				continue
-			}
-
-			// Patch metadata change (ownerReferences)
-			patch := client.MergeFrom(original)
-			if err := r.Patch(ctx, &updateVA, patch); err != nil {
-				logger.Log.Errorf("failed to patch ownerReference: variantAutoscaling-name=%s, error=%v", updateVA.Name, err)
-				continue
-			}
-			logger.Log.Infof("Set ownerReference on VariantAutoscaling: variantAutoscaling-name=%s, owner=%s", updateVA.Name, deploy.Name)
-		}
-
-		// Validate metrics availability before collecting metrics
-		metricsValidation := r.MetricsCollector.ValidateMetricsAvailability(ctx, modelName, deploy.Namespace)
-
-		// Update MetricsAvailable condition based on validation result
-		if metricsValidation.Available {
-			llmdVariantAutoscalingV1alpha1.SetCondition(&updateVA,
-				llmdVariantAutoscalingV1alpha1.TypeMetricsAvailable,
-				metav1.ConditionTrue,
-				metricsValidation.Reason,
-				metricsValidation.Message)
-		} else {
-			// Metrics unavailable - just log and skip (don't update status yet to avoid CRD validation errors)
-			// Conditions will be set properly once metrics become available or after first successful collection
-			logger.Log.Warnf("Metrics unavailable, skipping optimization for variant: variant=%s, namespace=%s, model=%s, reason=%s, troubleshooting=%s",
-				updateVA.Name,
-				updateVA.Namespace,
-				modelName,
-				metricsValidation.Reason,
-				metricsValidation.Message)
-			continue
-		}
-
-		// Collect raw metrics from collector
-		metrics, err := r.MetricsCollector.AddMetricsToOptStatus(ctx, &updateVA, deploy, acceleratorCostValFloat)
-		if err != nil {
-			logger.Log.Errorf("unable to fetch metrics, skipping this variantAutoscaling loop: error=%v", err)
-			// Don't update status here - will be updated in next reconcile when metrics are available
-			continue
-		}
-
-		// Assemble Allocation struct from raw metrics
-		currentAllocation, err := BuildAllocationFromMetrics(metrics, &updateVA, deploy, acceleratorCostValFloat)
-		if err != nil {
-			logger.Log.Errorf("unable to build allocation, skipping this variantAutoscaling loop: error=%v", err)
-			continue
-		}
-		updateVA.Status.CurrentAlloc = currentAllocation
-
-		if err := utils.AddServerInfoToSystemData(systemData, &updateVA, className); err != nil {
-			logger.Log.Infof("variantAutoscaling bad deployment server data, skipping optimization: variantAutoscaling-name=%s", updateVA.Name)
-			continue
-		}
-
-		vaFullName := utils.FullName(va.Name, va.Namespace)
-		updateList.Items = append(updateList.Items, updateVA)
-		vaMap[vaFullName] = &va
-	}
-	return &updateList, vaMap, allAnalyzerResponses, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
