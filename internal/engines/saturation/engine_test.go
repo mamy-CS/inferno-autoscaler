@@ -1,0 +1,647 @@
+/*
+Copyright 2025.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package saturation
+
+import (
+	"context"
+	"fmt"
+	"strings"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+	"github.com/prometheus/common/model"
+	"go.uber.org/zap"
+	appsv1 "k8s.io/api/apps/v1"
+	autoscalingv1 "k8s.io/api/autoscaling/v1"
+	v1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
+	collector "github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/config"
+	interfaces "github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
+	logger "github.com/llm-d-incubation/workload-variant-autoscaler/internal/logger"
+	utils "github.com/llm-d-incubation/workload-variant-autoscaler/internal/utils"
+	testutils "github.com/llm-d-incubation/workload-variant-autoscaler/test/utils"
+)
+
+var _ = Describe("Saturation Engine", func() {
+
+	Context("When handling error conditions on missing config maps", func() {
+		BeforeEach(func() {
+			logger.Log = zap.NewNop().Sugar()
+		})
+
+		It("should fail on missing serviceClass ConfigMap", func() {
+			By("Creating Engine without required ConfigMaps")
+			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, nil)
+
+			_, err := engine.readServiceClassConfig(ctx, "service-classes-config", getNamespace())
+			Expect(err).To(HaveOccurred(), "Expected error when reading missing serviceClass ConfigMap")
+		})
+
+		It("should fail on missing accelerator ConfigMap", func() {
+			By("Creating Engine without required ConfigMaps")
+			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, nil)
+
+			_, err := engine.readAcceleratorConfig(ctx, "accelerator-unit-costs", getNamespace())
+			Expect(err).To(HaveOccurred(), "Expected error when reading missing accelerator ConfigMap")
+		})
+
+		It("should fail on missing variant autoscaling optimization ConfigMap", func() {
+			By("Creating Engine without required ConfigMaps")
+			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, nil)
+
+			_, err := engine.readOptimizationConfig(ctx)
+			Expect(err).To(HaveOccurred(), "Expected error when reading missing variant autoscaling optimization ConfigMap")
+		})
+	})
+
+	Context("When validating configurations", func() {
+		const configMapName = "workload-variant-autoscaler-variantautoscaling-config"
+		const configResourceName = "config-test-resource"
+		var configMapNamespace = getNamespace()
+
+		BeforeEach(func() {
+			logger.Log = zap.NewNop().Sugar()
+			ns := &v1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: configMapNamespace,
+				},
+			}
+			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, ns))).NotTo(HaveOccurred())
+
+			By("creating the required configmaps")
+			configMap := testutils.CreateServiceClassConfigMap(ns.Name)
+			Expect(k8sClient.Create(ctx, configMap)).NotTo(HaveOccurred())
+
+			configMap = testutils.CreateAcceleratorUnitCostConfigMap(ns.Name)
+			Expect(k8sClient.Create(ctx, configMap)).NotTo(HaveOccurred())
+
+			configMap = testutils.CreateVariantAutoscalingConfigMap(configMapName, ns.Name)
+			Expect(k8sClient.Create(ctx, configMap)).NotTo(HaveOccurred())
+		})
+
+		AfterEach(func() {
+			By("Deleting the configmap resources")
+			configMap := &v1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "service-classes-config",
+					Namespace: configMapNamespace,
+				},
+			}
+			err := k8sClient.Delete(ctx, configMap)
+			Expect(client.IgnoreNotFound(err)).NotTo(HaveOccurred())
+
+			configMap = &v1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "accelerator-unit-costs",
+					Namespace: configMapNamespace,
+				},
+			}
+			err = k8sClient.Delete(ctx, configMap)
+			Expect(client.IgnoreNotFound(err)).NotTo(HaveOccurred())
+
+			configMap = &v1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      configMapName,
+					Namespace: configMapNamespace,
+				},
+			}
+			err = k8sClient.Delete(ctx, configMap)
+			Expect(client.IgnoreNotFound(err)).NotTo(HaveOccurred())
+		})
+
+		It("should return empty on variant autoscaling optimization ConfigMap with missing interval value", func() {
+			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, nil)
+
+			// delete correct configMap
+			configMap := &v1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      configMapName,
+					Namespace: configMapNamespace,
+				},
+			}
+			err := k8sClient.Delete(ctx, configMap)
+			Expect(err).NotTo(HaveOccurred())
+
+			configMap = &v1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      configMapName,
+					Namespace: configMapNamespace,
+					Labels: map[string]string{
+						"app.kubernetes.io/name": "workload-variant-autoscaler",
+					},
+				},
+				Data: map[string]string{
+					"PROMETHEUS_BASE_URL": "https://kube-prometheus-stack-prometheus.workload-variant-autoscaler-monitoring.svc.cluster.local:9090",
+					"GLOBAL_OPT_INTERVAL": "",
+					"GLOBAL_OPT_TRIGGER":  "false",
+				},
+			}
+			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
+
+			interval, err := engine.readOptimizationConfig(ctx)
+			Expect(err).NotTo(HaveOccurred(), "Unexpected error when reading variant autoscaling optimization ConfigMap with missing interval")
+			Expect(interval).To(Equal(""), "Expected empty interval value")
+		})
+
+		It("should return empty on variant autoscaling optimization ConfigMap with missing prometheus base URL", func() {
+
+			// delete correct configMap
+			configMap := &v1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      configMapName,
+					Namespace: configMapNamespace,
+				},
+			}
+			err := k8sClient.Delete(ctx, configMap)
+			Expect(err).NotTo(HaveOccurred())
+
+			configMap = &v1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      configMapName,
+					Namespace: configMapNamespace,
+					Labels: map[string]string{
+						"app.kubernetes.io/name": "workload-variant-autoscaler",
+					},
+				},
+				Data: map[string]string{
+					"PROMETHEUS_BASE_URL": "",
+					"GLOBAL_OPT_INTERVAL": "60s",
+					"GLOBAL_OPT_TRIGGER":  "false",
+				},
+			}
+			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
+
+			prometheusURL, err := config.GetPrometheusConfigFromConfigMap(ctx, k8sClient)
+			Expect(err).NotTo(HaveOccurred(), "Unexpected error when reading variant autoscaling optimization ConfigMap with missing Prometheus URL")
+			Expect(prometheusURL).To(BeNil(), "Expected empty Prometheus URL")
+		})
+
+		It("should return error on VA optimization ConfigMap with missing prometheus base URL and no env variable", func() {
+
+			// delete correct configMap
+			configMap := &v1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      configMapName,
+					Namespace: configMapNamespace,
+				},
+			}
+			err := k8sClient.Delete(ctx, configMap)
+			Expect(err).NotTo(HaveOccurred())
+
+			configMap = &v1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      configMapName,
+					Namespace: configMapNamespace,
+					Labels: map[string]string{
+						"app.kubernetes.io/name": "workload-variant-autoscaler",
+					},
+				},
+				Data: map[string]string{
+					"PROMETHEUS_BASE_URL": "",
+					"GLOBAL_OPT_INTERVAL": "60s",
+					"GLOBAL_OPT_TRIGGER":  "false",
+				},
+			}
+			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
+
+			_, err = config.GetPrometheusConfig(ctx, k8sClient)
+			Expect(err).To(HaveOccurred(), "It should fail when neither env variable nor Prometheus URL are found")
+		})
+
+		It("should return default values on variant autoscaling optimization ConfigMap with missing TLS values", func() {
+
+			// delete correct configMap
+			configMap := &v1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      configMapName,
+					Namespace: configMapNamespace,
+				},
+			}
+			err := k8sClient.Delete(ctx, configMap)
+			Expect(err).NotTo(HaveOccurred())
+
+			configMap = &v1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      configMapName,
+					Namespace: configMapNamespace,
+					Labels: map[string]string{
+						"app.kubernetes.io/name": "workload-variant-autoscaler",
+					},
+				},
+				Data: map[string]string{
+					"PROMETHEUS_BASE_URL":                 "https://kube-prometheus-stack-prometheus.workload-variant-autoscaler-monitoring.svc.cluster.local:9090",
+					"GLOBAL_OPT_INTERVAL":                 "60s",
+					"GLOBAL_OPT_TRIGGER":                  "false",
+					"PROMETHEUS_TLS_INSECURE_SKIP_VERIFY": "true",
+					// no values set for TLS config - dev env
+				},
+			}
+			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
+
+			prometheusConfig, err := config.GetPrometheusConfigFromConfigMap(ctx, k8sClient)
+			Expect(err).NotTo(HaveOccurred(), "It should not fail when neither env variable nor Prometheus URL are found")
+
+			Expect(prometheusConfig.BaseURL).To(Equal("https://kube-prometheus-stack-prometheus.workload-variant-autoscaler-monitoring.svc.cluster.local:9090"), "Expected Base URL to be set")
+			Expect(prometheusConfig.InsecureSkipVerify).To(BeTrue(), "Expected Insecure Skip Verify to be true")
+
+			Expect(prometheusConfig.CACertPath).To(Equal(""), "Expected CA Cert Path to be empty")
+			Expect(prometheusConfig.ClientCertPath).To(Equal(""), "Expected Client Cert path to be empty")
+			Expect(prometheusConfig.ClientKeyPath).To(Equal(""), "Expected Client Key path to be empty")
+			Expect(prometheusConfig.BearerToken).To(Equal(""), "Expected Bearer Token to be empty")
+			Expect(prometheusConfig.TokenPath).To(Equal(""), "Expected Token Path to be empty")
+			Expect(prometheusConfig.ServerName).To(Equal(""), "Expected Server Name to be empty")
+		})
+	})
+
+	Context("When handling multiple VariantAutoscalings", func() {
+		const totalVAs = 3
+		const configMapName = "workload-variant-autoscaler-variantautoscaling-config"
+		var configMapNamespace = getNamespace()
+
+		var CreateServiceClassConfigMap = func(controllerNamespace string, models ...string) *v1.ConfigMap {
+			data := map[string]string{}
+
+			// Build premium.yaml with all models
+			premiumModels := ""
+			freemiumModels := ""
+
+			for _, model := range models {
+				premiumModels += fmt.Sprintf("  - model: %s\n    slo-tpot: 24\n    slo-ttft: 500\n", model)
+				freemiumModels += fmt.Sprintf("  - model: %s\n    slo-tpot: 200\n    slo-ttft: 2000\n", model)
+			}
+
+			data["premium.yaml"] = fmt.Sprintf(`name: Premium
+priority: 1
+data:
+%s`, premiumModels)
+
+			data["freemium.yaml"] = fmt.Sprintf(`name: Freemium
+priority: 10
+data:
+%s`, freemiumModels)
+
+			return &v1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "service-classes-config",
+					Namespace: controllerNamespace,
+				},
+				Data: data,
+			}
+		}
+
+		BeforeEach(func() {
+			logger.Log = zap.NewNop().Sugar()
+
+			ns := &v1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: configMapNamespace,
+				},
+			}
+			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, ns))).NotTo(HaveOccurred())
+
+			By("creating the required configmaps")
+			// Use custom configmap creation function
+			var modelNames []string
+			for i := range totalVAs {
+				modelNames = append(modelNames, fmt.Sprintf("model-%d-model-%d", i, i))
+			}
+			configMap := CreateServiceClassConfigMap(ns.Name, modelNames...)
+			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
+
+			configMap = testutils.CreateAcceleratorUnitCostConfigMap(ns.Name)
+			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
+
+			configMap = testutils.CreateVariantAutoscalingConfigMap(configMapName, ns.Name)
+			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
+
+			By("Creating VariantAutoscaling resources and Deployments")
+			for i := range totalVAs {
+				modelID := fmt.Sprintf("model-%d-model-%d", i, i)
+				name := fmt.Sprintf("multi-test-resource-%d", i)
+
+				d := &appsv1.Deployment{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      name,
+						Namespace: "default",
+					},
+					Spec: appsv1.DeploymentSpec{
+						Replicas: utils.Ptr(int32(1)),
+						Selector: &metav1.LabelSelector{
+							MatchLabels: map[string]string{"app": name},
+						},
+						Template: v1.PodTemplateSpec{
+							ObjectMeta: metav1.ObjectMeta{
+								Labels: map[string]string{"app": name},
+							},
+							Spec: v1.PodSpec{
+								Containers: []v1.Container{
+									{
+										Name:  "test-container",
+										Image: "quay.io/infernoautoscaler/vllme:0.2.1-multi-arch",
+										Ports: []v1.ContainerPort{{ContainerPort: 80}},
+									},
+								},
+							},
+						},
+					},
+				}
+				Expect(k8sClient.Create(ctx, d)).To(Succeed())
+
+				r := &llmdVariantAutoscalingV1alpha1.VariantAutoscaling{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      name,
+						Namespace: "default",
+						Labels: map[string]string{
+							"inference.optimization/acceleratorName": "A100",
+						},
+					},
+					Spec: llmdVariantAutoscalingV1alpha1.VariantAutoscalingSpec{
+						ScaleTargetRef: autoscalingv1.CrossVersionObjectReference{
+							Kind: "Deployment",
+							Name: name,
+						},
+						ModelID: modelID,
+						ModelProfile: llmdVariantAutoscalingV1alpha1.ModelProfile{
+							Accelerators: []llmdVariantAutoscalingV1alpha1.AcceleratorProfile{
+								{
+									Acc:      "A100",
+									AccCount: 1,
+									PerfParms: llmdVariantAutoscalingV1alpha1.PerfParms{
+										DecodeParms:  map[string]string{"alpha": "0.28", "beta": "0.72"},
+										PrefillParms: map[string]string{"gamma": "0", "delta": "0"},
+									},
+									MaxBatchSize: 4,
+								},
+							},
+						},
+					},
+				}
+				Expect(k8sClient.Create(ctx, r)).To(Succeed())
+			}
+		})
+
+		AfterEach(func() {
+			By("Deleting the configmap resources")
+			configMap := &v1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "service-classes-config",
+					Namespace: configMapNamespace,
+				},
+			}
+			err := k8sClient.Delete(ctx, configMap)
+			Expect(client.IgnoreNotFound(err)).NotTo(HaveOccurred())
+
+			configMap = &v1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "accelerator-unit-costs",
+					Namespace: configMapNamespace,
+				},
+			}
+			err = k8sClient.Delete(ctx, configMap)
+			Expect(client.IgnoreNotFound(err)).NotTo(HaveOccurred())
+
+			configMap = &v1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      configMapName,
+					Namespace: configMapNamespace,
+				},
+			}
+			err = k8sClient.Delete(ctx, configMap)
+			Expect(client.IgnoreNotFound(err)).NotTo(HaveOccurred())
+
+			var variantAutoscalingList llmdVariantAutoscalingV1alpha1.VariantAutoscalingList
+			err = k8sClient.List(ctx, &variantAutoscalingList)
+			Expect(err).NotTo(HaveOccurred(), "Failed to list VariantAutoscaling resources")
+
+			var deploymentList appsv1.DeploymentList
+			err = k8sClient.List(ctx, &deploymentList, client.InNamespace("default"))
+			Expect(err).NotTo(HaveOccurred(), "Failed to list deployments")
+
+			// Clean up all deployments
+			for i := range deploymentList.Items {
+				deployment := &deploymentList.Items[i]
+				if strings.HasPrefix(deployment.Spec.Template.Labels["app"], "multi-test-resource") {
+					err = k8sClient.Delete(ctx, deployment)
+					Expect(client.IgnoreNotFound(err)).NotTo(HaveOccurred(), "Failed to delete deployment")
+				}
+			}
+
+			// Clean up all VariantAutoscaling resources
+			for i := range variantAutoscalingList.Items {
+				err = k8sClient.Delete(ctx, &variantAutoscalingList.Items[i])
+				Expect(client.IgnoreNotFound(err)).NotTo(HaveOccurred(), "Failed to delete VariantAutoscaling resource")
+			}
+		})
+
+		It("should set MetricsAvailable condition when metrics validation fails", func() {
+			By("Creating a mock Prometheus API that returns no metrics")
+			mockPromAPI := &testutils.MockPromAPI{
+				QueryResults: map[string]model.Value{},
+				QueryErrors:  map[string]error{},
+			}
+
+			// Initialize MetricsCollector with mock Prometheus API
+			metricsCollector := collector.NewPrometheusCollector(mockPromAPI)
+			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, metricsCollector)
+
+			By("Reading the required configmaps")
+			accMap, err := engine.readAcceleratorConfig(ctx, "accelerator-unit-costs", configMapNamespace)
+			Expect(err).NotTo(HaveOccurred())
+
+			serviceClassMap, err := engine.readServiceClassConfig(ctx, "service-classes-config", configMapNamespace)
+			Expect(err).NotTo(HaveOccurred())
+
+			var variantAutoscalingList llmdVariantAutoscalingV1alpha1.VariantAutoscalingList
+			err = k8sClient.List(ctx, &variantAutoscalingList)
+			Expect(err).NotTo(HaveOccurred())
+
+			activeVAs := variantAutoscalingList.Items // All created VAs are active
+			Expect(len(activeVAs)).To(BeNumerically(">", 0))
+
+			By("Preparing system data and calling prepareVariantAutoscalings")
+			systemData := utils.CreateSystemData(accMap, serviceClassMap)
+
+			_, _, _, err = engine.prepareVariantAutoscalings(ctx, activeVAs, accMap, serviceClassMap, systemData)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Checking that MetricsAvailable condition is set to False")
+			for _, va := range activeVAs {
+				var updatedVa llmdVariantAutoscalingV1alpha1.VariantAutoscaling
+				err = k8sClient.Get(ctx, types.NamespacedName{Name: va.Name, Namespace: va.Namespace}, &updatedVa)
+				Expect(err).NotTo(HaveOccurred())
+
+				metricsCondition := llmdVariantAutoscalingV1alpha1.GetCondition(&updatedVa, llmdVariantAutoscalingV1alpha1.TypeMetricsAvailable)
+				if metricsCondition != nil {
+					Expect(metricsCondition.Status).To(Equal(metav1.ConditionFalse),
+						fmt.Sprintf("MetricsAvailable condition should be False for %s", va.Name))
+					Expect(metricsCondition.Reason).To(Or(
+						Equal(llmdVariantAutoscalingV1alpha1.ReasonPrometheusError),
+						Equal(llmdVariantAutoscalingV1alpha1.ReasonMetricsMissing),
+					))
+				}
+			}
+		})
+
+		It("should set OptimizationReady condition when optimization succeeds", func() {
+			By("Using a working mock Prometheus API with sample data")
+			mockPromAPI := &testutils.MockPromAPI{
+				QueryResults: map[string]model.Value{
+					// Add default responses for common queries
+				},
+				QueryErrors: map[string]error{},
+			}
+
+			// Initialize MetricsCollector with mock Prometheus API
+			metricsCollector := collector.NewPrometheusCollector(mockPromAPI)
+			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, metricsCollector)
+
+			By("Performing optimization loop")
+			err := engine.optimize(ctx)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Checking that conditions are set correctly")
+			var variantAutoscalingList llmdVariantAutoscalingV1alpha1.VariantAutoscalingList
+			err = k8sClient.List(ctx, &variantAutoscalingList)
+			Expect(err).NotTo(HaveOccurred())
+
+			for _, va := range variantAutoscalingList.Items {
+				if va.DeletionTimestamp.IsZero() {
+					metricsCondition := llmdVariantAutoscalingV1alpha1.GetCondition(&va, llmdVariantAutoscalingV1alpha1.TypeMetricsAvailable)
+					// Note: optimization runs even if metrics are not available (skips parts), but condition checks depend on flow
+					// In mock, activeVAs will be processed.
+					if metricsCondition != nil && metricsCondition.Status == metav1.ConditionTrue {
+						optimizationCondition := llmdVariantAutoscalingV1alpha1.GetCondition(&va, llmdVariantAutoscalingV1alpha1.TypeOptimizationReady)
+						Expect(optimizationCondition).NotTo(BeNil(),
+							fmt.Sprintf("OptimizationReady condition should be set for %s", va.Name))
+					}
+				}
+			}
+		})
+	})
+
+	Context("convertSaturationTargetsToDecisions", func() {
+		BeforeEach(func() {
+			logger.Log = zap.NewNop().Sugar()
+		})
+
+		It("should include ActionNoChange decisions in the result", func() {
+			By("Creating test data where target equals current replicas")
+			saturationTargets := map[string]int{
+				"variant-a": 3,
+				"variant-b": 5,
+				"variant-c": 2,
+			}
+
+			saturationAnalysis := &interfaces.ModelSaturationAnalysis{
+				ModelID:   "test-model",
+				Namespace: "test-ns",
+				VariantAnalyses: []interfaces.VariantSaturationAnalysis{
+					{VariantName: "variant-a", AcceleratorName: "A100", Cost: 10.0},
+					{VariantName: "variant-b", AcceleratorName: "A100", Cost: 10.0},
+					{VariantName: "variant-c", AcceleratorName: "A100", Cost: 10.0},
+				},
+			}
+
+			variantStates := []interfaces.VariantReplicaState{
+				{VariantName: "variant-a", CurrentReplicas: 3, DesiredReplicas: 3},
+				{VariantName: "variant-b", CurrentReplicas: 3, DesiredReplicas: 3},
+				{VariantName: "variant-c", CurrentReplicas: 2, DesiredReplicas: 2},
+			}
+
+			By("Converting saturation targets to decisions")
+			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, nil)
+			decisions := engine.convertSaturationTargetsToDecisions(saturationTargets, saturationAnalysis, variantStates)
+
+			By("Verifying all variants are included in decisions")
+			Expect(len(decisions)).To(Equal(3), "All 3 variants should have decisions including ActionNoChange")
+
+			By("Verifying ActionNoChange decisions are present")
+			decisionMap := make(map[string]interfaces.VariantDecision)
+			for _, d := range decisions {
+				decisionMap[d.VariantName] = d
+			}
+
+			Expect(decisionMap).To(HaveKey("variant-a"))
+			Expect(decisionMap["variant-a"].Action).To(Equal(interfaces.ActionNoChange))
+			Expect(decisionMap["variant-b"].Action).To(Equal(interfaces.ActionScaleUp))
+			Expect(decisionMap["variant-c"].Action).To(Equal(interfaces.ActionNoChange))
+		})
+	})
+
+	Context("saturation Config Cache", func() {
+		var (
+			ctx                context.Context
+			engine             *Engine
+			configMapNamespace = getNamespace()
+		)
+
+		BeforeEach(func() {
+			ctx = context.Background()
+			engine = NewEngine(k8sClient, k8sClient.Scheme(), record.NewFakeRecorder(100), nil)
+		})
+
+		It("should initialize cache with defaults when ConfigMap is missing", func() {
+			By("Initializing cache")
+			err := engine.InitializeSaturationConfigCache(ctx)
+
+			By("Verifying cache initialization succeeded (uses defaults)")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(engine.saturationConfigLoaded).To(BeTrue()) // Accessed internal field since in same package
+
+			By("Verifying default config is in cache")
+			configs := engine.getsaturationConfigFromCache()
+			Expect(configs).To(HaveKey("default"))
+			Expect(configs["default"].KvCacheThreshold).To(Equal(0.80))
+		})
+
+		It("should load config from ConfigMap when it exists", func() {
+			configMap := &v1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "saturation-scaling-config",
+					Namespace: configMapNamespace,
+				},
+				Data: map[string]string{
+					"default": `kvCacheThreshold: 0.75
+queueLengthThreshold: 10
+kvSpareTrigger: 0.15
+queueSpareTrigger: 5`,
+				},
+			}
+
+			By("Creating ConfigMap")
+			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
+
+			By("Initializing cache")
+			err := engine.InitializeSaturationConfigCache(ctx)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying custom config is loaded")
+			configs := engine.getsaturationConfigFromCache()
+			Expect(configs).To(HaveKey("default"))
+			Expect(configs["default"].KvCacheThreshold).To(Equal(0.75))
+
+			By("Cleaning up ConfigMap")
+			Expect(k8sClient.Delete(ctx, configMap)).To(Succeed())
+		})
+	})
+})
