@@ -79,12 +79,8 @@ const (
 	configMapName = "workload-variant-autoscaler-variantautoscaling-config"
 	// ServiceMonitor constants for watching controller's own metrics ServiceMonitor
 	serviceMonitorName = "workload-variant-autoscaler-controller-manager-metrics-monitor"
-	// Environment variable to enable experimental hybrid-based optimization
-	// When "on", runs both saturation analyzer and model-based optimizer with arbitration
-	// When "model-only" runs model-based optimizer only
-	// When "off" or unset, runs saturation analyzer only (default, reactive mode)
-	EnvExperimentalHybridOptimization = "EXPERIMENTAL_HYBRID_OPTIMIZATION"
-	saturationConfigMapName           = "saturation-scaling-config"
+
+	saturationConfigMapName = "saturation-scaling-config"
 )
 
 func getNamespace() string {
@@ -165,13 +161,6 @@ func (r *VariantAutoscalingReconciler) Reconcile(ctx context.Context, req ctrl.R
 	)
 
 	// END: Per VA logic
-
-	// BELOW is the logic that processes all VAs together for optimization
-	// Note: This logic has been moved to the Saturation Engine (internal/engines/saturation/engine.go).
-	// The controller now only handles pure reconciliation tasks (VA status updates, etc.)
-	// dependent on the Engine's decisions or other external factors.
-
-	// Currently, the Engine runs its own optimization loop, so we don't need to do anything here regarding global optimization.
 
 	return ctrl.Result{}, nil
 }
