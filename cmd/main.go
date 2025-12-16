@@ -281,30 +281,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Register optimization engine loops with the manager. Only start when leader.
-	err = mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
-		engine := saturation.NewEngine(mgr.GetClient())
-		go engine.StartOptimizeLoop(ctx)
-		return nil
-	}))
-
-	if err != nil {
-		setupLog.Error("unable to add optimization engine loops to manager", zap.Error(err))
-		os.Exit(1)
-	}
-
-	// Register scale from zero engine loops with the manager. Only start when leader.
-	err = mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
-		engine := scalefromzero.NewEngine(mgr.GetClient())
-		go engine.StartOptimizeLoop(ctx)
-		return nil
-	}))
-
-	if err != nil {
-		setupLog.Error("unable to add optimization engine loops to manager", zap.Error(err))
-		os.Exit(1)
-	}
-
 	// Initialize metrics
 	logger.Log.Infof("Creating metrics emitter instance")
 	// Force initialization of metrics by creating a metrics emitter
@@ -392,6 +368,35 @@ func main() {
 	}
 
 	logger.Log.Info("Metrics collector initialized successfully")
+
+	// Register optimization engine loops with the manager. Only start when leader.
+	err = mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
+		engine := saturation.NewEngine(
+			mgr.GetClient(),
+			mgr.GetScheme(),
+			mgr.GetEventRecorderFor("workload-variant-autoscaler-saturation-engine"),
+			metricsCollector,
+		)
+		go engine.StartOptimizeLoop(ctx)
+		return nil
+	}))
+
+	if err != nil {
+		setupLog.Error("unable to add optimization engine loop to manager", zap.Error(err))
+		os.Exit(1)
+	}
+
+	// Register scale from zero engine loop with the manager. Only start when leader.
+	err = mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
+		engine := scalefromzero.NewEngine(mgr.GetClient())
+		go engine.StartOptimizeLoop(ctx)
+		return nil
+	}))
+
+	if err != nil {
+		setupLog.Error("unable to add optimization engine loop to manager", zap.Error(err))
+		os.Exit(1)
+	}
 
 	// Create the reconciler
 	reconciler := &controller.VariantAutoscalingReconciler{
