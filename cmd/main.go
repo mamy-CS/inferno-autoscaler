@@ -382,11 +382,11 @@ func main() {
 	}))
 
 	if err != nil {
-		setupLog.Error("unable to add optimization engine loops to manager", zap.Error(err))
+		setupLog.Error("unable to add optimization engine loop to manager", zap.Error(err))
 		os.Exit(1)
 	}
 
-	// Register scale from zero engine loops with the manager. Only start when leader.
+	// Register scale from zero engine loop with the manager. Only start when leader.
 	err = mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
 		engine := scalefromzero.NewEngine(mgr.GetClient())
 		go engine.StartOptimizeLoop(ctx)
@@ -394,7 +394,7 @@ func main() {
 	}))
 
 	if err != nil {
-		setupLog.Error("unable to add optimization engine loops to manager", zap.Error(err))
+		setupLog.Error("unable to add optimization engine loop to manager", zap.Error(err))
 		os.Exit(1)
 	}
 
