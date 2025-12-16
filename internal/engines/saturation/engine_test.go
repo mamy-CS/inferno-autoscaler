@@ -29,7 +29,6 @@ import (
 	autoscalingv1 "k8s.io/api/autoscaling/v1"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -47,22 +46,6 @@ var _ = Describe("Saturation Engine", func() {
 	Context("When handling error conditions on missing config maps", func() {
 		BeforeEach(func() {
 			logger.Log = zap.NewNop().Sugar()
-		})
-
-		It("should fail on missing serviceClass ConfigMap", func() {
-			By("Creating Engine without required ConfigMaps")
-			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, nil)
-
-			_, err := engine.readServiceClassConfig(ctx, "service-classes-config", getNamespace())
-			Expect(err).To(HaveOccurred(), "Expected error when reading missing serviceClass ConfigMap")
-		})
-
-		It("should fail on missing accelerator ConfigMap", func() {
-			By("Creating Engine without required ConfigMaps")
-			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, nil)
-
-			_, err := engine.readAcceleratorConfig(ctx, "accelerator-unit-costs", getNamespace())
-			Expect(err).To(HaveOccurred(), "Expected error when reading missing accelerator ConfigMap")
 		})
 
 		It("should fail on missing variant autoscaling optimization ConfigMap", func() {
@@ -449,55 +432,6 @@ data:
 			for i := range variantAutoscalingList.Items {
 				err = k8sClient.Delete(ctx, &variantAutoscalingList.Items[i])
 				Expect(client.IgnoreNotFound(err)).NotTo(HaveOccurred(), "Failed to delete VariantAutoscaling resource")
-			}
-		})
-
-		It("should set MetricsAvailable condition when metrics validation fails", func() {
-			By("Creating a mock Prometheus API that returns no metrics")
-			mockPromAPI := &testutils.MockPromAPI{
-				QueryResults: map[string]model.Value{},
-				QueryErrors:  map[string]error{},
-			}
-
-			// Initialize MetricsCollector with mock Prometheus API
-			metricsCollector := collector.NewPrometheusCollector(mockPromAPI)
-			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, metricsCollector)
-
-			By("Reading the required configmaps")
-			accMap, err := engine.readAcceleratorConfig(ctx, "accelerator-unit-costs", configMapNamespace)
-			Expect(err).NotTo(HaveOccurred())
-
-			serviceClassMap, err := engine.readServiceClassConfig(ctx, "service-classes-config", configMapNamespace)
-			Expect(err).NotTo(HaveOccurred())
-
-			var variantAutoscalingList llmdVariantAutoscalingV1alpha1.VariantAutoscalingList
-			err = k8sClient.List(ctx, &variantAutoscalingList)
-			Expect(err).NotTo(HaveOccurred())
-
-			activeVAs := variantAutoscalingList.Items // All created VAs are active
-			Expect(len(activeVAs)).To(BeNumerically(">", 0))
-
-			By("Preparing system data and calling prepareVariantAutoscalings")
-			systemData := utils.CreateSystemData(accMap, serviceClassMap)
-
-			_, _, _, err = engine.prepareVariantAutoscalings(ctx, activeVAs, accMap, serviceClassMap, systemData)
-			Expect(err).NotTo(HaveOccurred())
-
-			By("Checking that MetricsAvailable condition is set to False")
-			for _, va := range activeVAs {
-				var updatedVa llmdVariantAutoscalingV1alpha1.VariantAutoscaling
-				err = k8sClient.Get(ctx, types.NamespacedName{Name: va.Name, Namespace: va.Namespace}, &updatedVa)
-				Expect(err).NotTo(HaveOccurred())
-
-				metricsCondition := llmdVariantAutoscalingV1alpha1.GetCondition(&updatedVa, llmdVariantAutoscalingV1alpha1.TypeMetricsAvailable)
-				if metricsCondition != nil {
-					Expect(metricsCondition.Status).To(Equal(metav1.ConditionFalse),
-						fmt.Sprintf("MetricsAvailable condition should be False for %s", va.Name))
-					Expect(metricsCondition.Reason).To(Or(
-						Equal(llmdVariantAutoscalingV1alpha1.ReasonPrometheusError),
-						Equal(llmdVariantAutoscalingV1alpha1.ReasonMetricsMissing),
-					))
-				}
 			}
 		})
 

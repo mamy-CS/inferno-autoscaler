@@ -18,7 +18,6 @@ package saturation
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"strconv"
@@ -34,7 +33,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
 	actuator "github.com/llm-d-incubation/workload-variant-autoscaler/internal/actuator"
@@ -42,24 +40,16 @@ import (
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/executor"
 	interfaces "github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logger"
-	analyzer "github.com/llm-d-incubation/workload-variant-autoscaler/internal/modelanalyzer"
-	variantAutoscalingOptimizer "github.com/llm-d-incubation/workload-variant-autoscaler/internal/optimizer"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/saturation"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/utils"
-	infernoConfig "github.com/llm-d-incubation/workload-variant-autoscaler/pkg/config"
-	inferno "github.com/llm-d-incubation/workload-variant-autoscaler/pkg/core"
-	infernoManager "github.com/llm-d-incubation/workload-variant-autoscaler/pkg/manager"
-	infernoSolver "github.com/llm-d-incubation/workload-variant-autoscaler/pkg/solver"
 )
 
 const (
 	configMapName = "workload-variant-autoscaler-variantautoscaling-config"
 	// Environment variable to enable experimental hybrid-based optimization
-	// When "on", runs both saturation analyzer and model-based optimizer with arbitration
-	// When "model-only" runs model-based optimizer only
 	// When "off" or unset, runs saturation analyzer only (default, reactive mode)
-	EnvExperimentalHybridOptimization = "EXPERIMENTAL_HYBRID_OPTIMIZATION"
-	saturationConfigMapName           = "saturation-scaling-config"
+
+	saturationConfigMapName = "saturation-scaling-config"
 )
 
 var (
@@ -146,23 +136,6 @@ func (e *Engine) optimize(ctx context.Context) error {
 		logger.Log.Info("Scaling to zero is enabled!")
 	}
 
-	// Check experimental hybrid optimization flag
-	optimizationMode := os.Getenv(EnvExperimentalHybridOptimization)
-	enableModelOptimizer := optimizationMode == "on" || optimizationMode == "model-only"
-	enableSaturationAnalyzer := optimizationMode == "" || optimizationMode == "off"
-
-	if enableModelOptimizer && enableSaturationAnalyzer {
-		logger.Log.Info("Operating in HYBRID mode: saturation analyzer + model-based optimizer with arbitration")
-	} else if enableModelOptimizer && !enableSaturationAnalyzer {
-		logger.Log.Info("Operating in MODEL-ONLY mode: model-based optimization only")
-	} else if !enableModelOptimizer && enableSaturationAnalyzer {
-		logger.Log.Info("Operating in saturation-only mode: reactive saturation-based scaling only")
-	} else {
-		// Invalid environment variable, default to saturation-only
-		logger.Log.Info("No optimization mode enabled, defaulting to saturation-only mode")
-		enableSaturationAnalyzer = true
-	}
-
 	activeVAs, err := utils.ActiveVariantAutoscaling(ctx, e.client)
 	if err != nil {
 		logger.Log.Errorf("unable to get active variant autoscalings: %v", err)
@@ -200,230 +173,40 @@ func (e *Engine) optimize(ctx context.Context) error {
 	for modelID, modelVAs := range modelGroups {
 		logger.Log.Infof("Processing model: modelID=%s, variantCount=%d", modelID, len(modelVAs))
 
-		// PHASE 1: compute saturation analysis and/or model-based optimization
+		// Collect metrics and populate CurrentAlloc for saturation-only mode
+		// This validates metrics availability and populates the VariantAutoscalings with CurrentAlloc
+		if err := e.CollectMetricsForSaturationMode(ctx, modelVAs, vaMap, e.client, e.MetricsCollector); err != nil {
+			logger.Log.Errorf("Failed to collect metrics for saturation mode: modelID=%s, error=%v", modelID, err)
+			// Metrics collection error - individual VAs are skipped
+		}
 
-		// STEP 1: Run saturation analysis (if enabled)
-		var saturationTargets map[string]int
-		var saturationAnalysis *interfaces.ModelSaturationAnalysis
-		var variantStates []interfaces.VariantReplicaState
+		// Get saturation config for this model (with fallback to default)
+		saturationConfig := interfaces.DefaultSaturationScalingConfig()
+		if len(modelVAs) > 0 {
+			modelConfig := e.getSaturationScalingConfigForVariant(saturationConfigMap, modelID, modelVAs[0].Namespace)
+			saturationConfig.Merge(modelConfig)
+		}
 
-		if enableSaturationAnalyzer {
-			// Collect metrics and populate CurrentAlloc for saturation-only mode
-			// This validates metrics availability and populates the VariantAutoscalings with CurrentAlloc
-			if err := e.CollectMetricsForSaturationMode(ctx, modelVAs, vaMap, e.client, e.MetricsCollector); err != nil {
-				logger.Log.Errorf("Failed to collect metrics for saturation mode: modelID=%s, error=%v", modelID, err)
-				// Metrics collection error - individual VAs are skipped
-			}
-
-			// Get saturation config for this model (with fallback to default)
-			saturationConfig := interfaces.DefaultSaturationScalingConfig()
-			if len(modelVAs) > 0 {
-				modelConfig := e.getSaturationScalingConfigForVariant(saturationConfigMap, modelID, modelVAs[0].Namespace)
-				saturationConfig.Merge(modelConfig)
-			}
-
-			saturationTargets, saturationAnalysis, variantStates, err = e.RunSaturationAnalysis(ctx, modelID, modelVAs, saturationConfig, e.client, e.MetricsCollector)
-			if err != nil {
-				logger.Log.Errorf("saturation analysis failed for modelID=%s: %v", modelID, err)
-				// Continue with model-based approach if enabled, as per requirement #1
-				if !enableModelOptimizer {
-					// In saturation-only mode, if saturation fails, skip this model
-					errorCount++
-					continue
-				}
-				// In hybrid mode, continue to run model-based (saturation failed but we can still run optimizer)
-				errorCount++
-			}
+		saturationTargets, saturationAnalysis, variantStates, err := e.RunSaturationAnalysis(ctx, modelID, modelVAs, saturationConfig, e.client, e.MetricsCollector)
+		if err != nil {
+			logger.Log.Errorf("saturation analysis failed for modelID=%s: %v", modelID, err)
+			errorCount++
+			// Activate safety net to ensure HPA doesn't scale to zero on partial failure
+			e.emitSafetyNetMetrics(ctx, modelVAs)
+			continue
 		}
 
 		var finalDecisions []interfaces.VariantDecision
-
-		modelBasedTargets := make(map[string]int)
-		var updateList *llmdVariantAutoscalingV1alpha1.VariantAutoscalingList
-		if enableModelOptimizer {
-			// Read configs needed for model-based optimizer
-			acceleratorCm, err := e.readAcceleratorConfig(ctx, "accelerator-unit-costs", configMapNamespace)
-			if err != nil {
-				logger.Log.Errorf("Unable to read accelerator configMap: %v", err)
-				errorCount++
-				// Fall back to saturation-only for this model
-				if saturationAnalysis != nil {
-					finalDecisions = e.convertSaturationTargetsToDecisions(saturationTargets, saturationAnalysis, variantStates)
-				} else {
-					// saturation also failed - activate safety net
-					logger.Log.Warnf("Config read failed and Saturation unavailable, activating safety net: modelID=%s", modelID)
-					e.emitSafetyNetMetrics(ctx, modelVAs)
-				}
-				allDecisions = append(allDecisions, finalDecisions...)
-				continue
-			}
-
-			serviceClassCm, err := e.readServiceClassConfig(ctx, "service-classes-config", configMapNamespace)
-			if err != nil {
-				logger.Log.Errorf("Unable to read serviceclass configMap: %v", err)
-				errorCount++
-				// Fall back to saturation-only for this model
-				if saturationAnalysis != nil {
-					finalDecisions = e.convertSaturationTargetsToDecisions(saturationTargets, saturationAnalysis, variantStates)
-				} else {
-					// saturation also failed - activate safety net
-					logger.Log.Warnf("Config read failed and Saturation unavailable, activating safety net: modelID=%s", modelID)
-					e.emitSafetyNetMetrics(ctx, modelVAs)
-				}
-				allDecisions = append(allDecisions, finalDecisions...)
-				continue
-			}
-
-			// Create system data and run optimizer
-			systemData := utils.CreateSystemData(acceleratorCm, serviceClassCm)
-			var prepareVaMap map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling
-			var allAnalyzerResponses map[string]*interfaces.ModelAnalyzeResponse
-			updateList, prepareVaMap, allAnalyzerResponses, err = e.prepareVariantAutoscalings(ctx, modelVAs, acceleratorCm, serviceClassCm, systemData)
-			if err != nil {
-				logger.Log.Errorf("Failed to prepare variant autoscalings: %v", err)
-				errorCount++
-				if saturationAnalysis != nil {
-					finalDecisions = e.convertSaturationTargetsToDecisions(saturationTargets, saturationAnalysis, variantStates)
-				} else {
-					// saturation also failed - activate safety net
-					logger.Log.Warnf("Variant preparation failed and Saturation unavailable, activating safety net: modelID=%s", modelID)
-					e.emitSafetyNetMetrics(ctx, modelVAs)
-				}
-				allDecisions = append(allDecisions, finalDecisions...)
-				continue
-			}
-
-			// Run model analyzer
-			system := inferno.NewSystem()
-			optimizerSpec := system.SetFromSpec(&systemData.Spec)
-			optimizer := infernoSolver.NewOptimizerFromSpec(optimizerSpec)
-			manager := infernoManager.NewManager(system, optimizer)
-
-			modelAnalyzer := analyzer.NewModelAnalyzer(system)
-			for _, s := range system.Servers() {
-				modelAnalyzeResponse := modelAnalyzer.AnalyzeModel(ctx, *prepareVaMap[s.Name()])
-				if len(modelAnalyzeResponse.Allocations) == 0 {
-					logger.Log.Infof("No potential allocations found for server: %s", s.Name())
-					continue
-				}
-				allAnalyzerResponses[s.Name()] = modelAnalyzeResponse
-			}
-
-			// Run optimizer
-			engine := variantAutoscalingOptimizer.NewVariantAutoscalingsEngine(manager, system)
-			optimizedAllocation, err := engine.Optimize(ctx, *updateList, allAnalyzerResponses)
-			if err != nil {
-				logger.Log.Errorf("Model-based optimization failed: %v", err)
-				errorCount++
-				if saturationAnalysis != nil {
-					finalDecisions = e.convertSaturationTargetsToDecisions(saturationTargets, saturationAnalysis, variantStates)
-				} else {
-					// Both Saturation and model-based failed - activate safety net
-					logger.Log.Warnf("Both Saturation and model-based failed, activating safety net: modelID=%s", modelID)
-					e.emitSafetyNetMetrics(ctx, modelVAs)
-				}
-				allDecisions = append(allDecisions, finalDecisions...)
-				continue
-			}
-
-			// Extract model-based targets for this model's variants
-			for _, va := range modelVAs {
-				if alloc, ok := optimizedAllocation[va.Name]; ok {
-					modelBasedTargets[va.Name] = alloc.NumReplicas
-				}
-			}
-
-			logger.Log.Infof("Model-based optimization completed for model: %s - model-based targets: %v",
+		if saturationAnalysis != nil {
+			finalDecisions = e.convertSaturationTargetsToDecisions(saturationTargets, saturationAnalysis, variantStates)
+			logger.Log.Infof("saturation-only decisions made for model: %s - decision count: %d",
 				modelID,
-				modelBasedTargets)
-
+				len(finalDecisions))
+			allDecisions = append(allDecisions, finalDecisions...)
+		} else {
+			// If saturationAnalysis is nil (e.g. no metrics), we just skip this model
+			logger.Log.Debugf("Skipping decision application for model %s: saturation analysis is nil (likely no metrics)", modelID)
 		}
-
-		// PHASE 2: Accumulate final decisions
-
-		if enableSaturationAnalyzer && !enableModelOptimizer {
-			// saturation-only MODE
-			if saturationAnalysis != nil {
-				finalDecisions = e.convertSaturationTargetsToDecisions(saturationTargets, saturationAnalysis, variantStates)
-				logger.Log.Infof("saturation-only decisions made for model: %s - decision count: %d",
-					modelID,
-					len(finalDecisions))
-			} else {
-				logger.Log.Errorf("saturation analysis failed and model-based disabled, activating safety net: modelID=%s", modelID)
-				errorCount++
-				// SAFETY NET: Emit fallback metrics to prevent HPA from using stale data
-				e.emitSafetyNetMetrics(ctx, modelVAs)
-				continue
-			}
-		} else if enableSaturationAnalyzer && enableModelOptimizer {
-			// HYBRID MODE: Arbitrate between Saturation and model-based targets - only if saturation analysis succeeded
-			if saturationAnalysis != nil && len(saturationTargets) > 0 {
-				saturationAnalyzer := saturation.NewAnalyzer()
-				finalDecisions = saturationAnalyzer.ArbitrateWithModelBased(
-					saturationAnalysis,
-					saturationTargets,
-					modelBasedTargets,
-					variantStates,
-				)
-				logger.Log.Infof("Arbitration completed for model: %s - decision count: %d",
-					modelID,
-					len(finalDecisions))
-			}
-		} else if enableModelOptimizer {
-			// MODEL-ONLY MODE: saturation-based failed but model-based succeeded, or saturation analysis unavailable - use model-based only
-			// If prepareVariantAutoscalings failed for all VariantAutoscalings, updateList.Items will be empty
-			if updateList == nil || len(updateList.Items) == 0 {
-				logger.Log.Warnf("Model-only optimization: no VAs prepared, activating safety net: modelID=%s", modelID)
-				e.emitSafetyNetMetrics(ctx, modelVAs)
-				continue
-			}
-
-			logger.Log.Warnf("saturation analysis unavailable, using model-based targets only: modelID=%s", modelID)
-			for i := range updateList.Items {
-				va := &updateList.Items[i]
-				if targetReplicas, ok := modelBasedTargets[va.Name]; ok {
-					currentReplicas := va.Status.CurrentAlloc.NumReplicas
-
-					// Get accelerator name from current allocation
-					acceleratorName := va.Status.CurrentAlloc.Accelerator
-					if acceleratorName == "" {
-						// Fallback to label if not found
-						logger.Log.Debugf("Accelerator not found in CurrentAlloc, using label: va=%s", va.Name)
-						if acceleratorName = va.Labels["inference.optimization/acceleratorName"]; acceleratorName == "" {
-							logger.Log.Warnf("Accelerator label not found, empty acceleratorName: va=%s", va.Name)
-						}
-					}
-
-					var action interfaces.SaturationAction
-					switch {
-					case targetReplicas > currentReplicas:
-						action = interfaces.ActionScaleUp
-					case targetReplicas < currentReplicas:
-						action = interfaces.ActionScaleDown
-					default:
-						action = interfaces.ActionNoChange
-					}
-
-					finalDecisions = append(finalDecisions, interfaces.VariantDecision{
-						VariantName:        va.Name,
-						Namespace:          va.Namespace,
-						ModelID:            modelID,
-						AcceleratorName:    acceleratorName,
-						CurrentReplicas:    currentReplicas,
-						TargetReplicas:     targetReplicas,
-						Action:             action,
-						ModelBasedDecision: true,
-						SaturationBased:    false,
-						SaturationOnly:     false,
-						Reason:             "model-based only (Saturation unavailable)",
-					})
-
-					vaMap[va.Name] = va
-				}
-			}
-		}
-
-		allDecisions = append(allDecisions, finalDecisions...)
 	}
 
 	// STEP 3: Apply all decisions
@@ -439,28 +222,13 @@ func (e *Engine) optimize(ctx context.Context) error {
 
 	if errorCount > 0 {
 		logger.Log.Warnf("Optimization completed with errors: mode=%s, modelsProcessed=%d, modelsFailed=%d, decisionsApplied=%d",
-			func() string {
-
-				if enableModelOptimizer && enableSaturationAnalyzer {
-					return "hybrid"
-				} else if enableModelOptimizer {
-					return "model-only"
-				}
-				return "saturation-only"
-			}(),
+			"saturation-only",
 			len(modelGroups),
 			errorCount,
 			len(allDecisions))
 	} else {
 		logger.Log.Infof("Optimization completed successfully: mode=%s, modelsProcessed=%d, decisionsApplied=%d",
-			func() string {
-				if enableModelOptimizer && enableSaturationAnalyzer {
-					return "hybrid"
-				} else if enableModelOptimizer {
-					return "model-only"
-				}
-				return "saturation-only"
-			}(),
+			"saturation-only",
 			len(modelGroups),
 			len(allDecisions))
 	}
@@ -990,165 +758,6 @@ func (e *Engine) emitSafetyNetMetrics(
 			accelerator,
 			fallbackSource)
 	}
-}
-
-// prepareVariantAutoscalings collects and prepares all data for optimization.
-func (e *Engine) prepareVariantAutoscalings(
-	ctx context.Context,
-	activeVAs []llmdVariantAutoscalingV1alpha1.VariantAutoscaling,
-	acceleratorCm map[string]map[string]string,
-	serviceClassCm map[string]string,
-	systemData *infernoConfig.SystemData,
-) (*llmdVariantAutoscalingV1alpha1.VariantAutoscalingList, map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling, map[string]*interfaces.ModelAnalyzeResponse, error) {
-	var updateList llmdVariantAutoscalingV1alpha1.VariantAutoscalingList
-	allAnalyzerResponses := make(map[string]*interfaces.ModelAnalyzeResponse)
-	vaMap := make(map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling)
-
-	for _, va := range activeVAs {
-		modelName := va.Spec.ModelID
-		if modelName == "" {
-			logger.Log.Infof("variantAutoscaling missing modelName label, skipping optimization: variantAutoscaling-name=%s", va.Name)
-			continue
-		}
-
-		entry, className, err := utils.FindModelSLO(serviceClassCm, modelName)
-		if err != nil {
-			logger.Log.Errorf("failed to locate SLO for model: variantAutoscaling-name=%s, modelName=%s, error=%v", va.Name, modelName, err)
-			continue
-		}
-		logger.Log.Infof("Found SLO for model: model=%s, class=%s, slo-tpot=%d, slo-ttft=%d", modelName, className, entry.SLOTPOT, entry.SLOTTFT)
-
-		for _, modelAcceleratorProfile := range va.Spec.ModelProfile.Accelerators {
-			if utils.AddModelAcceleratorProfileToSystemData(systemData, modelName, &modelAcceleratorProfile) != nil {
-				logger.Log.Errorf("variantAutoscaling bad model accelerator profile data, skipping optimization: variantAutoscaling-name=%s", va.Name)
-				continue
-			}
-		}
-
-		accName := va.Labels["inference.optimization/acceleratorName"]
-		acceleratorCostVal, ok := acceleratorCm[accName]["cost"]
-		if !ok {
-			logger.Log.Errorf("variantAutoscaling missing accelerator cost in configMap, skipping optimization: variantAutoscaling-name=%s", va.Name)
-			continue
-		}
-		acceleratorCostValFloat, err := strconv.ParseFloat(acceleratorCostVal, 32)
-		if err != nil {
-			logger.Log.Errorf("variantAutoscaling unable to parse accelerator cost in configMap, skipping optimization: variantAutoscaling-name=%s", va.Name)
-			continue
-		}
-
-		// Get Deployment using ScaleTargetRef
-		var deploy appsv1.Deployment
-		err = utils.GetDeploymentWithBackoff(ctx, e.client, va.GetScaleTargetName(), va.Namespace, &deploy)
-		if err != nil {
-			logger.Log.Errorf("failed to get Deployment after retries: variantAutoscaling-name=%s, deployment=%s, error=%v", va.Name, va.GetScaleTargetName(), err)
-			continue
-		}
-
-		// Fetch latest VA from API server
-		var updateVA llmdVariantAutoscalingV1alpha1.VariantAutoscaling
-		err = utils.GetVariantAutoscalingWithBackoff(ctx, e.client, va.Name, va.Namespace, &updateVA)
-		if err != nil {
-			logger.Log.Errorf("unable to get variantAutoscaling: variantAutoscaling-name=%s, namespace=%s, error=%v", va.Name, va.Namespace, err)
-			continue
-		}
-
-		// Set ownerReference early
-		// We use e.scheme here which needs to be added to Engine struct
-		if !metav1.IsControlledBy(&updateVA, &deploy) {
-			original := updateVA.DeepCopy()
-			err := controllerutil.SetControllerReference(&deploy, &updateVA, e.scheme, controllerutil.WithBlockOwnerDeletion(false))
-			if err != nil {
-				logger.Log.Errorf("failed to set ownerReference: variantAutoscaling-name=%s, error=%v", updateVA.Name, err)
-				continue
-			}
-
-			// Patch metadata change (ownerReferences)
-			patch := client.MergeFrom(original)
-			if err := e.client.Patch(ctx, &updateVA, patch); err != nil {
-				logger.Log.Errorf("failed to patch ownerReference: variantAutoscaling-name=%s, error=%v", updateVA.Name, err)
-				continue
-			}
-			logger.Log.Infof("Set ownerReference on VariantAutoscaling: variantAutoscaling-name=%s, owner=%s", updateVA.Name, deploy.Name)
-		}
-
-		// Validate metrics availability before collecting metrics
-		metricsValidation := e.MetricsCollector.ValidateMetricsAvailability(ctx, modelName, deploy.Namespace)
-
-		// Update MetricsAvailable condition based on validation result
-		if metricsValidation.Available {
-			llmdVariantAutoscalingV1alpha1.SetCondition(&updateVA,
-				llmdVariantAutoscalingV1alpha1.TypeMetricsAvailable,
-				metav1.ConditionTrue,
-				metricsValidation.Reason,
-				metricsValidation.Message)
-		} else {
-			llmdVariantAutoscalingV1alpha1.SetCondition(&updateVA,
-				llmdVariantAutoscalingV1alpha1.TypeMetricsAvailable,
-				metav1.ConditionFalse,
-				metricsValidation.Reason,
-				metricsValidation.Message)
-			// Metrics unavailable - just log and skip
-			logger.Log.Warnf("Metrics unavailable, skipping optimization for variant: variant=%s, namespace=%s, model=%s, reason=%s, troubleshooting=%s",
-				updateVA.Name,
-				updateVA.Namespace,
-				modelName,
-				metricsValidation.Reason,
-				metricsValidation.Message)
-			continue
-		}
-
-		// Collect raw metrics from collector
-		metrics, err := e.MetricsCollector.AddMetricsToOptStatus(ctx, &updateVA, deploy, acceleratorCostValFloat)
-		if err != nil {
-			logger.Log.Errorf("unable to fetch metrics, skipping this variantAutoscaling loop: error=%v", err)
-			continue
-		}
-
-		// Assemble Allocation struct from raw metrics
-		currentAllocation, err := utils.BuildAllocationFromMetrics(metrics, &updateVA, deploy, acceleratorCostValFloat)
-		if err != nil {
-			logger.Log.Errorf("unable to build allocation, skipping this variantAutoscaling loop: error=%v", err)
-			continue
-		}
-		updateVA.Status.CurrentAlloc = currentAllocation
-
-		if err := utils.AddServerInfoToSystemData(systemData, &updateVA, className); err != nil {
-			logger.Log.Infof("variantAutoscaling bad deployment server data, skipping optimization: variantAutoscaling-name=%s", updateVA.Name)
-			continue
-		}
-
-		vaFullName := utils.FullName(va.Name, va.Namespace)
-		updateList.Items = append(updateList.Items, updateVA)
-		vaMap[vaFullName] = &va
-	}
-	return &updateList, vaMap, allAnalyzerResponses, nil
-}
-
-func (e *Engine) readServiceClassConfig(ctx context.Context, cmName, cmNamespace string) (map[string]string, error) {
-	cm := corev1.ConfigMap{}
-	err := utils.GetConfigMapWithBackoff(ctx, e.client, cmName, cmNamespace, &cm)
-	if err != nil {
-		return nil, err
-	}
-	return cm.Data, nil
-}
-
-func (e *Engine) readAcceleratorConfig(ctx context.Context, cmName, cmNamespace string) (map[string]map[string]string, error) {
-	cm := corev1.ConfigMap{}
-	err := utils.GetConfigMapWithBackoff(ctx, e.client, cmName, cmNamespace, &cm)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read ConfigMap %s/%s: %w", cmNamespace, cmName, err)
-	}
-	out := make(map[string]map[string]string)
-	for acc, accInfoStr := range cm.Data {
-		accInfoMap := make(map[string]string)
-		if err := json.Unmarshal([]byte(accInfoStr), &accInfoMap); err != nil {
-			return nil, fmt.Errorf("failed to read entry %s in ConfigMap %s/%s: %w", acc, cmNamespace, cmName, err)
-		}
-		out[acc] = accInfoMap
-	}
-	return out, nil
 }
 
 // getsaturationConfigFromCache retrieves cached config (thread-safe read).
