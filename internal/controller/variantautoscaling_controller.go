@@ -278,7 +278,7 @@ func (r *VariantAutoscalingReconciler) Reconcile(ctx context.Context, req ctrl.R
 		if enableSaturationAnalyzer {
 			// Collect metrics and populate CurrentAlloc for saturation-only mode
 			// This validates metrics availability and populates the VariantAutoscalings with CurrentAlloc
-			if err := r.collectMetricsForSaturationMode(ctx, modelVAs, vaMap); err != nil {
+			if err := CollectMetricsForSaturationMode(ctx, modelVAs, vaMap, r.Client, r.MetricsCollector); err != nil {
 				logger.Log.Errorf("Failed to collect metrics for saturation mode: modelID=%s, error=%v", modelID, err)
 				// Metrics collection error - individual VAs are skipped
 			}
@@ -290,7 +290,7 @@ func (r *VariantAutoscalingReconciler) Reconcile(ctx context.Context, req ctrl.R
 				saturationConfig.Merge(modelConfig)
 			}
 
-			saturationTargets, saturationAnalysis, variantStates, err = r.runSaturationAnalysis(ctx, modelID, modelVAs, saturationConfig)
+			saturationTargets, saturationAnalysis, variantStates, err = RunSaturationAnalysis(ctx, modelID, modelVAs, saturationConfig, r.Client, r.MetricsCollector)
 			if err != nil {
 				logger.Log.Errorf("saturation analysis failed for modelID=%s: %v", modelID, err)
 				// Continue with model-based approach if enabled, as per requirement #1
@@ -536,17 +536,18 @@ func (r *VariantAutoscalingReconciler) Reconcile(ctx context.Context, req ctrl.R
 	return ctrl.Result{RequeueAfter: requeueDuration}, nil
 }
 
-// buildVariantStates extracts current and desired replica counts from VAs for capacity analysis.
-func (r *VariantAutoscalingReconciler) buildVariantStates(
+// BuildVariantStates extracts current and desired replica counts from VAs for capacity analysis.
+func BuildVariantStates(
 	ctx context.Context,
 	vas []llmdVariantAutoscalingV1alpha1.VariantAutoscaling,
+	k8sClient client.Client,
 ) ([]interfaces.VariantReplicaState, error) {
 	states := make([]interfaces.VariantReplicaState, 0, len(vas))
 
 	for _, va := range vas {
 		// Get current replicas from deployment using ScaleTargetRef
 		var deploy appsv1.Deployment
-		if err := utils.GetDeploymentWithBackoff(ctx, r.Client, va.GetScaleTargetName(), va.Namespace, &deploy); err != nil {
+		if err := utils.GetDeploymentWithBackoff(ctx, k8sClient, va.GetScaleTargetName(), va.Namespace, &deploy); err != nil {
 			logger.Log.Warnf("Failed to get deployment for VA, using status: name=%s, deployment=%s, error=%v", va.Name, va.GetScaleTargetName(), err)
 			// Fallback to status if deployment fetch fails
 			states = append(states, interfaces.VariantReplicaState{
@@ -635,12 +636,14 @@ func convertSaturationTargetsToDecisions(
 	return decisions
 }
 
-// runSaturationAnalysis performs saturation analysis for a model and returns Saturation targets.
-func (r *VariantAutoscalingReconciler) runSaturationAnalysis(
+// RunSaturationAnalysis performs saturation analysis for a model and returns Saturation targets.
+func RunSaturationAnalysis(
 	ctx context.Context,
 	modelID string,
 	modelVAs []llmdVariantAutoscalingV1alpha1.VariantAutoscaling,
 	SaturationConfig interfaces.SaturationScalingConfig,
+	k8sClient client.Client,
+	metricsCollector interfaces.MetricsCollector,
 ) (map[string]int, *interfaces.ModelSaturationAnalysis, []interfaces.VariantReplicaState, error) {
 	if len(modelVAs) == 0 {
 		return nil, nil, nil, fmt.Errorf("no VAs provided for model %s", modelID)
@@ -665,7 +668,7 @@ func (r *VariantAutoscalingReconciler) runSaturationAnalysis(
 
 		// Get the deployment for this VA using ScaleTargetRef
 		var deploy appsv1.Deployment
-		err := utils.GetDeploymentWithBackoff(ctx, r.Client, va.GetScaleTargetName(), va.Namespace, &deploy)
+		err := utils.GetDeploymentWithBackoff(ctx, k8sClient, va.GetScaleTargetName(), va.Namespace, &deploy)
 		if err != nil {
 			logger.Log.Debugf("Could not get deployment for VA: variant=%s, deployment=%s, error=%v", va.Name, va.GetScaleTargetName(), err)
 			continue
@@ -675,7 +678,7 @@ func (r *VariantAutoscalingReconciler) runSaturationAnalysis(
 	}
 
 	// Collect Saturation metrics using the configured collector
-	replicaMetrics, err := r.MetricsCollector.CollectReplicaMetrics(ctx, modelID, namespace, deployments, variantAutoscalings, variantCosts)
+	replicaMetrics, err := metricsCollector.CollectReplicaMetrics(ctx, modelID, namespace, deployments, variantAutoscalings, variantCosts)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to collect Saturation metrics for model %s: %w", modelID, err)
 	}
@@ -703,7 +706,7 @@ func (r *VariantAutoscalingReconciler) runSaturationAnalysis(
 		saturationAnalysis.ShouldScaleUp, saturationAnalysis.ScaleDownSafe)
 
 	// Build variant states (current and desired replicas)
-	variantStates, err := r.buildVariantStates(ctx, modelVAs)
+	variantStates, err := BuildVariantStates(ctx, modelVAs, k8sClient)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to build variant states for model %s: %w", modelID, err)
 	}
@@ -717,11 +720,13 @@ func (r *VariantAutoscalingReconciler) runSaturationAnalysis(
 	return saturationTargets, saturationAnalysis, variantStates, nil
 }
 
-// collectMetricsForSaturationMode collects metrics and populates CurrentAlloc for VAs in saturation-only mode.
-func (r *VariantAutoscalingReconciler) collectMetricsForSaturationMode(
+// CollectMetricsForSaturationMode collects metrics and populates CurrentAlloc for VAs in saturation-only mode.
+func CollectMetricsForSaturationMode(
 	ctx context.Context,
 	modelVAs []llmdVariantAutoscalingV1alpha1.VariantAutoscaling,
 	vaMap map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling,
+	k8sClient client.Client,
+	metricsCollector interfaces.MetricsCollector,
 ) error {
 	for i := range modelVAs {
 		va := &modelVAs[i]
@@ -747,7 +752,7 @@ func (r *VariantAutoscalingReconciler) collectMetricsForSaturationMode(
 
 		// Get Deployment using ScaleTargetRef
 		var deploy appsv1.Deployment
-		err = utils.GetDeploymentWithBackoff(ctx, r.Client, va.GetScaleTargetName(), va.Namespace, &deploy)
+		err = utils.GetDeploymentWithBackoff(ctx, k8sClient, va.GetScaleTargetName(), va.Namespace, &deploy)
 		if err != nil {
 			logger.Log.Debugf("Could not get deployment for VA, skipping: variant=%s, deployment=%s, error=%v", va.Name, va.GetScaleTargetName(), err)
 			continue // Skip VAs without deployments
@@ -755,14 +760,14 @@ func (r *VariantAutoscalingReconciler) collectMetricsForSaturationMode(
 
 		// Fetch latest VA from API server (use VA name, not deployment name - they are now decoupled)
 		var updateVA llmdVariantAutoscalingV1alpha1.VariantAutoscaling
-		err = utils.GetVariantAutoscalingWithBackoff(ctx, r.Client, va.Name, va.Namespace, &updateVA)
+		err = utils.GetVariantAutoscalingWithBackoff(ctx, k8sClient, va.Name, va.Namespace, &updateVA)
 		if err != nil {
 			logger.Log.Debugf("Unable to get VA: variant=%s, error=%v", va.Name, err)
 			continue
 		}
 
 		// Validate metrics availability before collecting
-		metricsValidation := r.MetricsCollector.ValidateMetricsAvailability(ctx, modelName, deploy.Namespace)
+		metricsValidation := metricsCollector.ValidateMetricsAvailability(ctx, modelName, deploy.Namespace)
 
 		// Update MetricsAvailable condition based on validation result
 		if metricsValidation.Available {
@@ -785,7 +790,7 @@ func (r *VariantAutoscalingReconciler) collectMetricsForSaturationMode(
 		}
 
 		// Collect raw metrics from collector
-		metrics, err := r.MetricsCollector.AddMetricsToOptStatus(ctx, &updateVA, deploy, cost)
+		metrics, err := metricsCollector.AddMetricsToOptStatus(ctx, &updateVA, deploy, cost)
 		if err != nil {
 			logger.Log.Debugf("Unable to fetch metrics for VA: variant=%s, error=%v", updateVA.Name, err)
 			continue
