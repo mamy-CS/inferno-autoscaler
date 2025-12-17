@@ -121,15 +121,4 @@ type SaturationAnalyzer interface {
 		saturationAnalysis *ModelSaturationAnalysis,
 		variantStates []VariantReplicaState,
 	) map[string]int
-
-	// ArbitrateWithModelBased arbitrates between capacity targets and model-based optimizer targets.
-	// Step 2: Arbitration (only when model-based optimizer provides recommendations)
-	// - Applies hybrid decision matrix with saturation safety overrides
-	// - Returns final per-variant decisions
-	ArbitrateWithModelBased(
-		saturationAnalysis *ModelSaturationAnalysis,
-		saturationTargets map[string]int,
-		modelBasedTargets map[string]int,
-		variantStates []VariantReplicaState,
-	) []VariantDecision
 }
