@@ -394,6 +394,10 @@ deploy_wva_controller() {
 
     # Deploy WVA using Helm chart
     log_info "Installing Workload-Variant-Autoscaler via Helm chart"
+
+    # Default namespaceScoped to true if not set (matches chart default)
+    # But allow override via env var (e.g. for E2E tests)
+    NAMESPACE_SCOPED=${NAMESPACE_SCOPED:-true}
     
     helm upgrade -i workload-variant-autoscaler ${WVA_PROJECT}/charts/workload-variant-autoscaler \
         -n $WVA_NS \
@@ -416,7 +420,8 @@ deploy_wva_controller() {
         --set vllmService.enabled=$VLLM_SVC_ENABLED \
         --set vllmService.nodePort=$VLLM_SVC_NODEPORT \
         --set wva.logging.level=$WVA_LOG_LEVEL \
-        --set wva.prometheus.tls.insecureSkipVerify=$SKIP_TLS_VERIFY
+        --set wva.prometheus.tls.insecureSkipVerify=$SKIP_TLS_VERIFY \
+        --set wva.namespaceScoped=$NAMESPACE_SCOPED
     
     # Wait for WVA to be ready
     log_info "Waiting for WVA controller to be ready..."

@@ -11,6 +11,10 @@ wva:
     port: 8443
     secure: true
   
+  # If true, the controller will only watch the namespace it is deployed in.
+  # If false, the controller will watch all namespaces (cluster-scoped).
+  namespaceScoped: true
+
   reconcileInterval: 60s
     
   prometheus:

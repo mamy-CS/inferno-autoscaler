@@ -33,6 +33,7 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/certwatcher"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
@@ -77,7 +78,9 @@ func main() {
 		metricsAddr                                      string
 		probeAddr                                        string
 		metricsCertPath, metricsCertName, metricsCertKey string
+
 		webhookCertPath, webhookCertName, webhookCertKey string
+		watchNamespace                                   string
 	)
 	// Leader election configuration
 	var (
@@ -112,6 +115,8 @@ func main() {
 	flag.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "The name of the metrics key file.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
+	flag.StringVar(&watchNamespace, "watch-namespace", "",
+		"Namespace to watch for updates. If unspecified, all namespaces are watched.")
 
 	// Leader election timeout configuration flags
 	// These can be overridden in manager.yaml to tune for different environments
@@ -254,7 +259,7 @@ func main() {
 	// Increased from controller-runtime defaults (15s, 10s, 2s) to provide more tolerance
 	// for network latency and API server delays
 
-	mgr, err := ctrl.NewManager(restConfig, ctrl.Options{
+	mgrOptions := ctrl.Options{
 		Scheme:                 scheme,
 		Metrics:                metricsServerOptions,
 		WebhookServer:          webhookServer,
@@ -275,7 +280,18 @@ func main() {
 		// (see mgr.Start() call at the end of main()). This enables fast failover during
 		// deployments and upgrades, reducing downtime from ~60s to ~1-2s.
 		LeaderElectionReleaseOnCancel: true,
-	})
+	}
+
+	if watchNamespace != "" {
+		setupLog.Info("Watching single namespace", zap.String("namespace", watchNamespace))
+		mgrOptions.Cache = cache.Options{
+			DefaultNamespaces: map[string]cache.Config{
+				watchNamespace: {},
+			},
+		}
+	}
+
+	mgr, err := ctrl.NewManager(restConfig, mgrOptions)
 	if err != nil {
 		setupLog.Error("unable to start manager", zap.Error(err))
 		os.Exit(1)
