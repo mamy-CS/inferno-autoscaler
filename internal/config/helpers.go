@@ -4,7 +4,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logger"
+	ctrl "sigs.k8s.io/controller-runtime"
 )
 
 // GetConfigValue retrieves a value from a ConfigMap with a default fallback
@@ -22,7 +22,7 @@ func ParseDurationFromConfig(data map[string]string, key string, defaultValue ti
 		if val, err := time.ParseDuration(valStr); err == nil {
 			return val
 		}
-		logger.Log.Warnf("Invalid duration value '%s' for key '%s' in ConfigMap, using default: %v", valStr, key, defaultValue)
+		ctrl.Log.Info("Invalid duration value in ConfigMap, using default", "value", valStr, "key", key, "default", defaultValue)
 	}
 	return defaultValue
 }
@@ -34,7 +34,7 @@ func ParseIntFromConfig(data map[string]string, key string, defaultValue int, mi
 		if val, err := strconv.Atoi(valStr); err == nil && val >= minValue {
 			return val
 		}
-		logger.Log.Warnf("Invalid integer value '%s' for key '%s' in ConfigMap (must be >= %d), using default: %d", valStr, key, minValue, defaultValue)
+		ctrl.Log.Info("Invalid integer value in ConfigMap, using default", "value", valStr, "key", key, "minValue", minValue, "default", defaultValue)
 	}
 	return defaultValue
 }

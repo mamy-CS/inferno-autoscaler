@@ -5,18 +5,17 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"go.uber.org/zap"
 
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/cache"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/config"
-	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logger"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/test/utils"
 	"github.com/prometheus/common/model"
 )
 
 var _ = Describe("Cache Operations", func() {
 	BeforeEach(func() {
-		logger.Log = zap.NewNop().Sugar()
+		logging.NewTestLogger()
 	})
 
 	Describe("getDefaultCacheConfig", func() {

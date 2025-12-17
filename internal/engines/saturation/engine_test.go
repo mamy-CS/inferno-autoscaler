@@ -17,13 +17,13 @@ limitations under the License.
 package saturation
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/prometheus/common/model"
-	"go.uber.org/zap"
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv1 "k8s.io/api/autoscaling/v1"
 	v1 "k8s.io/api/core/v1"
@@ -34,7 +34,7 @@ import (
 	collector "github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/config"
 	interfaces "github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
-	logger "github.com/llm-d-incubation/workload-variant-autoscaler/internal/logger"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
 	utils "github.com/llm-d-incubation/workload-variant-autoscaler/internal/utils"
 	testutils "github.com/llm-d-incubation/workload-variant-autoscaler/test/utils"
 )
@@ -43,7 +43,7 @@ var _ = Describe("Saturation Engine", func() {
 
 	Context("When handling error conditions on missing config maps", func() {
 		BeforeEach(func() {
-			logger.Log = zap.NewNop().Sugar()
+			logging.NewTestLogger()
 		})
 
 		It("should fail on missing variant autoscaling optimization ConfigMap", func() {
@@ -60,7 +60,7 @@ var _ = Describe("Saturation Engine", func() {
 		var configMapNamespace = getNamespace()
 
 		BeforeEach(func() {
-			logger.Log = zap.NewNop().Sugar()
+			logging.NewTestLogger()
 			ns := &v1.Namespace{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: configMapNamespace,
@@ -290,7 +290,7 @@ data:
 		}
 
 		BeforeEach(func() {
-			logger.Log = zap.NewNop().Sugar()
+			logging.NewTestLogger()
 
 			ns := &v1.Namespace{
 				ObjectMeta: metav1.ObjectMeta{
@@ -472,7 +472,7 @@ data:
 
 	Context("convertSaturationTargetsToDecisions", func() {
 		BeforeEach(func() {
-			logger.Log = zap.NewNop().Sugar()
+			logging.NewTestLogger()
 		})
 
 		It("should include ActionNoChange decisions in the result", func() {
@@ -501,7 +501,7 @@ data:
 
 			By("Converting saturation targets to decisions")
 			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, nil)
-			decisions := engine.convertSaturationTargetsToDecisions(saturationTargets, saturationAnalysis, variantStates)
+			decisions := engine.convertSaturationTargetsToDecisions(context.Background(), saturationTargets, saturationAnalysis, variantStates)
 
 			By("Verifying all variants are included in decisions")
 			Expect(len(decisions)).To(Equal(3), "All 3 variants should have decisions including ActionNoChange")

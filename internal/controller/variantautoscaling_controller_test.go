@@ -24,7 +24,6 @@ import (
 	. "github.com/onsi/gomega"
 	promoperator "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	"github.com/prometheus/common/model"
-	"go.uber.org/zap"
 	autoscalingv1 "k8s.io/api/autoscaling/v1"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -37,7 +36,7 @@ import (
 
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
 	collector "github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector"
-	logger "github.com/llm-d-incubation/workload-variant-autoscaler/internal/logger"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
 	testutils "github.com/llm-d-incubation/workload-variant-autoscaler/test/utils"
 )
 
@@ -54,7 +53,7 @@ var _ = Describe("VariantAutoscalings Controller", func() {
 		VariantAutoscalings := &llmdVariantAutoscalingV1alpha1.VariantAutoscaling{}
 
 		BeforeEach(func() {
-			logger.Log = zap.NewNop().Sugar()
+			logging.NewTestLogger()
 			ns := &v1.Namespace{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "workload-variant-autoscaler-system",
@@ -176,7 +175,7 @@ var _ = Describe("VariantAutoscalings Controller", func() {
 		const configResourceName = "config-test-resource"
 
 		BeforeEach(func() {
-			logger.Log = zap.NewNop().Sugar()
+			logging.NewTestLogger()
 			ns := &v1.Namespace{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "workload-variant-autoscaler-system",
@@ -324,7 +323,7 @@ var _ = Describe("VariantAutoscalings Controller", func() {
 		)
 
 		BeforeEach(func() {
-			logger.Log = zap.NewNop().Sugar()
+			logging.NewTestLogger()
 			fakeRecorder = record.NewFakeRecorder(10)
 			controllerReconciler = &VariantAutoscalingReconciler{
 				Client:   k8sClient,

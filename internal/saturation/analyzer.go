@@ -5,15 +5,17 @@ import (
 	"fmt"
 	"time"
 
+	ctrl "sigs.k8s.io/controller-runtime"
+
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
-	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logger"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
 )
 
 // Analyzer implements the SaturationAnalyzer interface
 type Analyzer struct{}
 
 // NewAnalyzer creates a new saturation analyzer instance
-func NewAnalyzer() interfaces.SaturationAnalyzer {
+func NewAnalyzer() *Analyzer {
 	return &Analyzer{}
 }
 
@@ -78,7 +80,7 @@ func (a *Analyzer) AnalyzeModelSaturation(
 	variantAnalyses := make([]interfaces.VariantSaturationAnalysis, 0, len(variantMap))
 
 	for variantName, metrics := range variantMap {
-		variantAnalysis := a.analyzeVariant(variantName, metrics, config)
+		variantAnalysis := a.analyzeVariant(ctx, variantName, metrics, config)
 		variantAnalyses = append(variantAnalyses, variantAnalysis)
 
 		// Aggregate across variants
@@ -114,20 +116,27 @@ func (a *Analyzer) AnalyzeModelSaturation(
 
 	// Step 4: Determine if scale-down is safe
 	analysis.ShouldScaleDown, analysis.ScaleDownSafe = a.isScaleDownSafe(
+		ctx,
 		replicaMetrics,
 		config,
 	)
 
-	logger.Log.Debugf("saturation analysis completed: modelID=%s, namespace=%s, totalReplicas=%d, nonSaturated=%d, avgSpareKv=%.3f, avgSpareQueue=%.1f, shouldScaleUp=%v, scaleDownSafe=%v",
-		modelID, namespace, analysis.TotalReplicas, nonSaturatedCount,
-		analysis.AvgSpareKvCapacity, analysis.AvgSpareQueueLength,
-		analysis.ShouldScaleUp, analysis.ScaleDownSafe)
+	ctrl.LoggerFrom(ctx).V(logging.DEBUG).Info("saturation analysis completed",
+		"modelID", modelID,
+		"namespace", namespace,
+		"totalReplicas", analysis.TotalReplicas,
+		"nonSaturated", nonSaturatedCount,
+		"avgSpareKv", analysis.AvgSpareKvCapacity,
+		"avgSpareQueue", analysis.AvgSpareQueueLength,
+		"shouldScaleUp", analysis.ShouldScaleUp,
+		"scaleDownSafe", analysis.ScaleDownSafe)
 
 	return analysis, nil
 }
 
 // analyzeVariant analyzes Saturation for a single variant
 func (a *Analyzer) analyzeVariant(
+	ctx context.Context,
 	variantName string,
 	metrics []interfaces.ReplicaMetrics,
 	config interfaces.SaturationScalingConfig,
@@ -142,8 +151,11 @@ func (a *Analyzer) analyzeVariant(
 	if len(metrics) > 0 {
 		analysis.AcceleratorName = metrics[0].AcceleratorName
 		analysis.Cost = metrics[0].Cost
-		logger.Log.Debugf("Variant analysis initialized: variant=%s, accelerator=%s, cost=%.2f, replicaCount=%d",
-			variantName, analysis.AcceleratorName, analysis.Cost, len(metrics))
+		ctrl.LoggerFrom(ctx).V(logging.DEBUG).Info("Variant analysis initialized",
+			"variant", variantName,
+			"accelerator", analysis.AcceleratorName,
+			"cost", analysis.Cost,
+			"replicaCount", len(metrics))
 	}
 
 	var totalSpareKv float64
@@ -224,6 +236,7 @@ func (a *Analyzer) shouldScaleUp(
 // Algorithm: Calculates total current load across non-saturated replicas, then simulates
 // redistributing that load across (N-1) replicas to determine if spare Saturation remains adequate.
 func (a *Analyzer) isScaleDownSafe(
+	ctx context.Context,
 	replicaMetrics []interfaces.ReplicaMetrics,
 	config interfaces.SaturationScalingConfig,
 ) (bool, bool) {
@@ -243,8 +256,8 @@ func (a *Analyzer) isScaleDownSafe(
 	// Require minimum non-saturated replicas for scale-down safety
 	// With fewer replicas, we cannot safely redistribute load without risking saturation
 	if nonSaturatedCount < MinNonSaturatedReplicasForScaleDown {
-		logger.Log.Debugf("Scale-down unsafe: insufficient non-saturated replicas: nonSaturated=%d, required=%d",
-			nonSaturatedCount, MinNonSaturatedReplicasForScaleDown)
+		ctrl.LoggerFrom(ctx).V(logging.DEBUG).Info("Scale-down unsafe: insufficient non-saturated replicas",
+			"nonSaturated", nonSaturatedCount, "required", MinNonSaturatedReplicasForScaleDown)
 		return false, false
 	}
 
@@ -272,8 +285,9 @@ func (a *Analyzer) isScaleDownSafe(
 	isSafe := kvSafe && queueSafe
 
 	if !isSafe {
-		logger.Log.Debugf("Scale-down unsafe: insufficient headroom after redistribution: remainingSpareKv=%.3f, kvTrigger=%.3f, kvSafe=%v, remainingSpareQueue=%.1f, queueTrigger=%.1f",
-			remainingSpareKv, config.KvSpareTrigger, kvSafe, remainingSpareQueue, config.QueueSpareTrigger, queueSafe)
+		ctrl.LoggerFrom(ctx).V(logging.DEBUG).Info("Scale-down unsafe: insufficient headroom after redistribution",
+			"remainingSpareKv", remainingSpareKv, "kvTrigger", config.KvSpareTrigger, "kvSafe", kvSafe,
+			"remainingSpareQueue", remainingSpareQueue, "queueTrigger", config.QueueSpareTrigger, "queueSafe", queueSafe)
 	}
 
 	// Saturation analyzer never initiates scale-down, only approves/denies
@@ -289,6 +303,7 @@ func (a *Analyzer) isScaleDownSafe(
 // - Else if Saturation allows scale-down: most expensive variant gets readyReplicas-1
 // - Else: target = readyReplicas (replicas with metrics)
 func (a *Analyzer) CalculateSaturationTargets(
+	ctx context.Context,
 	saturationAnalysis *interfaces.ModelSaturationAnalysis,
 	variantStates []interfaces.VariantReplicaState,
 ) map[string]int {
@@ -323,17 +338,17 @@ func (a *Analyzer) CalculateSaturationTargets(
 		if isStable && allMetricsAvailable {
 			// Stable VA state and all pods have report metrics: use metrics count
 			targets[va.VariantName] = va.ReplicaCount
-			logger.Log.Debugf("Target initialized to metrics count (stable): variant=%s, count=%d",
-				va.VariantName, va.ReplicaCount)
+			ctrl.LoggerFrom(ctx).V(logging.DEBUG).Info("Target initialized to metrics count (stable)",
+				"variant", va.VariantName, "count", va.ReplicaCount)
 		} else {
 			// Transitional state or incomplete metrics: preserve current replica count
 			targets[va.VariantName] = state.CurrentReplicas
 			if !allMetricsAvailable {
-				logger.Log.Debugf("Target initialized to current replicas (incomplete metrics): variant=%s, currentReplicas=%d, metricsCount=%d",
-					va.VariantName, state.CurrentReplicas, va.ReplicaCount)
+				ctrl.LoggerFrom(ctx).V(logging.DEBUG).Info("Target initialized to current replicas (incomplete metrics)",
+					"variant", va.VariantName, "currentReplicas", state.CurrentReplicas, "metricsCount", va.ReplicaCount)
 			} else if !isStable {
-				logger.Log.Debugf("Target initialized to current replicas (transitioning): variant=%s, desired=%d, current=%d, metricsCount=%d",
-					va.VariantName, state.DesiredReplicas, state.CurrentReplicas, va.ReplicaCount)
+				ctrl.LoggerFrom(ctx).V(logging.DEBUG).Info("Target initialized to current replicas (transitioning)",
+					"variant", va.VariantName, "desired", state.DesiredReplicas, "current", state.CurrentReplicas, "metricsCount", va.ReplicaCount)
 			}
 		}
 	}
@@ -346,8 +361,8 @@ func (a *Analyzer) CalculateSaturationTargets(
 		if state.DesiredReplicas != 0 && state.DesiredReplicas != state.CurrentReplicas {
 			targets[va.VariantName] = state.DesiredReplicas
 			preservedVariants[va.VariantName] = true
-			logger.Log.Debugf("Preserving desired replicas: variant=%s, currentReplicas=%d, readyReplicas=%d, desired=%d",
-				va.VariantName, state.CurrentReplicas, va.ReplicaCount, state.DesiredReplicas)
+			ctrl.LoggerFrom(ctx).V(logging.DEBUG).Info("Preserving desired replicas",
+				"variant", va.VariantName, "currentReplicas", state.CurrentReplicas, "readyReplicas", va.ReplicaCount, "desired", state.DesiredReplicas)
 		}
 	}
 
@@ -373,9 +388,9 @@ func (a *Analyzer) CalculateSaturationTargets(
 			// The base target is from initialization: if we preserved desired, it uses that; else, it uses current/metrics
 			baseTarget := targets[cheapestNonPreserved.VariantName]
 			targets[cheapestNonPreserved.VariantName] = baseTarget + 1
-			logger.Log.Infof("Saturation target: scale-up cheapest variant: variant=%s, cost=%.2f, currentReplicas=%d, readyReplicas=%d, baseTarget=%d, target=%d, reason=%s",
-				cheapestNonPreserved.VariantName, cheapestNonPreserved.Cost, state.CurrentReplicas,
-				cheapestNonPreserved.ReplicaCount, baseTarget, targets[cheapestNonPreserved.VariantName], saturationAnalysis.ScaleUpReason)
+			ctrl.LoggerFrom(ctx).V(logging.VERBOSE).Info("Saturation target: scale-up cheapest variant",
+				"variant", cheapestNonPreserved.VariantName, "cost", cheapestNonPreserved.Cost, "currentReplicas", state.CurrentReplicas,
+				"readyReplicas", cheapestNonPreserved.ReplicaCount, "baseTarget", baseTarget, "target", targets[cheapestNonPreserved.VariantName], "reason", saturationAnalysis.ScaleUpReason)
 		}
 
 	} else if saturationAnalysis.ScaleDownSafe {
@@ -405,13 +420,13 @@ func (a *Analyzer) CalculateSaturationTargets(
 			// The base target is from initialization: if we preserved desired, it uses that; else, it uses current/metrics
 			baseTarget := targets[mostExpensiveNonPreserved.VariantName]
 			targets[mostExpensiveNonPreserved.VariantName] = baseTarget - 1
-			logger.Log.Infof("Saturation target: scale-down most expensive variant: variant=%s, cost=%.2f, currentReplicas=%d, readyReplicas=%d, baseTarget=%d, target=%d",
-				mostExpensiveNonPreserved.VariantName, mostExpensiveNonPreserved.Cost, state.CurrentReplicas,
-				mostExpensiveNonPreserved.ReplicaCount, baseTarget, targets[mostExpensiveNonPreserved.VariantName])
+			ctrl.LoggerFrom(ctx).V(logging.VERBOSE).Info("Saturation target: scale-down most expensive variant",
+				"variant", mostExpensiveNonPreserved.VariantName, "cost", mostExpensiveNonPreserved.Cost, "currentReplicas", state.CurrentReplicas,
+				"readyReplicas", mostExpensiveNonPreserved.ReplicaCount, "baseTarget", baseTarget, "target", targets[mostExpensiveNonPreserved.VariantName])
 		}
 	} else {
 		// No scaling action needed - Saturation is adequate and stable
-		logger.Log.Debugf("Saturation targets: no scaling needed (avgSpareKv=%.3f, avgSpareQueue=%.1f, all variants stable)",
+		ctrl.LoggerFrom(ctx).V(logging.DEBUG).Info("Saturation targets: no scaling needed",
 			saturationAnalysis.AvgSpareKvCapacity, saturationAnalysis.AvgSpareQueueLength)
 	}
 

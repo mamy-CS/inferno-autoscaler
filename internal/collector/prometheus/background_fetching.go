@@ -7,45 +7,50 @@ import (
 	"sync"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
+	"k8s.io/apimachinery/pkg/util/wait"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/cache"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
-	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logger"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/saturation"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/utils"
-	appsv1 "k8s.io/api/apps/v1"
-	"k8s.io/apimachinery/pkg/util/wait"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // StartBackgroundWorker starts the background worker for periodic metric fetching
 // This should be called with a context that will be cancelled when the collector is stopped
 func (pc *PrometheusCollector) StartBackgroundWorker(ctx context.Context) {
+	logger := ctrl.LoggerFrom(ctx)
 	if pc.fetchExecutor == nil {
-		logger.Log.Infow("Background worker not started: fetch executor not initialized (fetch interval is 0 or negative)")
+		logger.Info("Background worker not started: fetch executor not initialized (fetch interval is 0 or negative)")
 		return
 	}
 
 	go pc.fetchExecutor.Start(ctx)
-	logger.Log.Infow("Started background fetching executor", "interval", pc.fetchInterval)
+	logger.Info("Started background fetching executor", "interval", pc.fetchInterval)
 }
 
 // StopBackgroundWorker stops the background worker gracefully
 // Note: With PollingExecutor, stopping is handled via context cancellation
-func (pc *PrometheusCollector) StopBackgroundWorker() {
-	logger.Log.Infow("Background fetching executor will stop when context is cancelled")
+func (pc *PrometheusCollector) StopBackgroundWorker(ctx context.Context) {
+	logger := ctrl.LoggerFrom(ctx)
+	logger.Info("Background fetching executor will stop when context is cancelled")
 }
 
 // fetchTrackedVAs fetches metrics for all tracked VAs with exponential backoff retry
 // This is called by the PollingExecutor at configured intervals
 func (pc *PrometheusCollector) fetchTrackedVAs(ctx context.Context) {
+	logger := ctrl.LoggerFrom(ctx)
 	var wg sync.WaitGroup
 
 	pc.trackedVAs.Range(func(key, value interface{}) bool {
 		tracked, ok := value.(*TrackedVA)
 		if !ok {
 			// Invalid type stored in map, skip it
-			logger.Log.Warnw("Invalid type in trackedVAs map, skipping", "key", key)
+			logger.Info("Invalid type in trackedVAs map, skipping", "key", key)
 			return true // continue
 		}
 
@@ -69,8 +74,9 @@ func (pc *PrometheusCollector) fetchTrackedVAs(ctx context.Context) {
 // fetchTrackedModels fetches replica metrics for all tracked models with exponential backoff retry
 // This is called by the PollingExecutor at configured intervals
 func (pc *PrometheusCollector) fetchTrackedModels(ctx context.Context) {
+	logger := ctrl.LoggerFrom(ctx)
 	if pc.getK8sClient() == nil {
-		logger.Log.Debugw("Skipping replica metrics background fetch: K8s client not set")
+		logger.V(logging.DEBUG).Info("Skipping replica metrics background fetch: K8s client not set")
 		return
 	}
 
@@ -80,7 +86,7 @@ func (pc *PrometheusCollector) fetchTrackedModels(ctx context.Context) {
 		tracked, ok := value.(*TrackedModel)
 		if !ok {
 			// Invalid type stored in map, skip it
-			logger.Log.Warnw("Invalid type in trackedModels map, skipping", "key", key)
+			logger.Info("Invalid type in trackedModels map, skipping", "key", key)
 			return true // continue
 		}
 
@@ -103,6 +109,8 @@ func (pc *PrometheusCollector) fetchTrackedModels(ctx context.Context) {
 
 // fetchVAMetricsWithRetry fetches metrics for a single VA with exponential backoff retry
 func (pc *PrometheusCollector) fetchVAMetricsWithRetry(parentCtx context.Context, tracked *TrackedVA) {
+	logger := ctrl.LoggerFrom(parentCtx)
+
 	ctx, cancel := context.WithTimeout(parentCtx, 30*time.Second)
 	defer cancel()
 
@@ -112,14 +120,14 @@ func (pc *PrometheusCollector) fetchVAMetricsWithRetry(parentCtx context.Context
 		// Try to fetch optimizer metrics
 		metrics, err := pc.fetchOptimizerMetrics(ctx, tracked.VA, tracked.Deployment)
 		if err != nil {
-			logger.Log.Debugw("Background fetch failed for VA (will retry)", "variant", tracked.VariantName, "error", err)
+			logger.V(logging.DEBUG).Info("Background fetch failed for VA (will retry)", "variant", tracked.VariantName, "error", err)
 			return false, nil // Retry
 		}
 
 		// Success - update last fetch time (thread-safe)
 		collectedAt := time.Now()
 		tracked.setLastFetch(collectedAt)
-		logger.Log.Debugw("Background fetch succeeded for VA",
+		logger.V(logging.DEBUG).Info("Background fetch succeeded for VA",
 			"model", tracked.ModelID,
 			"variant", tracked.VariantName,
 			"freshnessStatus", "fresh",
@@ -136,17 +144,18 @@ func (pc *PrometheusCollector) fetchVAMetricsWithRetry(parentCtx context.Context
 	if err != nil {
 		// Context cancelled or backoff exhausted (though with context timeout, it's likely context cancellation)
 		if ctx.Err() == context.DeadlineExceeded {
-			logger.Log.Debugw("Background fetch timeout for VA after 30s", "variant", tracked.VariantName)
+			logger.V(logging.DEBUG).Info("Background fetch timeout for VA after 30s", "variant", tracked.VariantName)
 		} else if ctx.Err() == context.Canceled {
-			logger.Log.Debugw("Background fetch cancelled for VA", "variant", tracked.VariantName)
+			logger.V(logging.DEBUG).Info("Background fetch cancelled for VA", "variant", tracked.VariantName)
 		} else {
-			logger.Log.Debugw("Background fetch failed for VA after all retries", "variant", tracked.VariantName, "error", err)
+			logger.V(logging.DEBUG).Info("Background fetch failed for VA after all retries", "variant", tracked.VariantName, "error", err)
 		}
 	}
 }
 
 // fetchModelReplicaMetricsWithRetry fetches replica metrics for a single model with exponential backoff retry
 func (pc *PrometheusCollector) fetchModelReplicaMetricsWithRetry(parentCtx context.Context, tracked *TrackedModel) {
+	logger := ctrl.LoggerFrom(parentCtx)
 	ctx, cancel := context.WithTimeout(parentCtx, 30*time.Second)
 	defer cancel()
 
@@ -155,27 +164,27 @@ func (pc *PrometheusCollector) fetchModelReplicaMetricsWithRetry(parentCtx conte
 		// Build deployments, variantAutoscalings, and variantCosts maps fresh from K8s
 		deployments, variantAutoscalings, variantCosts, err := pc.buildModelMaps(ctx, tracked.ModelID, tracked.Namespace)
 		if err != nil {
-			logger.Log.Debugw("Background fetch failed to build maps for model (will retry)", "model", tracked.ModelID, "error", err)
+			logger.V(logging.DEBUG).Info("Background fetch failed to build maps for model (will retry)", "model", tracked.ModelID, "error", err)
 			return false, nil // Retry
 		}
 
 		if len(variantAutoscalings) == 0 {
 			// No VAs found for this model, skip fetching (but don't retry)
-			logger.Log.Debugw("No VAs found for model in namespace, skipping background fetch", "model", tracked.ModelID, "namespace", tracked.Namespace)
+			logger.V(logging.DEBUG).Info("No VAs found for model in namespace, skipping background fetch", "model", tracked.ModelID, "namespace", tracked.Namespace)
 			return true, nil // Success (nothing to fetch)
 		}
 
 		// Fetch replica metrics
 		_, err = pc.fetchReplicaMetrics(ctx, tracked.ModelID, tracked.Namespace, deployments, variantAutoscalings, variantCosts)
 		if err != nil {
-			logger.Log.Debugw("Background fetch failed for model (will retry)", "model", tracked.ModelID, "error", err)
+			logger.V(logging.DEBUG).Info("Background fetch failed for model (will retry)", "model", tracked.ModelID, "error", err)
 			return false, nil // Retry
 		}
 
 		// Success - update last fetch time (thread-safe)
 		collectedAt := time.Now()
 		tracked.setLastFetch(collectedAt)
-		logger.Log.Debugw("Background replica metrics fetch succeeded for model",
+		logger.V(logging.DEBUG).Info("Background replica metrics fetch succeeded for model",
 			"model", tracked.ModelID,
 			"namespace", tracked.Namespace,
 			"freshnessStatus", "fresh",
@@ -187,11 +196,11 @@ func (pc *PrometheusCollector) fetchModelReplicaMetricsWithRetry(parentCtx conte
 	if err != nil {
 		// Context cancelled or backoff exhausted
 		if ctx.Err() == context.DeadlineExceeded {
-			logger.Log.Debugw("Background replica metrics fetch timeout for model after 30s", "model", tracked.ModelID)
+			logger.V(logging.DEBUG).Info("Background replica metrics fetch timeout for model after 30s", "model", tracked.ModelID)
 		} else if ctx.Err() == context.Canceled {
-			logger.Log.Debugw("Background replica metrics fetch cancelled for model", "model", tracked.ModelID)
+			logger.V(logging.DEBUG).Info("Background replica metrics fetch cancelled for model", "model", tracked.ModelID)
 		} else {
-			logger.Log.Debugw("Background replica metrics fetch failed for model after all retries", "model", tracked.ModelID, "error", err)
+			logger.V(logging.DEBUG).Info("Background replica metrics fetch failed for model after all retries", "model", tracked.ModelID, "error", err)
 		}
 	}
 }
@@ -204,6 +213,8 @@ func (pc *PrometheusCollector) buildModelMaps(ctx context.Context, modelID, name
 	variantCosts map[string]float64,
 	err error,
 ) {
+	logger := ctrl.LoggerFrom(ctx)
+
 	deployments = make(map[string]*appsv1.Deployment)
 	variantAutoscalings = make(map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling)
 	variantCosts = make(map[string]float64)
@@ -241,7 +252,7 @@ func (pc *PrometheusCollector) buildModelMaps(ctx context.Context, modelID, name
 		// Get the deployment for this VA
 		var deploy appsv1.Deployment
 		if err := utils.GetDeploymentWithBackoff(ctx, k8sClient, va.GetScaleTargetName(), va.Namespace, &deploy); err != nil {
-			logger.Log.Debugw("Could not get deployment for VA in background fetch", "variant", va.Name, "deployment", va.GetScaleTargetName(), "error", err)
+			logger.V(logging.DEBUG).Info("Could not get deployment for VA in background fetch", "variant", va.Name, "deployment", va.GetScaleTargetName(), "error", err)
 			continue // Skip this VA if we can't get its deployment
 		}
 
@@ -262,6 +273,7 @@ func (pc *PrometheusCollector) fetchReplicaMetrics(
 	variantAutoscalings map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling,
 	variantCosts map[string]float64,
 ) ([]interfaces.ReplicaMetrics, error) {
+
 	// Use the existing SaturationMetricsCollector implementation
 	saturationCollector := &SaturationMetricsCollector{
 		promAPI:   pc.promAPI,

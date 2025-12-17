@@ -8,7 +8,9 @@ import (
 	"os"
 
 	interfaces "github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
-	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logger"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
+
+	ctrl "sigs.k8s.io/controller-runtime"
 )
 
 // CreateTLSConfig creates a TLS configuration from PrometheusConfig.
@@ -39,7 +41,7 @@ func CreateTLSConfig(promConfig *interfaces.PrometheusConfig) (*tls.Config, erro
 			return nil, fmt.Errorf("failed to parse CA certificate from %s", promConfig.CACertPath)
 		}
 		config.RootCAs = caCertPool
-		logger.Log.Info("CA certificate loaded successfully", "path", promConfig.CACertPath)
+		ctrl.Log.V(logging.VERBOSE).Info("CA certificate loaded successfully", "path", promConfig.CACertPath)
 	}
 
 	// Load client certificate and key if provided
@@ -50,7 +52,7 @@ func CreateTLSConfig(promConfig *interfaces.PrometheusConfig) (*tls.Config, erro
 				promConfig.ClientCertPath, promConfig.ClientKeyPath, err)
 		}
 		config.Certificates = []tls.Certificate{cert}
-		logger.Log.Info("Client certificate loaded successfully",
+		ctrl.Log.V(logging.VERBOSE).Info("Client certificate loaded successfully",
 			"cert_path", promConfig.ClientCertPath, "key_path", promConfig.ClientKeyPath)
 	}
 
@@ -70,7 +72,7 @@ func ValidateTLSConfig(promConfig *interfaces.PrometheusConfig) error {
 	// If InsecureSkipVerify is true, we don't need to validate certificate files
 	// since we're intentionally skipping certificate verification
 	if promConfig.InsecureSkipVerify {
-		logger.Log.Warn("TLS certificate verification is disabled - this is not recommended for production")
+		ctrl.Log.V(logging.VERBOSE).Info("TLS certificate verification is disabled - this is not recommended for production")
 		return nil
 	}
 

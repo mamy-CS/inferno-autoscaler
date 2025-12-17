@@ -6,9 +6,11 @@ import (
 	"os"
 	"strings"
 
-	interfaces "github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
-	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logger"
 	"github.com/prometheus/client_golang/api"
+	ctrl "sigs.k8s.io/controller-runtime"
+
+	interfaces "github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
 )
 
 // CreatePrometheusTransport creates a custom HTTPS transport for Prometheus client with TLS support.
@@ -23,7 +25,7 @@ func CreatePrometheusTransport(config *interfaces.PrometheusConfig) (http.RoundT
 		return nil, err
 	}
 	transport.TLSClientConfig = tlsConfig
-	logger.Log.Info("TLS configuration applied to Prometheus HTTPS transport")
+	ctrl.Log.V(logging.VERBOSE).Info("TLS configuration applied to Prometheus HTTPS transport")
 
 	return transport, nil
 }
@@ -51,7 +53,7 @@ func CreatePrometheusClientConfig(config *interfaces.PrometheusConfig) (*api.Con
 			return nil, fmt.Errorf("failed to read bearer token from %s: %w", config.TokenPath, err)
 		}
 		bearerToken = strings.TrimSpace(string(tokenBytes))
-		logger.Log.Info("Bearer token loaded from file", "path", config.TokenPath)
+		ctrl.Log.V(logging.VERBOSE).Info("Bearer token loaded from file", "path", config.TokenPath)
 	}
 
 	if bearerToken != "" {

@@ -5,7 +5,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logger"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
+	ctrl "sigs.k8s.io/controller-runtime"
 )
 
 // MemoryCache is an in-memory thread-safe cache implementation
@@ -155,8 +156,8 @@ func (mc *MemoryCache) cleanupExpired() {
 		return true
 	})
 
-	if expiredCount > 0 && logger.Log != nil {
-		logger.Log.Debugw("Cache cleanup: removed expired entries", "count", expiredCount)
+	if expiredCount > 0 {
+		ctrl.Log.V(logging.DEBUG).Info("Cache cleanup: removed expired entries", "count", expiredCount)
 	}
 }
 

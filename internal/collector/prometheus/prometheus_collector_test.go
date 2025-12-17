@@ -7,14 +7,14 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/prometheus/common/model"
-	"go.uber.org/zap"
 	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	ctrl "sigs.k8s.io/controller-runtime"
 
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/config"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/constants"
-	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logger"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
 	internalutils "github.com/llm-d-incubation/workload-variant-autoscaler/internal/utils"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/test/utils"
 )
@@ -32,8 +32,8 @@ var _ = Describe("PrometheusCollector", func() {
 	)
 
 	BeforeEach(func() {
-		logger.Log = zap.NewNop().Sugar()
-		ctx = context.Background()
+		ctx = ctrl.LoggerInto(context.Background(), logging.NewTestLogger())
+
 		modelName = "test-model"
 		namespace = "test-namespace"
 		variantName = "test-variant"

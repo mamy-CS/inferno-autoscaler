@@ -34,7 +34,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	llmdv1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
-	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logger"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/metrics"
 	// +kubebuilder:scaffold:imports
 )
@@ -63,8 +63,7 @@ var _ = BeforeSuite(func() {
 	ctx, cancel = context.WithCancel(context.TODO())
 
 	// Initialize logger for actuator
-	_, loggerErr := logger.InitLogger()
-	Expect(loggerErr).NotTo(HaveOccurred())
+	logging.NewTestLogger()
 
 	By("bootstrapping test environment")
 	testEnv = &envtest.Environment{

@@ -5,14 +5,13 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"go.uber.org/zap"
 
-	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logger"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
 )
 
 var _ = Describe("Cache", func() {
 	BeforeEach(func() {
-		logger.Log = zap.NewNop().Sugar()
+		logging.NewTestLogger()
 	})
 
 	Describe("CacheKey", func() {

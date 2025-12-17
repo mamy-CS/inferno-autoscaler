@@ -20,10 +20,11 @@ import (
 	"context"
 	"time"
 
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/executor"
-	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logger"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/utils"
 )
 
@@ -68,7 +69,7 @@ func (e *Engine) optimize(ctx context.Context) error {
 		return err
 	}
 
-	logger.Log.Debugw("Found inactive VariantAutoscaling resources", "count", len(inactiveVAs))
+	ctrl.Log.V(logging.DEBUG).Info("Found inactive VariantAutoscaling resources", "count", len(inactiveVAs))
 	// TODO: Implement optimization logic
 
 	return nil

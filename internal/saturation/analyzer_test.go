@@ -6,14 +6,12 @@ import (
 	"time"
 
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
-	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logger"
-	"go.uber.org/zap"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
 )
 
 func init() {
 	// Initialize logger for tests
-	zapLogger, _ := zap.NewDevelopment()
-	logger.Log = zapLogger.Sugar()
+	logging.NewTestLogger()
 }
 
 func TestAnalyzeModelSaturation_ScaleUp(t *testing.T) {
@@ -217,7 +215,7 @@ func TestAnalyzeVariant_SaturatedReplicas(t *testing.T) {
 		{PodName: "pod-3", VariantName: "v1", KvCacheUsage: 0.60, QueueLength: 2}, // Not saturated
 	}
 
-	analysis := analyzer.analyzeVariant("v1", metrics, config)
+	analysis := analyzer.analyzeVariant(context.Background(), "v1", metrics, config)
 
 	if analysis.ReplicaCount != 3 {
 		t.Errorf("expected ReplicaCount=3, got %d", analysis.ReplicaCount)
@@ -352,7 +350,7 @@ func TestCalculatesaturationTargets_ScaleUpCheapest(t *testing.T) {
 		{VariantName: "v3-medium", CurrentReplicas: 2, DesiredReplicas: 0},
 	}
 
-	targets := analyzer.CalculateSaturationTargets(saturationAnalysis, variantStates)
+	targets := analyzer.CalculateSaturationTargets(context.Background(), saturationAnalysis, variantStates)
 
 	// Should scale up cheapest variant (v2-cheap)
 	if targets["v2-cheap"] != 3 {
@@ -389,7 +387,7 @@ func TestCalculatesaturationTargets_ScaleDownMostExpensive(t *testing.T) {
 		{VariantName: "v3-medium", CurrentReplicas: 2, DesiredReplicas: 0},
 	}
 
-	targets := analyzer.CalculateSaturationTargets(saturationAnalysis, variantStates)
+	targets := analyzer.CalculateSaturationTargets(context.Background(), saturationAnalysis, variantStates)
 
 	// Should scale down most expensive variant (v1-expensive)
 	if targets["v1-expensive"] != 1 {
@@ -425,7 +423,7 @@ func TestCalculatesaturationTargets_PreserveDesired(t *testing.T) {
 		{VariantName: "v2-cheap", CurrentReplicas: 2, DesiredReplicas: 0},
 	}
 
-	targets := analyzer.CalculateSaturationTargets(saturationAnalysis, variantStates)
+	targets := analyzer.CalculateSaturationTargets(context.Background(), saturationAnalysis, variantStates)
 
 	// Should preserve v1's desired replicas
 	if targets["v1-expensive"] != 4 {

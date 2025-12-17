@@ -6,20 +6,20 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"go.uber.org/zap"
 	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	ctrl "sigs.k8s.io/controller-runtime"
 
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/config"
-	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logger"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/test/utils"
 	"github.com/prometheus/common/model"
 )
 
 // Set logger once at package level to avoid race conditions with background goroutines
 var _ = BeforeSuite(func() {
-	logger.Log = zap.NewNop().Sugar()
+	logging.NewTestLogger()
 })
 
 var _ = Describe("Background Fetching", func() {
@@ -32,6 +32,7 @@ var _ = Describe("Background Fetching", func() {
 
 	BeforeEach(func() {
 		ctx, cancel = context.WithCancel(context.Background())
+		ctx = ctrl.LoggerInto(ctx, logging.NewTestLogger())
 
 		mockPromAPI = &utils.MockPromAPI{
 			QueryResults: make(map[string]model.Value),
@@ -92,7 +93,7 @@ var _ = Describe("Background Fetching", func() {
 			collector = NewPrometheusCollectorWithConfig(mockPromAPI, testConfig)
 
 			// Should not panic
-			collector.StopBackgroundWorker()
+			collector.StopBackgroundWorker(ctx)
 		})
 	})
 

@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 
+	ctrl "sigs.k8s.io/controller-runtime"
+
 	llmdOptv1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
 	interfaces "github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
-	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logger"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/utils"
 	inferno "github.com/llm-d-incubation/workload-variant-autoscaler/pkg/core"
 	infernoManager "github.com/llm-d-incubation/workload-variant-autoscaler/pkg/manager"
@@ -40,7 +42,7 @@ func (engine *VariantAutoscalingsEngine) Optimize(ctx context.Context,
 		return nil, fmt.Errorf("no feasible allocations found for all variants: ")
 	}
 
-	logger.Log.Debug("Optimization solution - ", "system: ", engine.system)
+	ctrl.Log.V(logging.DEBUG).Info("Optimization solution - ", "system", engine.system)
 
 	optimizedAllocMap := make(map[string]llmdOptv1alpha1.OptimizedAlloc)
 	for _, va := range vaList.Items {

@@ -21,8 +21,7 @@ import (
 	"time"
 
 	"k8s.io/apimachinery/pkg/util/wait"
-
-	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logger"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 // PollingExecutor executes the optimization function at fixed intervals.
@@ -55,11 +54,12 @@ func (e *PollingExecutor) Start(ctx context.Context) {
 }
 
 func (e *PollingExecutor) executeWithRetry(ctx context.Context) {
+	logger := log.FromContext(ctx)
 	backoff := e.retryBackoff
 	for { // infinite retry loop
 		select {
 		case <-ctx.Done():
-			logger.Log.Info("Context cancelled, stopping optimization loop")
+			logger.Info("Context cancelled, stopping optimization loop")
 			return
 		default:
 		}
@@ -69,11 +69,11 @@ func (e *PollingExecutor) executeWithRetry(ctx context.Context) {
 			return
 		}
 
-		logger.Log.Errorw("Optimization error", "error", err)
+		logger.Error(err, "Optimization error")
 
 		select {
 		case <-ctx.Done():
-			logger.Log.Info("Context cancelled during retry delay")
+			logger.Info("Context cancelled during retry delay")
 			return
 		case <-time.After(backoff):
 			backoff *= 2
