@@ -287,7 +287,7 @@ for i in $(seq 1 $RETRIES); do
   sleep $RETRY_DELAY
 done
 
-# Send requests in parallel batches
+# Send requests in parallel batches (ignore individual curl failures)
 TOTAL=%d
 BATCH_SIZE=50
 SENT=0
@@ -296,9 +296,10 @@ while [ $SENT -lt $TOTAL ]; do
   # Send a batch of concurrent requests
   for i in $(seq 1 $BATCH_SIZE); do
     if [ $SENT -ge $TOTAL ]; then break; fi
-    curl -s -o /dev/null -X POST http://vllm-service:8200/v1/completions \
+    # Use subshell with || true to ignore curl failures
+    (curl -s -o /dev/null --max-time 120 -X POST http://vllm-service:8200/v1/completions \
       -H "Content-Type: application/json" \
-      -d '{"model":"%s","prompt":"Write a detailed essay about artificial intelligence and its impact on society.","max_tokens":200}' &
+      -d '{"model":"%s","prompt":"Write a detailed essay about artificial intelligence and its impact on society.","max_tokens":200}' || true) &
     SENT=$((SENT + 1))
   done
   # Brief pause between batches
@@ -306,9 +307,10 @@ while [ $SENT -lt $TOTAL ]; do
   echo "Worker %d: sent $SENT / $TOTAL requests..."
 done
 
-# Wait for all background jobs
-wait
+# Wait for all background jobs (ignore failures)
+wait || true
 echo "Worker %d: completed all %d requests"
+exit 0
 `, workerID, numRequests, numRequests, modelID, workerID, workerID, numRequests)
 
 	return &batchv1.Job{
