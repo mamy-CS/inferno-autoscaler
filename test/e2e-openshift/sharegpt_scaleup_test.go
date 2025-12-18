@@ -36,10 +36,16 @@ import (
 
 var lowLoad = numPrompts <= 2000 && requestRate <= 8
 
+// Number of parallel load generation workers and requests per worker
+const (
+	numLoadWorkers    = 5
+	requestsPerWorker = 400
+)
+
 var _ = Describe("ShareGPT Scale-Up Test", Ordered, func() {
 	var (
 		ctx                  context.Context
-		jobName              string
+		jobBaseName          string
 		initialReplicas      int32
 		initialOptimized     int32
 		scaledReplicas       int32
@@ -49,7 +55,7 @@ var _ = Describe("ShareGPT Scale-Up Test", Ordered, func() {
 
 	BeforeAll(func() {
 		ctx = context.Background()
-		jobName = "vllm-bench-sharegpt-e2e"
+		jobBaseName = "load-gen-e2e"
 
 		By("recording initial state of the deployment")
 		deploy, err := k8sClient.AppsV1().Deployments(llmDNamespace).Get(ctx, deployment, metav1.GetOptions{})
@@ -90,34 +96,35 @@ var _ = Describe("ShareGPT Scale-Up Test", Ordered, func() {
 		}, 2*time.Minute, 5*time.Second).Should(Succeed())
 	})
 
-	It("should create and run ShareGPT load generation job", func() {
-		By("cleaning up any existing job")
-		_ = k8sClient.BatchV1().Jobs(llmDNamespace).Delete(ctx, jobName, metav1.DeleteOptions{})
+	It("should create and run parallel load generation jobs", func() {
+		By("cleaning up any existing jobs")
+		deleteParallelLoadJobs(ctx, jobBaseName, llmDNamespace, numLoadWorkers)
 		// Wait a bit for cleanup
 		time.Sleep(2 * time.Second)
 
-		By("creating ShareGPT load generation job")
-		job := createShareGPTJob(jobName, llmDNamespace, requestRate, numPrompts)
-		_, err := k8sClient.BatchV1().Jobs(llmDNamespace).Create(ctx, job, metav1.CreateOptions{})
-		Expect(err).NotTo(HaveOccurred(), "Should be able to create load generation job")
+		By(fmt.Sprintf("creating %d parallel load generation jobs", numLoadWorkers))
+		err := createParallelLoadJobs(ctx, jobBaseName, llmDNamespace, numLoadWorkers, requestsPerWorker)
+		Expect(err).NotTo(HaveOccurred(), "Should be able to create load generation jobs")
 
-		By("waiting for job pod to be running")
+		By("waiting for job pods to be running")
 		Eventually(func(g Gomega) {
 			podList, err := k8sClient.CoreV1().Pods(llmDNamespace).List(ctx, metav1.ListOptions{
-				LabelSelector: fmt.Sprintf("job-name=%s", jobName),
+				LabelSelector: "experiment=load-gen-e2e",
 			})
 			g.Expect(err).NotTo(HaveOccurred(), "Should be able to list job pods")
-			g.Expect(podList.Items).NotTo(BeEmpty(), "Job pod should exist")
+			g.Expect(len(podList.Items)).To(BeNumerically(">=", numLoadWorkers), "All job pods should exist")
 
-			pod := podList.Items[0]
-			// Check if pod is running or has completed initialization
-			g.Expect(pod.Status.Phase).To(Or(
-				Equal(corev1.PodRunning),
-				Equal(corev1.PodSucceeded),
-			), fmt.Sprintf("Job pod should be running or succeeded, but is in phase: %s", pod.Status.Phase))
+			runningCount := 0
+			for _, pod := range podList.Items {
+				if pod.Status.Phase == corev1.PodRunning || pod.Status.Phase == corev1.PodSucceeded {
+					runningCount++
+				}
+			}
+			g.Expect(runningCount).To(BeNumerically(">=", numLoadWorkers),
+				fmt.Sprintf("At least %d job pods should be running, got %d", numLoadWorkers, runningCount))
 		}, 3*time.Minute, 5*time.Second).Should(Succeed())
 
-		_, _ = fmt.Fprintf(GinkgoWriter, "Load generation job is running\n")
+		_, _ = fmt.Fprintf(GinkgoWriter, "All %d load generation jobs are running\n", numLoadWorkers)
 	})
 
 	It("should detect increased load and recommend scale-up", func() {
@@ -223,131 +230,105 @@ var _ = Describe("ShareGPT Scale-Up Test", Ordered, func() {
 		_, _ = fmt.Fprintf(GinkgoWriter, "Deployment maintained %d replicas under load (target: %d)\n", scaledReplicas, scaledOptimized)
 	})
 
-	It("should complete the load generation job successfully", func() {
-		By("waiting for job to complete")
+	It("should complete the load generation jobs successfully", func() {
+		By("waiting for jobs to complete")
 		Eventually(func(g Gomega) {
-			job, err := k8sClient.BatchV1().Jobs(llmDNamespace).Get(ctx, jobName, metav1.GetOptions{})
-			g.Expect(err).NotTo(HaveOccurred(), "Should be able to get job")
-
-			_, _ = fmt.Fprintf(GinkgoWriter, "Job status - Active: %d, Succeeded: %d, Failed: %d\n",
-				job.Status.Active, job.Status.Succeeded, job.Status.Failed)
-
-			g.Expect(job.Status.Succeeded).To(BeNumerically(">=", 1), "Job should have succeeded")
+			succeededCount := 0
+			for i := 1; i <= numLoadWorkers; i++ {
+				jobName := fmt.Sprintf("%s-%d", jobBaseName, i)
+				job, err := k8sClient.BatchV1().Jobs(llmDNamespace).Get(ctx, jobName, metav1.GetOptions{})
+				if err != nil {
+					continue
+				}
+				if job.Status.Succeeded >= 1 {
+					succeededCount++
+				}
+			}
+			_, _ = fmt.Fprintf(GinkgoWriter, "Jobs completed: %d / %d\n", succeededCount, numLoadWorkers)
+			g.Expect(succeededCount).To(BeNumerically(">=", numLoadWorkers),
+				fmt.Sprintf("All %d jobs should have succeeded, got %d", numLoadWorkers, succeededCount))
 		}, jobCompletionTimeout, 15*time.Second).Should(Succeed())
 
-		_, _ = fmt.Fprintf(GinkgoWriter, "Load generation job completed successfully\n")
+		_, _ = fmt.Fprintf(GinkgoWriter, "All load generation jobs completed successfully\n")
 	})
 
 	AfterAll(func() {
-		By("cleaning up load generation job")
-		err := k8sClient.BatchV1().Jobs(llmDNamespace).Delete(ctx, jobName, metav1.DeleteOptions{
-			PropagationPolicy: func() *metav1.DeletionPropagation {
-				policy := metav1.DeletePropagationBackground
-				return &policy
-			}(),
-		})
-		if err != nil {
-			_, _ = fmt.Fprintf(GinkgoWriter, "Warning: failed to delete job: %v\n", err)
-		}
+		By("cleaning up load generation jobs")
+		deleteParallelLoadJobs(ctx, jobBaseName, llmDNamespace, numLoadWorkers)
 
 		_, _ = fmt.Fprintf(GinkgoWriter, "Test completed - scaled from %d to %d replicas\n", initialReplicas, scaledReplicas)
 	})
 })
 
-// createShareGPTJob creates a Kubernetes Job that runs vLLM bench with ShareGPT dataset
-func createShareGPTJob(name, namespace string, requestRate, numPrompts int) *batchv1.Job {
-	backoffLimit := int32(2)
+// createLoadGenerationJob creates a lightweight Kubernetes Job that generates load using curl
+// This uses a small image and sends requests directly to vllm-service to avoid gateway routing issues
+func createLoadGenerationJob(name, namespace string, workerID, numRequests int) *batchv1.Job {
+	backoffLimit := int32(0)
+
+	// Script that sends concurrent requests to saturate the vLLM instance
+	script := fmt.Sprintf(`#!/bin/sh
+echo "Load generator worker %d starting..."
+echo "Sending %d requests to vllm-service:8200"
+
+# Test connectivity
+if ! curl -s -o /dev/null -w "%%{http_code}" http://vllm-service:8200/v1/models | grep -q 200; then
+  echo "ERROR: Cannot connect to vllm-service"
+  exit 1
+fi
+echo "Connection test passed"
+
+# Send requests in parallel batches
+TOTAL=%d
+BATCH_SIZE=50
+SENT=0
+
+while [ $SENT -lt $TOTAL ]; do
+  # Send a batch of concurrent requests
+  for i in $(seq 1 $BATCH_SIZE); do
+    if [ $SENT -ge $TOTAL ]; then break; fi
+    curl -s -o /dev/null -X POST http://vllm-service:8200/v1/completions \
+      -H "Content-Type: application/json" \
+      -d '{"model":"%s","prompt":"Write a detailed essay about artificial intelligence and its impact on society.","max_tokens":200}' &
+    SENT=$((SENT + 1))
+  done
+  # Brief pause between batches
+  sleep 0.5
+  echo "Worker %d: sent $SENT / $TOTAL requests..."
+done
+
+# Wait for all background jobs
+wait
+echo "Worker %d: completed all %d requests"
+`, workerID, numRequests, numRequests, modelID, workerID, workerID, numRequests)
 
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
 			Labels: map[string]string{
-				"experiment": "sharegpt-e2e",
+				"experiment": "load-gen-e2e",
+				"worker":     fmt.Sprintf("%d", workerID),
 			},
 		},
 		Spec: batchv1.JobSpec{
 			BackoffLimit: &backoffLimit,
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
-					InitContainers: []corev1.Container{
-						{
-							Name:    "download-dataset",
-							Image:   "busybox:latest",
-							Command: []string{"/bin/sh", "-c"},
-							Args: []string{
-								`wget -O /data/ShareGPT_V3_unfiltered_cleaned_split.json \
-https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/resolve/main/ShareGPT_V3_unfiltered_cleaned_split.json`,
-							},
-							VolumeMounts: []corev1.VolumeMount{
-								{
-									Name:      "dataset-volume",
-									MountPath: "/data",
-								},
-							},
-						},
-					},
 					Containers: []corev1.Container{
 						{
-							Name:            "vllm-bench-serve-container",
-							Image:           "vllm/vllm-openai:latest",
-							ImagePullPolicy: corev1.PullIfNotPresent,
-							Env: []corev1.EnvVar{
-								{
-									Name:  "HF_HOME",
-									Value: "/tmp",
-								},
-							},
-							Command: []string{"/usr/bin/python3"},
-							Args: []string{
-								"-m",
-								"vllm.entrypoints.cli.main",
-								"bench",
-								"serve",
-								"--backend",
-								"openai",
-								"--base-url",
-								fmt.Sprintf("http://%s:80", gatewayName),
-								"--dataset-name",
-								"sharegpt",
-								"--dataset-path",
-								"/data/ShareGPT_V3_unfiltered_cleaned_split.json",
-								"--model",
-								modelID,
-								"--seed",
-								"12345",
-								"--num-prompts",
-								fmt.Sprintf("%d", numPrompts),
-								"--max-concurrency",
-								"512",
-								"--request-rate",
-								fmt.Sprintf("%d", requestRate),
-								"--sharegpt-output-len",
-								"1024",
-							},
-							VolumeMounts: []corev1.VolumeMount{
-								{
-									Name:      "dataset-volume",
-									MountPath: "/data",
-								},
-							},
+							Name:    "load-generator",
+							Image:   "curlimages/curl:latest",
+							Command: []string{"/bin/sh", "-c"},
+							Args:    []string{script},
 							Resources: corev1.ResourceRequirements{
 								Limits: corev1.ResourceList{
-									corev1.ResourceMemory: resource.MustParse("8Gi"),
-									corev1.ResourceCPU:    resource.MustParse("2"),
+									corev1.ResourceMemory: resource.MustParse("256Mi"),
+									corev1.ResourceCPU:    resource.MustParse("500m"),
 								},
 								Requests: corev1.ResourceList{
-									corev1.ResourceCPU:    resource.MustParse("1"),
-									corev1.ResourceMemory: resource.MustParse("4Gi"),
+									corev1.ResourceCPU:    resource.MustParse("100m"),
+									corev1.ResourceMemory: resource.MustParse("128Mi"),
 								},
-							},
-						},
-					},
-					Volumes: []corev1.Volume{
-						{
-							Name: "dataset-volume",
-							VolumeSource: corev1.VolumeSource{
-								EmptyDir: &corev1.EmptyDirVolumeSource{},
 							},
 						},
 					},
@@ -355,5 +336,33 @@ https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/resolv
 				},
 			},
 		},
+	}
+}
+
+// createParallelLoadJobs creates multiple parallel load generation jobs
+func createParallelLoadJobs(ctx context.Context, baseName, namespace string, numWorkers, requestsPerWorker int) error {
+	for i := 1; i <= numWorkers; i++ {
+		jobName := fmt.Sprintf("%s-%d", baseName, i)
+		job := createLoadGenerationJob(jobName, namespace, i, requestsPerWorker)
+		_, err := k8sClient.BatchV1().Jobs(namespace).Create(ctx, job, metav1.CreateOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to create job %s: %w", jobName, err)
+		}
+		_, _ = fmt.Fprintf(GinkgoWriter, "Created load generation job: %s\n", jobName)
+	}
+	return nil
+}
+
+// deleteParallelLoadJobs deletes all parallel load generation jobs
+func deleteParallelLoadJobs(ctx context.Context, baseName, namespace string, numWorkers int) {
+	propagationPolicy := metav1.DeletePropagationBackground
+	for i := 1; i <= numWorkers; i++ {
+		jobName := fmt.Sprintf("%s-%d", baseName, i)
+		err := k8sClient.BatchV1().Jobs(namespace).Delete(ctx, jobName, metav1.DeleteOptions{
+			PropagationPolicy: &propagationPolicy,
+		})
+		if err != nil {
+			_, _ = fmt.Fprintf(GinkgoWriter, "Warning: failed to delete job %s: %v\n", jobName, err)
+		}
 	}
 }

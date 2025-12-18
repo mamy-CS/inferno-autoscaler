@@ -102,6 +102,15 @@ jobs:
           echo "Waiting for patched deployment to roll out..."
           kubectl rollout status deployment/"$DEPLOYMENT_NAME" -n llm-d-inference-scheduler --timeout=300s
 
+      - name: Patch HPA for faster e2e testing
+        run: |
+          echo "Reducing HPA stabilization window to 2 minutes for faster e2e testing..."
+          kubectl patch hpa vllm-deployment-hpa -n llm-d-inference-scheduler --type=json -p='[
+            {"op": "replace", "path": "/spec/behavior/scaleUp/stabilizationWindowSeconds", "value": 120},
+            {"op": "replace", "path": "/spec/behavior/scaleDown/stabilizationWindowSeconds", "value": 120}
+          ]'
+          kubectl get hpa -n llm-d-inference-scheduler
+
       - name: Install Go dependencies
         run: go mod download
 
