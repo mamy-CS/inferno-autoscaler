@@ -320,7 +320,7 @@ wait || true
 
 echo "Worker %d: completed all %d requests"
 exit 0
-`, workerID, numRequests, numRequests, batchSize, curlTimeoutSeconds, maxTokens, batchSleepSeconds, modelID, workerID, workerID, numRequests)
+`, workerID, numRequests, numRequests, batchSize, curlTimeoutSeconds, maxTokens, batchSleepDuration, modelID, workerID, workerID, numRequests)
 
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
