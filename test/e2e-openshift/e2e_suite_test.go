@@ -185,15 +185,6 @@ var _ = BeforeSuite(func() {
 	}, 2*time.Minute, 1*time.Second).Should(Succeed())
 
 	_, _ = fmt.Fprintf(GinkgoWriter, "Infrastructure verification complete\n")
-
-	cm, err := k8sClient.CoreV1().ConfigMaps(controllerNamespace).Get(context.Background(), "workload-variant-autoscaler-variantautoscaling-config", metav1.GetOptions{})
-	if err != nil {
-		Fail("Failed to get ConfigMap: " + err.Error())
-	}
-
-	if cm.Data["WVA_EXPERIMENTAL_PROACTIVE_MODEL"] == "false" {
-		Skip("Skipping E2E tests because WVA_EXPERIMENTAL_PROACTIVE_MODEL flag is not set in ConfigMap")
-	}
 })
 
 var _ = AfterSuite(func() {
