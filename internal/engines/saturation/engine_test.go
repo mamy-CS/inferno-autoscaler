@@ -17,7 +17,6 @@ limitations under the License.
 package saturation
 
 import (
-	"context"
 	"fmt"
 	"strings"
 
@@ -29,7 +28,6 @@ import (
 	autoscalingv1 "k8s.io/api/autoscaling/v1"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
@@ -521,60 +519,4 @@ data:
 		})
 	})
 
-	Context("saturation Config Cache", func() {
-		var (
-			ctx                context.Context
-			engine             *Engine
-			configMapNamespace = getNamespace()
-		)
-
-		BeforeEach(func() {
-			ctx = context.Background()
-			engine = NewEngine(k8sClient, k8sClient.Scheme(), record.NewFakeRecorder(100), nil)
-		})
-
-		It("should initialize cache with defaults when ConfigMap is missing", func() {
-			By("Initializing cache")
-			err := engine.InitializeSaturationConfigCache(ctx)
-
-			By("Verifying cache initialization succeeded (uses defaults)")
-			Expect(err).NotTo(HaveOccurred())
-			Expect(engine.saturationConfigLoaded).To(BeTrue()) // Accessed internal field since in same package
-
-			By("Verifying default config is in cache")
-			configs := engine.getsaturationConfigFromCache()
-			Expect(configs).To(HaveKey("default"))
-			Expect(configs["default"].KvCacheThreshold).To(Equal(0.80))
-		})
-
-		It("should load config from ConfigMap when it exists", func() {
-			configMap := &v1.ConfigMap{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "saturation-scaling-config",
-					Namespace: configMapNamespace,
-				},
-				Data: map[string]string{
-					"default": `kvCacheThreshold: 0.75
-queueLengthThreshold: 10
-kvSpareTrigger: 0.15
-queueSpareTrigger: 5`,
-				},
-			}
-
-			By("Creating ConfigMap")
-			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
-
-			By("Initializing cache")
-			err := engine.InitializeSaturationConfigCache(ctx)
-			Expect(err).NotTo(HaveOccurred())
-
-			By("Verifying custom config is loaded")
-			configs := engine.getsaturationConfigFromCache()
-			Expect(configs).To(HaveKey("default"))
-			Expect(configs["default"].KvCacheThreshold).To(Equal(0.75))
-
-			By("Cleaning up ConfigMap")
-			Expect(k8sClient.Delete(ctx, configMap)).To(Succeed())
-		})
-	})
 })

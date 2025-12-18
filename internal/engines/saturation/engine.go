@@ -22,7 +22,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -72,9 +71,6 @@ type Engine struct {
 	MetricsCollector interfaces.MetricsCollector
 
 	// Saturation scaling config cache (thread-safe, updated on ConfigMap changes)
-	saturationConfigCache      map[string]interfaces.SaturationScalingConfig
-	saturationConfigCacheMutex sync.RWMutex
-	saturationConfigLoaded     bool // Track if initial load succeeded
 }
 
 // NewEngine creates a new instance of the saturation engine.
@@ -126,11 +122,7 @@ func (e *Engine) optimize(ctx context.Context) error {
 	}
 
 	//TODO simplify Saturation loading configmap
-	if err := e.InitializeSaturationConfigCache(context.Background()); err != nil {
-		logger.Log.Warn("Failed to load initial saturation scaling config, will use defaults", err)
-	} else {
-		logger.Log.Info("saturation scaling configuration loaded successfully")
-	}
+	//TODO simplify Saturation loading configmap
 
 	if strings.EqualFold(os.Getenv("WVA_SCALE_TO_ZERO"), "true") {
 		logger.Log.Info("Scaling to zero is enabled!")
@@ -147,10 +139,12 @@ func (e *Engine) optimize(ctx context.Context) error {
 		return nil
 	}
 
-	// Get saturation scaling configuration (atomic check-and-get prevents race condition)
-	saturationConfigMap, configLoaded := e.getSaturationConfigSafe()
-	if !configLoaded {
-		logger.Log.Warnf("Saturation scaling config not loaded yet, using defaults")
+	saturationConfigMap, err := e.readSaturationScalingConfig(ctx, saturationConfigMapName, configMapNamespace)
+	if err != nil {
+		logger.Log.Warnf("Failed to read saturation scaling config, using defaults: %v", err)
+		saturationConfigMap = map[string]interfaces.SaturationScalingConfig{
+			"default": interfaces.DefaultSaturationScalingConfig(),
+		}
 	}
 
 	// Group VAs by model for per-model capacity analysis
@@ -181,12 +175,11 @@ func (e *Engine) optimize(ctx context.Context) error {
 		}
 
 		// Get saturation config for this model (with fallback to default)
-		saturationConfig := interfaces.DefaultSaturationScalingConfig()
+		var saturationConfig interfaces.SaturationScalingConfig
+		//TODO: if modelVAs is less than zero we continue saturation analysis and fail??
 		if len(modelVAs) > 0 {
-			modelConfig := e.getSaturationScalingConfigForVariant(saturationConfigMap, modelID, modelVAs[0].Namespace)
-			saturationConfig.Merge(modelConfig)
+			saturationConfig = e.getSaturationScalingConfigForVariant(saturationConfigMap, modelID, modelVAs[0].Namespace)
 		}
-
 		saturationTargets, saturationAnalysis, variantStates, err := e.RunSaturationAnalysis(ctx, modelID, modelVAs, saturationConfig, e.client, e.MetricsCollector)
 		if err != nil {
 			logger.Log.Errorf("saturation analysis failed for modelID=%s: %v", modelID, err)
@@ -758,55 +751,6 @@ func (e *Engine) emitSafetyNetMetrics(
 			accelerator,
 			fallbackSource)
 	}
-}
-
-// getsaturationConfigFromCache retrieves cached config (thread-safe read).
-func (e *Engine) getsaturationConfigFromCache() map[string]interfaces.SaturationScalingConfig {
-	e.saturationConfigCacheMutex.RLock()
-	defer e.saturationConfigCacheMutex.RUnlock()
-
-	configCopy := make(map[string]interfaces.SaturationScalingConfig, len(e.saturationConfigCache))
-	for k, v := range e.saturationConfigCache {
-		configCopy[k] = v
-	}
-	return configCopy
-}
-
-// getSaturationConfigSafe atomically retrieves cached config and loaded status (thread-safe).
-func (e *Engine) getSaturationConfigSafe() (map[string]interfaces.SaturationScalingConfig, bool) {
-	e.saturationConfigCacheMutex.RLock()
-	defer e.saturationConfigCacheMutex.RUnlock()
-
-	configCopy := make(map[string]interfaces.SaturationScalingConfig, len(e.saturationConfigCache))
-	for k, v := range e.saturationConfigCache {
-		configCopy[k] = v
-	}
-	return configCopy, e.saturationConfigLoaded
-}
-
-// updateSaturationConfigCache updates the cache (thread-safe write).
-func (e *Engine) updateSaturationConfigCache(ctx context.Context) error {
-	configs, err := e.readSaturationScalingConfig(ctx, saturationConfigMapName, configMapNamespace)
-	if err != nil {
-		return err
-	}
-
-	e.saturationConfigCacheMutex.Lock()
-	defer e.saturationConfigCacheMutex.Unlock()
-
-	e.saturationConfigCache = configs
-	e.saturationConfigLoaded = true
-
-	logger.Log.Infof("saturation scaling config cache updated: entries=%d, has_default=%t",
-		len(configs),
-		configs["default"] != (interfaces.SaturationScalingConfig{}))
-
-	return nil
-}
-
-// InitializeSaturationConfigCache performs initial load of saturation scaling config cache.
-func (e *Engine) InitializeSaturationConfigCache(ctx context.Context) error {
-	return e.updateSaturationConfigCache(ctx)
 }
 
 // readSaturationScalingConfig reads saturation scaling configuration from ConfigMap.
