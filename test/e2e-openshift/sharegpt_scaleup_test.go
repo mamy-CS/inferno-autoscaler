@@ -43,7 +43,7 @@ const (
 	batchSize           = 50   // Concurrent requests per batch
 	curlTimeoutSeconds  = 120  // Timeout for each curl request
 	maxTokens           = 150  // Max tokens for completion requests
-	batchSleepSeconds   = "0.1" // Sleep between batches to control rate
+	batchSleepDuration  = "0.1" // Sleep duration between batches to control rate
 )
 
 var _ = Describe("ShareGPT Scale-Up Test", Ordered, func() {
