@@ -175,12 +175,11 @@ func (e *Engine) optimize(ctx context.Context) error {
 		}
 
 		// Get saturation config for this model (with fallback to default)
-		saturationConfig := interfaces.DefaultSaturationScalingConfig()
+		var saturationConfig interfaces.SaturationScalingConfig
+		//TODO: if modelVAs is less than zero we continue saturation analysis and fail??
 		if len(modelVAs) > 0 {
-			modelConfig := e.getSaturationScalingConfigForVariant(saturationConfigMap, modelID, modelVAs[0].Namespace)
-			saturationConfig.Merge(modelConfig)
+			saturationConfig = e.getSaturationScalingConfigForVariant(saturationConfigMap, modelID, modelVAs[0].Namespace)
 		}
-
 		saturationTargets, saturationAnalysis, variantStates, err := e.RunSaturationAnalysis(ctx, modelID, modelVAs, saturationConfig, e.client, e.MetricsCollector)
 		if err != nil {
 			logger.Log.Errorf("saturation analysis failed for modelID=%s: %v", modelID, err)
