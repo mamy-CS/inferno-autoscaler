@@ -20,10 +20,11 @@ import (
 	"context"
 
 	appsv1 "k8s.io/api/apps/v1"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	wvav1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
-	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logger"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
 )
 
 // VariantFilter is a function that determines if a VA should be included.
@@ -98,13 +99,13 @@ func filterVariantsByDeployment(ctx context.Context, client client.Client, filte
 		// TODO: Generalize to other scale target kinds in future
 		var deploy appsv1.Deployment
 		if err := GetDeploymentWithBackoff(ctx, client, va.Name, va.Namespace, &deploy); err != nil {
-			logger.Log.Errorw("Failed to get deployment", "namespace", va.Namespace, "name", va.Name, "error", err)
+			ctrl.LoggerFrom(ctx).Error(err, "Failed to get deployment", "namespace", va.Namespace, "name", va.Name)
 			continue
 		}
 
 		// Skip deleted deployments
 		if !deploy.DeletionTimestamp.IsZero() {
-			logger.Log.Debugw("Skipping deleted deployment", "namespace", va.Namespace, "name", va.Name)
+			ctrl.LoggerFrom(ctx).V(logging.DEBUG).Info("Skipping deleted deployment", "namespace", va.Namespace, "name", va.Name)
 			continue
 		}
 
@@ -113,7 +114,7 @@ func filterVariantsByDeployment(ctx context.Context, client client.Client, filte
 			filteredVAs = append(filteredVAs, va)
 		}
 	}
-	logger.Log.Debugw("Found filtered VariantAutoscaling resources",
+	ctrl.LoggerFrom(ctx).V(logging.DEBUG).Info("Found filtered VariantAutoscaling resources",
 		"filterType", filterName,
 		"count", len(filteredVAs))
 
@@ -126,7 +127,7 @@ func readyVariantAutoscalings(ctx context.Context, client client.Client) ([]wvav
 	// List all VariantAutoscaling resources
 	var variantAutoscalingList wvav1alpha1.VariantAutoscalingList
 	if err := client.List(ctx, &variantAutoscalingList); err != nil {
-		logger.Log.Errorw("unable to list variantAutoscaling resources", "error", err)
+		ctrl.LoggerFrom(ctx).Error(err, "unable to list variantAutoscaling resources")
 		return nil, err
 	}
 
@@ -145,7 +146,7 @@ func readyVariantAutoscalings(ctx context.Context, client client.Client) ([]wvav
 		// }
 	}
 
-	logger.Log.Debugw("Found VariantAutoscaling resources ready for optimization", "count", len(readyVAs))
+	ctrl.LoggerFrom(ctx).V(logging.DEBUG).Info("Found VariantAutoscaling resources ready for optimization", "count", len(readyVAs))
 	return readyVAs, nil
 }
 

@@ -4,16 +4,13 @@ import (
 	"testing"
 
 	interfaces "github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
-	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logger"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
 	"github.com/stretchr/testify/assert"
 )
 
 func init() {
 	// Initialize logger for tests
-	_, err := logger.InitLogger()
-	if err != nil {
-		panic("failed to initialize logger: " + err.Error())
-	}
+	logging.NewTestLogger()
 }
 
 func TestCreateTLSConfig(t *testing.T) {

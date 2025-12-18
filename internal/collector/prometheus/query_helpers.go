@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logger"
+	ctrl "sigs.k8s.io/controller-runtime"
+
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/utils"
 	"github.com/prometheus/common/model"
 )
@@ -17,13 +19,14 @@ func (pc *PrometheusCollector) queryAndExtractMetric(ctx context.Context, query 
 		return 0.0, fmt.Errorf("failed to query Prometheus for %s: %w", metricName, err)
 	}
 
+	logger := ctrl.LoggerFrom(ctx)
 	if warn != nil {
-		logger.Log.Warnw("Prometheus warnings", "metric", metricName, "warnings", warn)
+		logger.Info("Prometheus warnings", "metric", metricName, "warnings", warn)
 	}
 
 	// Check if the result type is a Vector
 	if val.Type() != model.ValVector {
-		logger.Log.Debugw("Prometheus query returned non-vector type", "metric", metricName, "type", val.Type().String())
+		logger.V(logging.DEBUG).Info("Prometheus query returned non-vector type", "metric", metricName, "type", val.Type().String())
 		return 0.0, nil
 	}
 

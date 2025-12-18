@@ -9,12 +9,13 @@ import (
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/cache"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/config"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/utils"
+	ctrl "sigs.k8s.io/controller-runtime"
 
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/constants"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/executor"
-	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logger"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	"github.com/prometheus/common/model"
 	appsv1 "k8s.io/api/apps/v1"
@@ -48,6 +49,7 @@ func NewPrometheusCollector(promAPI promv1.API) *PrometheusCollector {
 // NewPrometheusCollectorWithConfig creates a new Prometheus metrics collector
 // If cacheConfig is nil, uses default cache settings
 func NewPrometheusCollectorWithConfig(promAPI promv1.API, cacheConfig *config.CacheConfig) *PrometheusCollector {
+
 	// Use provided config or defaults
 	cfg := getDefaultCacheConfig()
 	if cacheConfig != nil {
@@ -58,11 +60,11 @@ func NewPrometheusCollectorWithConfig(promAPI promv1.API, cacheConfig *config.Ca
 
 	if cfg.Enabled {
 		metricsCache = cache.NewMemoryCache(cfg.TTL, cfg.CleanupInterval)
-		logger.Log.Infow("Metrics cache enabled", "TTL", cfg.TTL, "cleanupInterval", cfg.CleanupInterval)
+		ctrl.Log.Info("Metrics cache enabled", "TTL", cfg.TTL, "cleanupInterval", cfg.CleanupInterval)
 	} else {
 		// Use a no-op cache implementation when disabled
 		metricsCache = &cache.NoOpCache{}
-		logger.Log.Infow("Metrics cache disabled")
+		ctrl.Log.Info("Metrics cache disabled")
 	}
 
 	pc := &PrometheusCollector{
@@ -87,7 +89,7 @@ func NewPrometheusCollectorWithConfig(promAPI promv1.API, cacheConfig *config.Ca
 			Interval:     cfg.FetchInterval,
 			RetryBackoff: 500 * time.Millisecond, // Initial backoff for retries (doubles, capped at 4s)
 		})
-		logger.Log.Infow("Initialized background fetching executor", "interval", cfg.FetchInterval)
+		ctrl.Log.Info("Initialized background fetching executor", "interval", cfg.FetchInterval)
 	}
 
 	return pc
@@ -213,14 +215,16 @@ func (pc *PrometheusCollector) ValidateMetricsAvailability(
 	modelName string,
 	namespace string,
 ) interfaces.MetricsValidationResult {
+	logger := ctrl.LoggerFrom(ctx)
+
 	// Query for basic vLLM metric to validate scraping is working
 	// Try with namespace label first (real vLLM), fall back to just model_name (vllme emulator)
 	testQuery := fmt.Sprintf(`%s{model_name="%s",namespace="%s"}`, constants.VLLMNumRequestRunning, modelName, namespace)
 
 	val, _, err := utils.QueryPrometheusWithBackoff(ctx, pc.promAPI, testQuery)
 	if err != nil {
-		logger.Log.Errorw("Error querying Prometheus for metrics validation",
-			"model", modelName, "namespace", namespace, "error", err)
+		logger.Error(err, "Error querying Prometheus for metrics validation",
+			"model", modelName, "namespace", namespace)
 		return interfaces.MetricsValidationResult{
 			Available: false,
 			Reason:    llmdVariantAutoscalingV1alpha1.ReasonPrometheusError,
@@ -307,6 +311,7 @@ func (pc *PrometheusCollector) AddMetricsToOptStatus(
 	deployment appsv1.Deployment,
 	acceleratorCostVal float64,
 ) (interfaces.OptimizerMetrics, error) {
+	logger := ctrl.LoggerFrom(ctx)
 	deployNamespace := deployment.Namespace
 	modelName := va.Spec.ModelID
 	variantName := va.Name
@@ -317,7 +322,7 @@ func (pc *PrometheusCollector) AddMetricsToOptStatus(
 	if cached, found := pc.cache.Get(cacheKey); found {
 		age := cached.Age()
 		freshnessStatus := pc.freshnessThresholds.DetermineStatus(age)
-		logger.Log.Debugw("Cache hit for allocation metrics",
+		logger.V(logging.DEBUG).Info("Cache hit for allocation metrics",
 			"model", modelName,
 			"variant", variantName,
 			"age", age.String(),
@@ -331,10 +336,10 @@ func (pc *PrometheusCollector) AddMetricsToOptStatus(
 			return metrics, nil
 		}
 		// If type assertion fails, continue to query
-		logger.Log.Warnw("Cache entry has wrong type, querying Prometheus", "model", modelName, "variant", variantName)
+		logger.Info("Cache entry has wrong type, querying Prometheus", "model", modelName, "variant", variantName)
 	}
 
-	logger.Log.Debugw("Cache miss for allocation metrics, querying Prometheus", "model", modelName, "variant", variantName)
+	logger.Info("Cache miss for allocation metrics, querying Prometheus", "model", modelName, "variant", variantName)
 
 	// Use core fetching logic (extracted for reuse by background worker)
 	metrics, err := pc.fetchOptimizerMetricsCore(ctx, va, deployment)
@@ -345,7 +350,7 @@ func (pc *PrometheusCollector) AddMetricsToOptStatus(
 	// Store in cache (use default TTL from cache config)
 	pc.cache.Set(cacheKey, metrics, 0) // 0 means use cache's default TTL
 	collectedAt := time.Now()
-	logger.Log.Debugw("Collected and cached allocation metrics",
+	logger.V(logging.DEBUG).Info("Collected and cached allocation metrics",
 		"model", modelName,
 		"variant", variantName,
 		"freshnessStatus", "fresh",
@@ -367,6 +372,7 @@ func (pc *PrometheusCollector) CollectReplicaMetrics(
 	variantAutoscalings map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling,
 	variantCosts map[string]float64,
 ) ([]interfaces.ReplicaMetrics, error) {
+	logger := ctrl.LoggerFrom(ctx)
 	// Check cache first (cache key is model-level, not variant-level)
 	// Construct cache key using PrometheusCollector's format: {modelID}/{namespace}/{variantName}/{metricType}
 	replicaCacheKey := cache.CacheKey(fmt.Sprintf("%s/%s/all/replica-metrics", modelID, namespace))
@@ -375,7 +381,7 @@ func (pc *PrometheusCollector) CollectReplicaMetrics(
 		freshnessStatus := pc.freshnessThresholds.DetermineStatus(age)
 		// Type assert to []ReplicaMetrics
 		if replicaMetrics, ok := cached.Data.([]interfaces.ReplicaMetrics); ok {
-			logger.Log.Debugw("Cache hit for replica metrics",
+			logger.V(logging.DEBUG).Info("Cache hit for replica metrics",
 				"model", modelID,
 				"namespace", namespace,
 				"age", age.String(),
@@ -394,10 +400,10 @@ func (pc *PrometheusCollector) CollectReplicaMetrics(
 			return replicaMetrics, nil
 		}
 		// If type assertion fails, continue to query
-		logger.Log.Warnw("Cache entry has wrong type, querying Prometheus", "model", modelID, "namespace", namespace)
+		logger.Info("Cache entry has wrong type, querying Prometheus", "model", modelID, "namespace", namespace)
 	}
 
-	logger.Log.Debugw("Cache miss for replica metrics, querying Prometheus", "model", modelID, "namespace", namespace)
+	logger.V(logging.DEBUG).Info("Cache miss for replica metrics, querying Prometheus", "model", modelID, "namespace", namespace)
 
 	// Use the existing SaturationMetricsCollector implementation
 	// We'll refactor this to be part of PrometheusCollector later, but for now
@@ -431,7 +437,7 @@ func (pc *PrometheusCollector) CollectReplicaMetrics(
 	}
 	// Reuse the same cache key constructed above for storing
 	pc.cache.Set(replicaCacheKey, cacheMetrics, 0) // 0 means use cache's default TTL
-	logger.Log.Debugw("Collected and cached replica metrics",
+	logger.V(logging.DEBUG).Info("Collected and cached replica metrics",
 		"model", modelID,
 		"namespace", namespace,
 		"replicaCount", len(replicaMetrics),

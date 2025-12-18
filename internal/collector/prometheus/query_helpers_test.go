@@ -9,10 +9,10 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/prometheus/common/model"
-	"go.uber.org/zap"
+	ctrl "sigs.k8s.io/controller-runtime"
 
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/config"
-	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logger"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/test/utils"
 )
 
@@ -24,8 +24,7 @@ var _ = Describe("Query Helpers", func() {
 	)
 
 	BeforeEach(func() {
-		logger.Log = zap.NewNop().Sugar()
-		ctx = context.Background()
+		ctx = ctrl.LoggerInto(context.Background(), logging.NewTestLogger())
 
 		mockPromAPI = &utils.MockPromAPI{
 			QueryResults: make(map[string]model.Value),

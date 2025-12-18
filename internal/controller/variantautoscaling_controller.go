@@ -22,27 +22,26 @@ import (
 	"os"
 	"strconv"
 
+	promoperator "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
+	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/tools/record"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
-	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/saturation"
-
 	interfaces "github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
-	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logger"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/saturation"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/utils"
-	promoperator "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
-	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
-	appsv1 "k8s.io/api/apps/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	ctrl "sigs.k8s.io/controller-runtime"
 )
 
 // VariantAutoscalingReconciler reconciles a variantAutoscaling object
@@ -106,24 +105,34 @@ func (r *VariantAutoscalingReconciler) Reconcile(ctx context.Context, req ctrl.R
 	// - reconcile loop will process one VA at a time. During the refactoring it does both, one and all
 
 	// BEGIN: Per VA logic
+	logger := ctrl.LoggerFrom(ctx)
 
 	// Get the specific VA object that triggered this reconciliation
 	var va llmdVariantAutoscalingV1alpha1.VariantAutoscaling
 	if err := r.Get(ctx, req.NamespacedName, &va); err != nil { // Get returns, by default, a deep copy of the object
 		if apierrors.IsNotFound(err) {
-			logger.Log.Infof("VariantAutoscaling resource not found, may have been deleted: name=%s, namespace=%s", req.Name, req.Namespace)
+			logger.Info("VariantAutoscaling resource not found, may have been deleted",
+				"name", req.Name,
+				"namespace", req.Namespace)
 			return ctrl.Result{}, nil
 		}
-		logger.Log.Errorf("Unable to fetch VariantAutoscaling: name=%s, namespace=%s, error=%v", req.Name, req.Namespace, err)
+		logger.Error(err, "Unable to fetch VariantAutoscaling",
+			"name", req.Name,
+			"namespace", req.Namespace)
 		return ctrl.Result{}, err
 	}
 
 	// Skip if the VA is being deleted
 	if !va.DeletionTimestamp.IsZero() {
-		logger.Log.Infof("VariantAutoscaling is being deleted, skipping reconciliation: name=%s, namespace=%s", va.Name, va.Namespace)
+		logger.Info("VariantAutoscaling is being deleted, skipping reconciliation",
+			"name", va.Name,
+			"namespace", va.Namespace)
 		return ctrl.Result{}, nil
 	}
-	logger.Log.Infof("Reconciling VariantAutoscaling: name=%s, namespace=%s, modelID=%s", va.Name, va.Namespace, va.Spec.ModelID)
+	logger.Info("Reconciling VariantAutoscaling",
+		"name", va.Name,
+		"namespace", va.Namespace,
+		"modelID", va.Spec.ModelID)
 
 	// Attempts to resolve the target model variant
 	// TODO: replace by proper lookup mechanism using spec.scaleTargetRef in future
@@ -132,7 +141,9 @@ func (r *VariantAutoscalingReconciler) Reconcile(ctx context.Context, req ctrl.R
 	// TODO: generalize to other scale target kind in future
 	var deploy appsv1.Deployment
 	if err := utils.GetDeploymentWithBackoff(ctx, r.Client, scaleTargetName, va.Namespace, &deploy); err != nil {
-		logger.Log.Errorf("Failed to get scale target Deployment: name=%s, namespace=%s, error=%v", scaleTargetName, va.Namespace, err)
+		logger.Error(err, "Failed to get scale target Deployment",
+			"name", scaleTargetName,
+			"namespace", va.Namespace)
 		llmdVariantAutoscalingV1alpha1.SetCondition(&va,
 			llmdVariantAutoscalingV1alpha1.TypeTargetResolved,
 			metav1.ConditionFalse,
@@ -144,7 +155,9 @@ func (r *VariantAutoscalingReconciler) Reconcile(ctx context.Context, req ctrl.R
 		// TODO: refactor to use retry utility function.
 		// UpdateStatusWithBackoff does not work as it goes not refresh the object before update
 		if err := r.Status().Update(ctx, &va); err != nil {
-			logger.Log.Errorf("Failed to update VariantAutoscaling status: name=%s, namespace=%s, error=%v", va.Name, va.Namespace, err)
+			logger.Error(err, "Failed to update VariantAutoscaling status",
+				"name", va.Name,
+				"namespace", va.Namespace)
 			return ctrl.Result{}, err
 		}
 
@@ -170,13 +183,17 @@ func BuildVariantStates(
 	vas []llmdVariantAutoscalingV1alpha1.VariantAutoscaling,
 	k8sClient client.Client,
 ) ([]interfaces.VariantReplicaState, error) {
+	logger := ctrl.LoggerFrom(ctx)
 	states := make([]interfaces.VariantReplicaState, 0, len(vas))
 
 	for _, va := range vas {
 		// Get current replicas from deployment using ScaleTargetRef
 		var deploy appsv1.Deployment
 		if err := utils.GetDeploymentWithBackoff(ctx, k8sClient, va.GetScaleTargetName(), va.Namespace, &deploy); err != nil {
-			logger.Log.Warnf("Failed to get deployment for VA, using status: name=%s, deployment=%s, error=%v", va.Name, va.GetScaleTargetName(), err)
+			logger.Info("Failed to get deployment for VA, using status",
+				"name", va.Name,
+				"deployment", va.GetScaleTargetName(),
+				"error", err)
 			// Fallback to status if deployment fetch fails
 			states = append(states, interfaces.VariantReplicaState{
 				VariantName:     va.Name,
@@ -213,7 +230,7 @@ func RunSaturationAnalysis(
 	if len(modelVAs) == 0 {
 		return nil, nil, nil, fmt.Errorf("no VAs provided for model %s", modelID)
 	}
-
+	logger := ctrl.LoggerFrom(ctx)
 	namespace := modelVAs[0].Namespace // All VAs of same model are in same namespace
 
 	// Build variant costs map, deployments map, and VAs map for metrics collection
@@ -235,7 +252,10 @@ func RunSaturationAnalysis(
 		var deploy appsv1.Deployment
 		err := utils.GetDeploymentWithBackoff(ctx, k8sClient, va.GetScaleTargetName(), va.Namespace, &deploy)
 		if err != nil {
-			logger.Log.Debugf("Could not get deployment for VA: variant=%s, deployment=%s, error=%v", va.Name, va.GetScaleTargetName(), err)
+			logger.V(logging.DEBUG).Info("Could not get deployment for VA",
+				"variant", va.Name,
+				"deployment", va.GetScaleTargetName(),
+				"error", err)
 			continue
 		}
 		deployments[va.Name] = &deploy
@@ -248,14 +268,17 @@ func RunSaturationAnalysis(
 		return nil, nil, nil, fmt.Errorf("failed to collect Saturation metrics for model %s: %w", modelID, err)
 	}
 
-	logger.Log.Debugf("Collected Saturation metrics: modelID=%s, namespace=%s, metricsCount=%d",
-		modelID, namespace, len(replicaMetrics))
+	logger.V(logging.DEBUG).Info("Collected Saturation metrics",
+		"modelID", modelID,
+		"namespace", namespace,
+		"metricsCount", len(replicaMetrics))
 
 	// If no metrics available, skip saturation analysis entirely
 	// This prevents creating invalid decisions when pods are not ready or metrics are unavailable
 	if len(replicaMetrics) == 0 {
-		logger.Log.Infof("No saturation metrics available for model, skipping analysis: modelID=%s, namespace=%s",
-			modelID, namespace)
+		logger.V(logging.DEBUG).Info("No saturation metrics available for model, skipping analysis",
+			"modelID", modelID,
+			"namespace", namespace)
 		return nil, nil, nil, nil // Return nil to signal skip due to metrics unavailable, not error
 	}
 
@@ -266,9 +289,12 @@ func RunSaturationAnalysis(
 		return nil, nil, nil, fmt.Errorf("failed to analyze Saturation for model %s: %w", modelID, err)
 	}
 
-	logger.Log.Infof("saturation analysis completed: modelID=%s, totalReplicas=%d, nonSaturated=%d, shouldScaleUp=%v, scaleDownSafe=%v",
-		modelID, saturationAnalysis.TotalReplicas, saturationAnalysis.NonSaturatedCount,
-		saturationAnalysis.ShouldScaleUp, saturationAnalysis.ScaleDownSafe)
+	logger.V(logging.DEBUG).Info("Saturation analysis completed",
+		"modelID", modelID,
+		"totalReplicas", saturationAnalysis.TotalReplicas,
+		"nonSaturated", saturationAnalysis.NonSaturatedCount,
+		"shouldScaleUp", saturationAnalysis.ShouldScaleUp,
+		"scaleDownSafe", saturationAnalysis.ScaleDownSafe)
 
 	// Build variant states (current and desired replicas)
 	variantStates, err := BuildVariantStates(ctx, modelVAs, k8sClient)
@@ -277,10 +303,11 @@ func RunSaturationAnalysis(
 	}
 
 	// Calculate saturation-based targets
-	saturationTargets := saturationAnalyzer.CalculateSaturationTargets(saturationAnalysis, variantStates)
+	saturationTargets := saturationAnalyzer.CalculateSaturationTargets(ctx, saturationAnalysis, variantStates)
 
-	logger.Log.Debugf("Saturation targets calculated: modelID=%s, targets=%v",
-		modelID, saturationTargets)
+	logger.V(logging.DEBUG).Info("Saturation targets calculated",
+		"modelID", modelID,
+		"targets", saturationTargets)
 
 	return saturationTargets, saturationAnalysis, variantStates, nil
 }
@@ -293,6 +320,9 @@ func CollectMetricsForSaturationMode(
 	k8sClient client.Client,
 	metricsCollector interfaces.MetricsCollector,
 ) error {
+
+	logger := ctrl.LoggerFrom(ctx)
+
 	for i := range modelVAs {
 		va := &modelVAs[i]
 		modelName := va.Spec.ModelID
@@ -300,18 +330,23 @@ func CollectMetricsForSaturationMode(
 		// Get accelerator name from VA labels - required field
 		accName := va.Labels["inference.optimization/acceleratorName"]
 		if accName == "" {
-			logger.Log.Warnf("Missing accelerator name label for VA, skipping: variant=%s", va.Name)
+			logger.V(logging.DEBUG).Info("Missing accelerator name label for VA, skipping",
+				"variant", va.Name)
 			continue
 		}
 
 		// Extract accelerator cost from VA.Spec.VariantCost - required field
 		if va.Spec.VariantCost == "" {
-			logger.Log.Warnf("Missing variant cost for VA, skipping: variant=%s", va.Name)
+			logger.V(logging.DEBUG).Info("Missing variant cost for VA, skipping",
+				"variant", va.Name)
 			continue
 		}
 		cost, err := strconv.ParseFloat(va.Spec.VariantCost, 64)
 		if err != nil {
-			logger.Log.Warnf("Invalid variant cost for VA, skipping: variant=%s, cost=%s, error=%v", va.Name, va.Spec.VariantCost, err)
+			logger.V(logging.DEBUG).Info("Invalid variant cost for VA, skipping",
+				"variant", va.Name,
+				"cost", va.Spec.VariantCost,
+				"error", err)
 			continue
 		}
 
@@ -319,7 +354,10 @@ func CollectMetricsForSaturationMode(
 		var deploy appsv1.Deployment
 		err = utils.GetDeploymentWithBackoff(ctx, k8sClient, va.GetScaleTargetName(), va.Namespace, &deploy)
 		if err != nil {
-			logger.Log.Debugf("Could not get deployment for VA, skipping: variant=%s, deployment=%s, error=%v", va.Name, va.GetScaleTargetName(), err)
+			logger.V(logging.DEBUG).Info("Could not get deployment for VA, skipping",
+				"variant", va.Name,
+				"deployment", va.GetScaleTargetName(),
+				"error", err)
 			continue // Skip VAs without deployments
 		}
 
@@ -327,7 +365,9 @@ func CollectMetricsForSaturationMode(
 		var updateVA llmdVariantAutoscalingV1alpha1.VariantAutoscaling
 		err = utils.GetVariantAutoscalingWithBackoff(ctx, k8sClient, va.Name, va.Namespace, &updateVA)
 		if err != nil {
-			logger.Log.Debugf("Unable to get VA: variant=%s, error=%v", va.Name, err)
+			logger.V(logging.DEBUG).Info("Unable to get VA",
+				"variant", va.Name,
+				"error", err)
 			continue
 		}
 
@@ -349,22 +389,28 @@ func CollectMetricsForSaturationMode(
 				metricsValidation.Reason,
 				metricsValidation.Message)
 
-			logger.Log.Warnf("Metrics unavailable for VA, skipping: variant=%s, reason=%s, troubleshooting=%s",
-				updateVA.Name, metricsValidation.Reason, metricsValidation.Message)
+			logger.V(logging.DEBUG).Info("Metrics unavailable for VA, skipping",
+				"variant", updateVA.Name,
+				"reason", metricsValidation.Reason,
+				"troubleshooting", metricsValidation.Message)
 			continue
 		}
 
 		// Collect raw metrics from collector
 		metrics, err := metricsCollector.AddMetricsToOptStatus(ctx, &updateVA, deploy, cost)
 		if err != nil {
-			logger.Log.Debugf("Unable to fetch metrics for VA: variant=%s, error=%v", updateVA.Name, err)
+			logger.V(logging.DEBUG).Info("Unable to fetch metrics for VA",
+				"variant", updateVA.Name,
+				"error", err)
 			continue
 		}
 
 		// Assemble Allocation struct from raw metrics
 		currentAllocation, err := BuildAllocationFromMetrics(metrics, &updateVA, deploy, cost)
 		if err != nil {
-			logger.Log.Debugf("Unable to build allocation for VA: variant=%s, error=%v", updateVA.Name, err)
+			logger.V(logging.DEBUG).Info("Unable to build allocation for VA",
+				"variant", updateVA.Name,
+				"error", err)
 			continue
 		}
 
@@ -374,13 +420,13 @@ func CollectMetricsForSaturationMode(
 		// Update vaMap with the VA that has CurrentAlloc populated
 		vaMap[updateVA.Name] = &updateVA
 
-		logger.Log.Infof("Metrics collected for VA: variant=%s, replicas=%d, accelerator=%s, ttft=%sms, itl=%sms, cost=%s",
-			updateVA.Name,
-			currentAllocation.NumReplicas,
-			currentAllocation.Accelerator,
-			currentAllocation.TTFTAverage,
-			currentAllocation.ITLAverage,
-			currentAllocation.VariantCost)
+		logger.V(logging.DEBUG).Info("Metrics collected for VA",
+			"variant", updateVA.Name,
+			"replicas", currentAllocation.NumReplicas,
+			"accelerator", currentAllocation.Accelerator,
+			"ttft", currentAllocation.TTFTAverage,
+			"itl", currentAllocation.ITLAverage,
+			"cost", currentAllocation.VariantCost)
 	}
 
 	return nil
@@ -431,16 +477,17 @@ func (r *VariantAutoscalingReconciler) handleServiceMonitorEvent(ctx context.Con
 		return nil
 	}
 
+	logger := ctrl.LoggerFrom(ctx)
 	name := serviceMonitor.Name
 	namespace := serviceMonitor.Namespace
 
 	// Check if ServiceMonitor is being deleted
 	if !serviceMonitor.GetDeletionTimestamp().IsZero() {
-		logger.Log.Errorf("ServiceMonitor being deleted - Prometheus will not scrape controller metrics: servicemonitor=%s, namespace=%s, impact=%s, action=%s",
-			name,
-			namespace,
-			"Actuator will not be able to access optimized replicas metrics",
-			"ServiceMonitor must be recreated for metrics scraping to resume")
+		logger.V(logging.VERBOSE).Info("ServiceMonitor being deleted - Prometheus will not scrape controller metrics",
+			"servicemonitor", name,
+			"namespace", namespace,
+			"impact", "Actuator will not be able to access optimized replicas metrics",
+			"action", "ServiceMonitor must be recreated for metrics scraping to resume")
 
 		// Emit Kubernetes event for observability
 		if r.Recorder != nil {

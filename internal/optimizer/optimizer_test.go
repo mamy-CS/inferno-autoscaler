@@ -29,12 +29,12 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
 	collector "github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector"
 	interfaces "github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
-	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logger"
 	analyzer "github.com/llm-d-incubation/workload-variant-autoscaler/internal/modelanalyzer"
 	utils "github.com/llm-d-incubation/workload-variant-autoscaler/internal/utils"
 	infernoConfig "github.com/llm-d-incubation/workload-variant-autoscaler/pkg/config"
@@ -334,7 +334,7 @@ var _ = Describe("Optimizer", Ordered, func() {
 			Expect(err).NotTo(HaveOccurred(), "unable to perform model optimization")
 			Expect(len(optimizedAllocs)).To(Equal(len(updateList.Items)), "Expected optimized allocations for all VariantAutoscalings")
 			for key, value := range optimizedAllocs {
-				logger.Log.Info("Optimized allocation entry - ", "key: ", key, ", value: ", value)
+				ctrl.Log.Info("Optimized allocation entry", "key", key, "value", value)
 				Expect(value.NumReplicas).To(Equal(minNumReplicas), fmt.Sprintf("Expected optimized number of replicas to be %d under no load for VariantAutoscaling - %s", minNumReplicas, key))
 			}
 		})
@@ -460,7 +460,7 @@ var _ = Describe("Optimizer", Ordered, func() {
 			Expect(err).NotTo(HaveOccurred(), "unable to perform model optimization")
 			Expect(len(optimizedAllocs)).To(Equal(len(updateList.Items)), "Expected optimized allocations for all VariantAutoscalings")
 			for key, value := range optimizedAllocs {
-				logger.Log.Info("Optimized allocation entry - ", "key: ", key, ", value: ", value)
+				ctrl.Log.Info("Optimized allocation entry", "key", key, "value", value)
 				Expect(value.NumReplicas).To(BeNumerically(">", 1), "Expected optimized number of replicas to be higher than 1 under high load for VariantAutoscaling - ", key)
 			}
 		})

@@ -5,8 +5,10 @@ import (
 	"sync"
 	"time"
 
+	ctrl "sigs.k8s.io/controller-runtime"
+
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
-	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logger"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
 	appsv1 "k8s.io/api/apps/v1"
 )
 
@@ -77,14 +79,14 @@ func (pc *PrometheusCollector) TrackVA(va *llmdVariantAutoscalingV1alpha1.Varian
 		// LastFetch initialized to zero value (never fetched)
 	}
 	pc.trackedVAs.Store(key, tracked)
-	logger.Log.Debugw("Tracking VA for background fetching", "key", key)
+	ctrl.Log.V(logging.DEBUG).Info("Tracking VA for background fetching", "key", key)
 }
 
 // UntrackVA removes a VA from background fetching
 func (pc *PrometheusCollector) UntrackVA(modelID, namespace, variantName string) {
 	key := fmt.Sprintf("%s/%s/%s", modelID, namespace, variantName)
 	pc.trackedVAs.Delete(key)
-	logger.Log.Debugw("Untracked VA from background fetching", "key", key)
+	ctrl.Log.V(logging.DEBUG).Info("Untracked VA from background fetching", "key", key)
 }
 
 // TrackModel registers a model for background replica metrics fetching
@@ -96,12 +98,12 @@ func (pc *PrometheusCollector) TrackModel(modelID, namespace string) {
 		// LastFetch initialized to zero value (never fetched)
 	}
 	pc.trackedModels.Store(key, tracked)
-	logger.Log.Debugw("Tracking model for background replica metrics fetching", "key", key)
+	ctrl.Log.V(logging.DEBUG).Info("Tracking model for background replica metrics fetching", "key", key)
 }
 
 // UntrackModel removes a model from background replica metrics fetching
 func (pc *PrometheusCollector) UntrackModel(modelID, namespace string) {
 	key := fmt.Sprintf("%s/%s", modelID, namespace)
 	pc.trackedModels.Delete(key)
-	logger.Log.Debugw("Untracked model from background replica metrics fetching", "key", key)
+	ctrl.Log.V(logging.DEBUG).Info("Untracked model from background replica metrics fetching", "key", key)
 }

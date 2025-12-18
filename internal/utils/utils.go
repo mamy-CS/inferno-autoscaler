@@ -15,7 +15,7 @@ import (
 
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
 	interfaces "github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
-	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logger"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
 	infernoConfig "github.com/llm-d-incubation/workload-variant-autoscaler/pkg/config"
 	"go.uber.org/zap/zapcore"
 	"gopkg.in/yaml.v3"
@@ -24,6 +24,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
@@ -73,7 +74,7 @@ func GetResourceWithBackoff[T client.Object](ctx context.Context, c client.Clien
 				return false, err // Don't retry on notFound errors
 			}
 
-			logger.Log.Error(err, "transient error getting resource, retrying - ",
+			ctrl.LoggerFrom(ctx).Error(err, "transient error getting resource, retrying - ",
 				"resourceType: ", resourceType,
 				" name: ", objKey.Name,
 				" namespace: ", objKey.Namespace)
@@ -104,15 +105,15 @@ func UpdateStatusWithBackoff[T client.Object](ctx context.Context, c client.Clie
 		err := c.Status().Update(ctx, obj)
 		if err != nil {
 			if apierrors.IsInvalid(err) || apierrors.IsForbidden(err) {
-				logger.Log.Error(err, "permanent error updating status for resource ", resourceType, ", name: ", obj.GetName())
+				ctrl.LoggerFrom(ctx).V(logging.VERBOSE).Error(err, "permanent error updating status for resource ", resourceType, ", name: ", obj.GetName())
 				return false, err // Don't retry on permanent errors
 			}
 			if apierrors.IsConflict(err) {
 				// Resource version conflict - object was modified since we read it
-				logger.Log.Warn("conflict updating status (resource version mismatch), retrying", "resource", resourceType, "name", obj.GetName())
+				ctrl.LoggerFrom(ctx).V(logging.TRACE).Info("conflict updating status (resource version mismatch), retrying", "resource", resourceType, "name", obj.GetName())
 				return false, nil // Retry on conflict
 			}
-			logger.Log.Error(err, "transient error updating status, retrying for resource ", resourceType, ", name: ", obj.GetName())
+			ctrl.LoggerFrom(ctx).V(logging.TRACE).Error(err, "transient error updating status, retrying for resource ", resourceType, ", name: ", obj.GetName())
 			return false, nil // Retry on transient errors
 		}
 		return true, nil
@@ -141,7 +142,7 @@ func CreateSystemData(
 	for key, val := range acceleratorCm {
 		cost, err := strconv.ParseFloat(val["cost"], 32)
 		if err != nil {
-			logger.Log.Warn("failed to parse accelerator cost in configmap, skipping accelerator", "name", key)
+			ctrl.Log.Info("failed to parse accelerator cost in configmap, skipping accelerator", "name", key)
 			continue
 		}
 		acceleratorData = append(acceleratorData, infernoConfig.AcceleratorSpec{
@@ -162,7 +163,7 @@ func CreateSystemData(
 	for key, val := range serviceClassCm {
 		var sc interfaces.ServiceClass
 		if err := yaml.Unmarshal([]byte(val), &sc); err != nil {
-			logger.Log.Warn("failed to parse service class data, skipping service class", "key", key, "err", err)
+			ctrl.Log.Info("failed to parse service class data, skipping service class", "key", key, "err", err)
 			continue
 		}
 		serviceClassSpec := infernoConfig.ServiceClassSpec{
@@ -337,7 +338,7 @@ func CreateOptimizedAlloc(name string,
 	if allocationData, exists = allocationSolution.Spec[serverName]; !exists {
 		return nil, fmt.Errorf("server %s not found", serverName)
 	}
-	logger.Log.Debug("Setting accelerator name ", "Name ", allocationData.Accelerator, "allocationData ", allocationData)
+	ctrl.Log.Info("Setting accelerator name ", "Name ", allocationData.Accelerator, "allocationData ", allocationData)
 	optimizedAlloc := &llmdVariantAutoscalingV1alpha1.OptimizedAlloc{
 		LastRunTime: metav1.NewTime(time.Now()),
 		Accelerator: allocationData.Accelerator,
@@ -410,7 +411,7 @@ func QueryPrometheusWithBackoff(ctx context.Context, promAPI promv1.API, query s
 		if err != nil {
 			// Record the last error so that we can surface it if the backoff is exhausted.
 			lastErr = err
-			logger.Log.Warn("Query Prometheus failed, retrying",
+			ctrl.Log.Info("Query Prometheus failed, retrying",
 				"query", query,
 				"error", err.Error())
 			return false, nil
@@ -434,13 +435,11 @@ func ValidatePrometheusAPIWithBackoff(ctx context.Context, promAPI promv1.API, b
 		query := "up"
 		_, _, err := promAPI.Query(ctx, query, time.Now())
 		if err != nil {
-			logger.Log.Error(err, "Prometheus API validation failed, retrying - ",
-				"query: ", query,
-				"error: ", err.Error())
+			ctrl.LoggerFrom(ctx).Error(err, "Prometheus API validation failed, retrying - ", "query: ", query)
 			return false, nil // Retry on transient errors
 		}
 
-		logger.Log.Info("Prometheus API validation successful with query", "query", query)
+		ctrl.LoggerFrom(ctx).Info("Prometheus API validation successful with query", "query", query)
 		return true, nil
 	})
 }

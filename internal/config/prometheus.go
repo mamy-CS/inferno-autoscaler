@@ -6,12 +6,13 @@ import (
 	"os"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
 	collectorconfig "github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/config"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
-	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logger"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/utils"
-	corev1 "k8s.io/api/core/v1"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const (
@@ -47,7 +48,7 @@ func GetPrometheusConfig(ctx context.Context, k8sClient client.Client) (*interfa
 	}
 
 	// No configuration found
-	logger.Log.Warn("No Prometheus configuration found. Please set PROMETHEUS_BASE_URL environment variable or configure via ConfigMap")
+	ctrl.Log.Info("No Prometheus configuration found. Please set PROMETHEUS_BASE_URL environment variable or configure via ConfigMap")
 	return nil, fmt.Errorf("no Prometheus configuration found. Please set PROMETHEUS_BASE_URL environment variable or configure via ConfigMap")
 }
 
@@ -58,7 +59,7 @@ func GetPrometheusConfigFromEnv() (*interfaces.PrometheusConfig, error) {
 		return nil, nil // No config found, but not an error
 	}
 
-	logger.Log.Infof("Using Prometheus configuration from environment variables: address=%s", promAddr)
+	ctrl.Log.Info("Using Prometheus configuration from environment variables", "address", promAddr)
 	return ParsePrometheusConfigFromEnv(), nil
 }
 
@@ -75,7 +76,7 @@ func GetPrometheusConfigFromConfigMap(ctx context.Context, k8sClient client.Clie
 		return nil, nil // No config found, but not an error
 	}
 
-	logger.Log.Infof("Using Prometheus configuration from ConfigMap: address=%s", promAddr)
+	ctrl.Log.Info("Using Prometheus configuration from ConfigMap", "address", promAddr)
 
 	config := &interfaces.PrometheusConfig{
 		BaseURL: promAddr,

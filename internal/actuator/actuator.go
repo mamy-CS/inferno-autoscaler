@@ -7,10 +7,10 @@ import (
 	llmdOptv1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
 	appsv1 "k8s.io/api/apps/v1"
 
-	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logger"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/metrics"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/utils"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 type Actuator struct {
@@ -50,13 +50,14 @@ func (a *Actuator) GetCurrentDeploymentReplicas(ctx context.Context, va *llmdOpt
 
 func (a *Actuator) EmitMetrics(ctx context.Context, VariantAutoscaling *llmdOptv1alpha1.VariantAutoscaling) error {
 	// Emit replica metrics with real-time data for external autoscalers
+	logger := log.FromContext(ctx)
 	if VariantAutoscaling.Status.DesiredOptimizedAlloc.NumReplicas >= 0 {
 
 		// Get real current replicas from Deployment (not stale VariantAutoscaling status)
 		currentReplicas, err := a.GetCurrentDeploymentReplicas(ctx, VariantAutoscaling)
 		if err != nil {
-			logger.Log.Warn("Could not get current deployment replicas, using VariantAutoscaling status",
-				"error", err, "variant", VariantAutoscaling.Name)
+			logger.Error(err, "Could not get current deployment replicas, using VariantAutoscaling status",
+				"variantName", VariantAutoscaling.Name)
 			currentReplicas = int32(VariantAutoscaling.Status.CurrentAlloc.NumReplicas) // fallback
 		}
 
@@ -67,19 +68,20 @@ func (a *Actuator) EmitMetrics(ctx context.Context, VariantAutoscaling *llmdOptv
 			int32(VariantAutoscaling.Status.DesiredOptimizedAlloc.NumReplicas), // Inferno's optimization target
 			VariantAutoscaling.Status.DesiredOptimizedAlloc.Accelerator,
 		); err != nil {
-			logger.Log.Error(err, "Failed to emit optimization signals for variantAutoscaling",
-				"variantAutoscaling-name", VariantAutoscaling.Name)
+			logger.Error(err, "Failed to emit optimization signals for variantAutoscaling",
+				"variantName", VariantAutoscaling.Name)
 			// Don't fail the reconciliation for metric emission errors
 			// Metrics are critical for HPA, but emission failures shouldn't break core functionality
 			return nil
 		}
-		logger.Log.Info(fmt.Sprintf("EmitReplicaMetrics completed - variant: %s, current-replicas: %d, desired-replicas: %d, accelerator: %s",
-			VariantAutoscaling.Name,
-			VariantAutoscaling.Status.CurrentAlloc.NumReplicas,
-			VariantAutoscaling.Status.DesiredOptimizedAlloc.NumReplicas,
-			VariantAutoscaling.Status.DesiredOptimizedAlloc.Accelerator))
+		logger.Info("EmitReplicaMetrics completed",
+			"variantName", VariantAutoscaling.Name,
+			"currentReplicas", VariantAutoscaling.Status.CurrentAlloc.NumReplicas,
+			"desiredReplicas", VariantAutoscaling.Status.DesiredOptimizedAlloc.NumReplicas,
+			"accelerator", VariantAutoscaling.Status.DesiredOptimizedAlloc.Accelerator)
 		return nil
 	}
-	logger.Log.Info(fmt.Sprintf("Skipping EmitReplicaMetrics for variantAutoscaling: %s - NumReplicas is 0", VariantAutoscaling.Name))
+	logger.Info("Skipping EmitReplicaMetrics - NumReplicas is 0",
+		"variantName", VariantAutoscaling.Name)
 	return nil
 }

@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"time"
 
+	ctrl "sigs.k8s.io/controller-runtime"
+
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/config"
-	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logger"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
 )
 
 // getDefaultCacheConfig returns default cache configuration
@@ -26,7 +28,7 @@ func (pc *PrometheusCollector) InvalidateCacheForVariant(modelID, namespace, var
 		// Construct prefix using PrometheusCollector's key format: {modelID}/{namespace}/{variantName}/
 		prefix := fmt.Sprintf("%s/%s/%s/", modelID, namespace, variantName)
 		pc.cache.InvalidateByPrefix(prefix)
-		logger.Log.Debugw("Invalidated cache for variant", "model", modelID, "namespace", namespace, "variant", variantName)
+		ctrl.Log.V(logging.DEBUG).Info("Invalidated cache for variant", "model", modelID, "namespace", namespace, "variant", variantName)
 	}
 }
 
@@ -37,6 +39,6 @@ func (pc *PrometheusCollector) InvalidateCacheForModel(modelID, namespace string
 		// Construct prefix using PrometheusCollector's key format: {modelID}/{namespace}/
 		prefix := fmt.Sprintf("%s/%s/", modelID, namespace)
 		pc.cache.InvalidateByPrefix(prefix)
-		logger.Log.Debugw("Invalidated cache for model", "model", modelID, "namespace", namespace)
+		ctrl.Log.V(logging.DEBUG).Info("Invalidated cache for model", "model", modelID, "namespace", namespace)
 	}
 }

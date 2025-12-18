@@ -6,20 +6,19 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"go.uber.org/zap"
 	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/config"
-	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logger"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/test/utils"
 	"github.com/prometheus/common/model"
 )
 
 var _ = Describe("Tracking", func() {
 	BeforeEach(func() {
-		logger.Log = zap.NewNop().Sugar()
+		logging.NewTestLogger()
 	})
 
 	Describe("TrackedVA", func() {

@@ -8,18 +8,20 @@ import (
 	"sync"
 	"time"
 
-	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
-	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/constants"
-	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
-	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logger"
-	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/saturation"
-	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/utils"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	"github.com/prometheus/common/model"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/constants"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/saturation"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/utils"
 )
 
 // SaturationMetricsCollector collects vLLM metrics from Prometheus
@@ -104,7 +106,7 @@ func (cmc *SaturationMetricsCollector) CollectReplicaMetrics(
 	variantAutoscalings map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling,
 	variantCosts map[string]float64,
 ) ([]interfaces.ReplicaMetrics, error) {
-
+	logger := ctrl.LoggerFrom(ctx)
 	// Validate input to prevent injection and ensure valid queries
 	// if err := validatePrometheusLabel(namespace, "namespace"); err != nil {
 	// 	return nil, err
@@ -164,7 +166,7 @@ func (cmc *SaturationMetricsCollector) CollectReplicaMetrics(
 	// Merge metrics by pod and assign to variants using deployment-to-pod mapping
 	replicaMetrics := cmc.mergeMetrics(ctx, kvMetricsMap, queueMetricsMap, modelID, namespace, deployments, variantAutoscalings, variantCosts)
 
-	logger.Log.Debugw("Collected replica metrics", "modelID", modelID, "namespace", namespace, "replicaCount", len(replicaMetrics))
+	logger.V(logging.DEBUG).Info("Collected replica metrics", "modelID", modelID, "namespace", namespace, "replicaCount", len(replicaMetrics))
 
 	return replicaMetrics, nil
 }
@@ -176,7 +178,7 @@ func (cmc *SaturationMetricsCollector) queryKvCacheMetrics(
 	modelID string,
 	namespace string,
 ) (map[string]float64, error) {
-
+	logger := ctrl.LoggerFrom(ctx)
 	// Query for peak KV cache usage over last minute across all pods of this model (all variants)
 	// Using max_over_time ensures we don't miss saturation events between queries
 	// The outer 'max by (pod)' aggregates multiple scrape samples per pod into one value
@@ -195,7 +197,7 @@ func (cmc *SaturationMetricsCollector) queryKvCacheMetrics(
 	}
 
 	if len(warnings) > 0 {
-		logger.Log.Warnw("Prometheus query returned warnings", "query", query, "warnings", warnings)
+		logger.Info("Prometheus query returned warnings", "query", query, "warnings", warnings)
 	}
 
 	metricsMap := make(map[string]float64)
@@ -212,12 +214,12 @@ func (cmc *SaturationMetricsCollector) queryKvCacheMetrics(
 			if podName != "" {
 				kvValue := float64(sample.Value)
 				metricsMap[podName] = kvValue
-				logger.Log.Infow("KV cache metric", "pod", podName, "usage", kvValue, "usagePercent", kvValue*100)
+				logger.Info("KV cache metric", "pod", podName, "usage", kvValue, "usagePercent", kvValue*100)
 			}
 		}
 	}
 
-	logger.Log.Debugw("KV cache metrics collected (max over 1m)", "modelID", modelID, "namespace", namespace, "podCount", len(metricsMap))
+	logger.V(logging.DEBUG).Info("KV cache metrics collected (max over 1m)", "modelID", modelID, "namespace", namespace, "podCount", len(metricsMap))
 
 	return metricsMap, nil
 }
@@ -229,7 +231,7 @@ func (cmc *SaturationMetricsCollector) queryQueueMetrics(
 	modelID string,
 	namespace string,
 ) (map[string]int, error) {
-
+	logger := ctrl.LoggerFrom(ctx)
 	// Query for peak queue length over last minute
 	// Using max_over_time ensures we catch burst traffic that could saturate the system
 	// The outer 'max by (pod)' aggregates multiple scrape samples per pod into one value
@@ -248,7 +250,7 @@ func (cmc *SaturationMetricsCollector) queryQueueMetrics(
 	}
 
 	if len(warnings) > 0 {
-		logger.Log.Warnw("Prometheus query returned warnings", "query", query, "warnings", warnings)
+		logger.Info("Prometheus query returned warnings", "query", query, "warnings", warnings)
 	}
 
 	metricsMap := make(map[string]int)
@@ -264,12 +266,12 @@ func (cmc *SaturationMetricsCollector) queryQueueMetrics(
 			if podName != "" {
 				queueLen := int(sample.Value)
 				metricsMap[podName] = queueLen
-				logger.Log.Infow("Queue metric", "pod", podName, "queueLength", queueLen)
+				logger.Info("Queue metric", "pod", podName, "queueLength", queueLen)
 			}
 		}
 	}
 
-	logger.Log.Debugw("Queue metrics collected (max over 1m)", "modelID", modelID, "namespace", namespace, "podCount", len(metricsMap))
+	logger.V(logging.DEBUG).Info("Queue metrics collected (max over 1m)", "modelID", modelID, "namespace", namespace, "podCount", len(metricsMap))
 
 	return metricsMap, nil
 }
@@ -293,7 +295,7 @@ func (cmc *SaturationMetricsCollector) mergeMetrics(
 	variantAutoscalings map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling,
 	variantCosts map[string]float64,
 ) []interfaces.ReplicaMetrics {
-
+	logger := ctrl.LoggerFrom(ctx)
 	// Use union of pod names from both metric sets
 	podSet := make(map[string]bool)
 	for pod := range kvMetrics {
@@ -314,7 +316,7 @@ func (cmc *SaturationMetricsCollector) mergeMetrics(
 		if !existingPods[podName] {
 			stalePodCount++
 			// TODO: remove debug log after verification
-			logger.Log.Debugw("Filtering pod from stale vLLM metrics", "pod", podName, "namespace", namespace, "model", modelID)
+			logger.V(logging.DEBUG).Info("Filtering pod from stale vLLM metrics", "pod", podName, "namespace", namespace, "model", modelID)
 			delete(podSet, podName)
 		}
 	}
@@ -331,11 +333,11 @@ func (cmc *SaturationMetricsCollector) mergeMetrics(
 		queueLen, hasQueue := queueMetrics[podName]
 
 		if !hasKv {
-			logger.Log.Warnw("Pod missing KV cache metrics, using 0 (may cause incorrect saturation analysis)", "pod", podName, "model", modelID, "namespace", namespace)
+			logger.Info("Pod missing KV cache metrics, using 0 (may cause incorrect saturation analysis)", "pod", podName, "model", modelID, "namespace", namespace)
 			kvUsage = 0
 		}
 		if !hasQueue {
-			logger.Log.Warnw("Pod missing queue metrics, using 0 (may cause incorrect saturation analysis)", "pod", podName, "model", modelID, "namespace", namespace)
+			logger.Info("Pod missing queue metrics, using 0 (may cause incorrect saturation analysis)", "pod", podName, "model", modelID, "namespace", namespace)
 			queueLen = 0
 		}
 
@@ -344,7 +346,7 @@ func (cmc *SaturationMetricsCollector) mergeMetrics(
 
 		// Skip pods that don't match any known deployment
 		if variantName == "" {
-			logger.Log.Warnw("Skipping pod that doesn't match any deployment", "pod", podName, "deployments", getDeploymentNames(deployments))
+			logger.Info("Skipping pod that doesn't match any deployment", "pod", podName, "deployments", getDeploymentNames(deployments))
 			unmatchedPods++
 			continue
 		}
@@ -362,7 +364,7 @@ func (cmc *SaturationMetricsCollector) mergeMetrics(
 		}
 
 		if acceleratorName == "" {
-			logger.Log.Warnw("Missing acceleratorName label on VariantAutoscaling", "variant", variantName, "pod", podName)
+			logger.Info("Missing acceleratorName label on VariantAutoscaling", "variant", variantName, "pod", podName)
 		}
 
 		// Look up cost by variant name, default to DefaultVariantCost if not found
@@ -389,9 +391,9 @@ func (cmc *SaturationMetricsCollector) mergeMetrics(
 
 	// Log pod-to-variant matching summary
 	if unmatchedPods > 0 {
-		logger.Log.Warnw("Pod-to-variant matching summary", "totalPods", len(podSet), "unmatchedPods", unmatchedPods, "variantCounts", variantPodCounts)
+		logger.Info("Pod-to-variant matching summary", "totalPods", len(podSet), "unmatchedPods", unmatchedPods, "variantCounts", variantPodCounts)
 	} else {
-		logger.Log.Debugw("Pod-to-variant matching successful", "totalPods", len(podSet), "variantCounts", variantPodCounts)
+		logger.V(logging.DEBUG).Info("Pod-to-variant matching successful", "totalPods", len(podSet), "variantCounts", variantPodCounts)
 	}
 
 	return replicaMetrics
@@ -422,13 +424,14 @@ func (cmc *SaturationMetricsCollector) findDeploymentForPod(
 	namespace string,
 	deployments map[string]*appsv1.Deployment,
 ) string {
+	logger := ctrl.LoggerFrom(ctx)
 	// Strategy 1: Use Kubernetes API with label selectors (preferred)
 	if cmc.k8sClient != nil {
 		for deploymentName, deployment := range deployments {
 			// Use deployment's label selector to check if pod belongs to it
 			selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
 			if err != nil {
-				logger.Log.Warnw("Invalid label selector for deployment", "deployment", deploymentName, "error", err)
+				logger.Info("Invalid label selector for deployment", "deployment", deploymentName, "error", err)
 				continue
 			}
 
@@ -440,7 +443,7 @@ func (cmc *SaturationMetricsCollector) findDeploymentForPod(
 			}
 
 			if err := cmc.k8sClient.List(ctx, podList, listOpts); err != nil {
-				logger.Log.Warnw("Failed to list pods for deployment", "deployment", deploymentName, "error", err)
+				logger.Info("Failed to list pods for deployment", "deployment", deploymentName, "error", err)
 				continue
 			}
 
@@ -483,6 +486,7 @@ func (cmc *SaturationMetricsCollector) getExistingPods(
 	deployments map[string]*appsv1.Deployment,
 	candidatePods map[string]bool,
 ) map[string]bool {
+	logger := ctrl.LoggerFrom(ctx)
 	existingPods := make(map[string]bool)
 
 	// Build pod name regex filter from deployment names (pod=~"deployment1-.*|deployment2-.*|deployment3-.*")
@@ -505,13 +509,13 @@ func (cmc *SaturationMetricsCollector) getExistingPods(
 
 	result, warnings, err := utils.QueryPrometheusWithBackoff(ctx, cmc.promAPI, query)
 	if err != nil {
-		logger.Log.Errorw("Failed to query Prometheus for pod existence", "namespace", namespace, "error", err)
+		logger.Error(err, "Failed to query Prometheus for pod existence", "namespace", namespace)
 		// On error, assume all candidate pods exist to prevent false negatives
 		return candidatePods
 	}
 
 	if len(warnings) > 0 {
-		logger.Log.Warnw("Prometheus pod existence query warnings", "query", query, "warnings", warnings)
+		logger.Info("Prometheus pod existence query warnings", "query", query, "warnings", warnings)
 	}
 
 	// Extract pod names from result
@@ -520,7 +524,7 @@ func (cmc *SaturationMetricsCollector) getExistingPods(
 		for _, sample := range vector {
 			podName := string(sample.Metric["pod"])
 			if podName == "" {
-				logger.Log.Warnw("Empty pod name in kube_pod_info metric", "namespace", namespace, "metric", sample.Metric)
+				logger.Info("Empty pod name in kube_pod_info metric", "namespace", namespace, "metric", sample.Metric)
 				continue
 			}
 			// Validate pod name is present in the candidate list

@@ -19,7 +19,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
-	"flag"
+	goflag "flag"
 	"os"
 	"path/filepath"
 	"time"
@@ -28,7 +28,7 @@ import (
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
-	"go.uber.org/zap"
+	flag "github.com/spf13/pflag"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -36,7 +36,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/certwatcher"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
-	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 	ctrlzap "sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
@@ -50,7 +49,7 @@ import (
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/controller"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/saturation"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/scalefromzero"
-	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logger"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/metrics"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/utils"
 	promoperator "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
@@ -97,6 +96,7 @@ func main() {
 	)
 	// Other
 	var tlsOpts []func(*tls.Config)
+	var loggerVerbosity int
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -117,6 +117,7 @@ func main() {
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
 	flag.StringVar(&watchNamespace, "watch-namespace", "",
 		"Namespace to watch for updates. If unspecified, all namespaces are watched.")
+	flag.IntVar(&loggerVerbosity, "v", logging.DEFAULT, "number for the log level verbosity")
 
 	// Leader election timeout configuration flags
 	// These can be overridden in manager.yaml to tune for different environments
@@ -134,23 +135,20 @@ func main() {
 		"The timeout for REST API calls to the Kubernetes API server. "+
 			"Increased from default ~30s to 60s for better resilience against network latency.")
 
+	opts := ctrlzap.Options{
+		Development: true,
+	}
+	gfs := goflag.NewFlagSet("zap", goflag.ExitOnError)
+	opts.BindFlags(gfs) // zap expects a standard Go FlagSet and pflag.FlagSet is not compatible.
+	flag.CommandLine.AddGoFlagSet(gfs)
+
 	flag.Parse()
 
-	setupLog, err := logger.InitLogger()
-	if err != nil {
-		panic("unable to initialize logger: " + err.Error())
-	}
-	defer func() {
-		if err := setupLog.Sync(); err != nil {
-			// Optionally log the error or handle it as needed
-			// For now, just print to stderr
-			_, _ = os.Stderr.WriteString("error syncing logger: " + err.Error() + "\n")
-		}
-	}()
+	logging.InitLogging(&opts, &loggerVerbosity)
+	defer logging.Sync() // nolint:errcheck
 
-	ctrllog.SetLogger(ctrlzap.New(ctrlzap.UseDevMode(false), ctrlzap.WriteTo(os.Stdout)))
-
-	setupLog.Info("Zap logger initialized")
+	setupLog := ctrl.Log.WithName("setup")
+	setupLog.Info("Logger initialized")
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
 	// due to its vulnerabilities. More specifically, disabling http/2 will
@@ -174,10 +172,10 @@ func main() {
 	webhookTLSOpts := tlsOpts
 
 	if len(webhookCertPath) > 0 {
-		setupLog.Info("Initializing metrics certificate watcher using provided certificates",
-			zap.String("metrics-cert-path", metricsCertPath),
-			zap.String("metrics-cert-name", metricsCertName),
-			zap.String("metrics-cert-key", metricsCertKey))
+		setupLog.Info("Initializing webhook certificate watcher using provided certificates",
+			"webhookCertPath", webhookCertPath,
+			"webhookCertName", webhookCertName,
+			"webhookCertKey", webhookCertKey)
 
 		var err error
 		webhookCertWatcher, err = certwatcher.New(
@@ -185,7 +183,7 @@ func main() {
 			filepath.Join(webhookCertPath, webhookCertKey),
 		)
 		if err != nil {
-			setupLog.Error("Failed to initialize webhook certificate watcher", zap.Error(err))
+			setupLog.Error(err, "Failed to initialize webhook certificate watcher")
 			os.Exit(1)
 		}
 
@@ -226,9 +224,9 @@ func main() {
 	// - [PROMETHEUS-WITH-CERTS] at config/prometheus/kustomization.yaml for TLS certification.
 	if len(metricsCertPath) > 0 {
 		setupLog.Info("Initializing metrics certificate watcher using provided certificates",
-			zap.String("metrics-cert-path", metricsCertPath),
-			zap.String("metrics-cert-name", metricsCertName),
-			zap.String("metrics-cert-key", metricsCertKey),
+			"metricsCertPath", metricsCertPath,
+			"metricsCertName", metricsCertName,
+			"metricsCertKey", metricsCertKey,
 		)
 
 		var err error
@@ -237,7 +235,7 @@ func main() {
 			filepath.Join(metricsCertPath, metricsCertKey),
 		)
 		if err != nil {
-			setupLog.Error("Failed to initialize metrics certificate watcher", zap.Error(err))
+			setupLog.Error(err, "Failed to initialize metrics certificate watcher")
 			os.Exit(1)
 		}
 
@@ -283,7 +281,7 @@ func main() {
 	}
 
 	if watchNamespace != "" {
-		setupLog.Info("Watching single namespace", zap.String("namespace", watchNamespace))
+		setupLog.Info("Watching single namespace", "namespace", watchNamespace)
 		mgrOptions.Cache = cache.Options{
 			DefaultNamespaces: map[string]cache.Config{
 				watchNamespace: {},
@@ -293,48 +291,50 @@ func main() {
 
 	mgr, err := ctrl.NewManager(restConfig, mgrOptions)
 	if err != nil {
-		setupLog.Error("unable to start manager", zap.Error(err))
+		setupLog.Error(err, "unable to start manager")
 		os.Exit(1)
 	}
 
 	// Initialize metrics
-	logger.Log.Infof("Creating metrics emitter instance")
+	setupLog.Info("Creating metrics emitter instance")
 	// Force initialization of metrics by creating a metrics emitter
 	_ = metrics.NewMetricsEmitter()
-	logger.Log.Infof("Metrics emitter created successfully")
+	setupLog.Info("Metrics emitter created successfully")
 
 	// Configure Prometheus client using flexible configuration with TLS support
 	promConfig, err := config.GetPrometheusConfig(context.Background(), mgr.GetClient())
 	if err != nil {
-		setupLog.Error("failed to get Prometheus configuration", zap.Error(err))
+		setupLog.Error(err, "failed to get Prometheus configuration")
 		os.Exit(1)
 	}
 
 	// ensure we have a valid configuration
 	if promConfig == nil {
-		setupLog.Error("no Prometheus configuration found - this should not happen")
+		setupLog.Error(nil, "no Prometheus configuration found - this should not happen")
 		os.Exit(1)
 	}
 
 	// Always validate TLS configuration since HTTPS is required
 	if err := utils.ValidateTLSConfig(promConfig); err != nil {
-		logger.Log.Errorf("TLS configuration validation failed - HTTPS is required: error=%v", err)
-		setupLog.Error("TLS configuration validation failed", zap.Error(err))
+		setupLog.Error(err, "TLS configuration validation failed - HTTPS is required")
 		os.Exit(1)
 	}
 
-	logger.Log.Infof("Initializing Prometheus client -> address: %s, tls_enabled: true", promConfig.BaseURL)
+	setupLog.Info("Initializing Prometheus client",
+		"address", promConfig.BaseURL,
+		"tlsEnabled", true,
+	)
 
 	// Create Prometheus client with TLS support
 	promClientConfig, err := utils.CreatePrometheusClientConfig(promConfig)
 	if err != nil {
-		setupLog.Error("failed to create prometheus client config", zap.Error(err))
+		setupLog.Error(err, "failed to create prometheus client config")
 		os.Exit(1)
 	}
 
 	promClient, err := api.NewClient(*promClientConfig)
 	if err != nil {
-		setupLog.Error("failed to create prometheus client", zap.Error(err))
+		setupLog.Error(err, "failed to create prometheus client")
 		os.Exit(1)
 	}
 
@@ -342,16 +342,15 @@ func main() {
 
 	// Validate that the API is working by testing a simple query with retry logic
 	if err := utils.ValidatePrometheusAPI(context.Background(), promAPI); err != nil {
-		logger.Log.Errorf("CRITICAL: Failed to connect to Prometheus - WVA requires Prometheus connectivity for autoscaling decisions: error=%v", err)
-		setupLog.Error("critical: failed to validate Prometheus API connection", zap.Error(err))
+		setupLog.Error(err, "CRITICAL: Failed to connect to Prometheus - WVA requires Prometheus connectivity for autoscaling decisions")
 		os.Exit(1)
 	}
-	logger.Log.Info("Prometheus client and API wrapper initialized and validated successfully")
+	setupLog.Info("Prometheus client and API wrapper initialized and validated successfully")
 
 	// Read Prometheus cache configuration from ConfigMap
 	cacheConfig, err := config.ReadPrometheusCacheConfig(context.Background(), mgr.GetClient())
 	if err != nil {
-		logger.Log.Warnf("Failed to read Prometheus cache config from ConfigMap, using defaults: %v", err)
+		setupLog.Error(err, "Failed to read Prometheus cache config from ConfigMap, using defaults")
 		cacheConfig = nil // Use defaults
 	}
 
@@ -362,7 +361,7 @@ func main() {
 		CacheConfig: cacheConfig,
 	})
 	if err != nil {
-		setupLog.Error("failed to create metrics collector", zap.Error(err))
+		setupLog.Error(err, "failed to create metrics collector")
 		os.Exit(1)
 	}
 
@@ -377,13 +376,13 @@ func main() {
 			<-ctx.Done() // Wait for context cancellation
 			return nil
 		})); err != nil {
-			logger.Log.Warnf("Failed to register background fetching executor with manager: %v", err)
+			setupLog.Error(err, "Failed to register background fetching executor with manager")
 		} else {
-			logger.Log.Info("Registered background fetching executor with manager")
+			setupLog.Info("Registered background fetching executor with manager")
 		}
 	}
 
-	logger.Log.Info("Metrics collector initialized successfully")
+	setupLog.Info("Metrics collector initialized successfully")
 
 	// Register optimization engine loops with the manager. Only start when leader.
 	err = mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
@@ -398,7 +397,7 @@ func main() {
 	}))
 
 	if err != nil {
-		setupLog.Error("unable to add optimization engine loop to manager", zap.Error(err))
+		setupLog.Error(err, "unable to add optimization engine loop to manager")
 		os.Exit(1)
 	}
 
@@ -410,7 +409,7 @@ func main() {
 	}))
 
 	if err != nil {
-		setupLog.Error("unable to add optimization engine loop to manager", zap.Error(err))
+		setupLog.Error(err, "unable to add optimization engine loop to manager")
 		os.Exit(1)
 	}
 
@@ -425,7 +424,7 @@ func main() {
 
 	// Setup the controller with the manager
 	if err = reconciler.SetupWithManager(mgr); err != nil {
-		setupLog.Error("unable to create controller", zap.String("controller", "variantautoscaling"), zap.Error(err))
+		setupLog.Error(err, "unable to create controller")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder
@@ -433,7 +432,7 @@ func main() {
 	if metricsCertWatcher != nil {
 		setupLog.Info("Adding metrics certificate watcher to manager")
 		if err := mgr.Add(metricsCertWatcher); err != nil {
-			setupLog.Error("unable to add metrics certificate watcher to manager", zap.Error(err))
+			setupLog.Error(err, "unable to add metrics certificate watcher to manager")
 			os.Exit(1)
 		}
 	}
@@ -441,38 +440,38 @@ func main() {
 	if webhookCertWatcher != nil {
 		setupLog.Info("Adding webhook certificate watcher to manager")
 		if err := mgr.Add(webhookCertWatcher); err != nil {
-			setupLog.Error("unable to add webhook certificate watcher to manager", zap.Error(err))
+			setupLog.Error(err, "unable to add webhook certificate watcher to manager")
 			os.Exit(1)
 		}
 	}
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
-		setupLog.Error("unable to set up health check", zap.Error(err))
+		setupLog.Error(err, "unable to set up health check")
 		os.Exit(1)
 	}
 	if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
-		setupLog.Error("unable to set up ready check", zap.Error(err))
+		setupLog.Error(err, "unable to set up ready check")
 		os.Exit(1)
 	}
 
 	setupLog.Info("Starting manager")
 
 	// Sync the custom logger before starting the manager
-	if logger.Log != nil {
-		//ignore sync errors: https://github.com/uber-go/zap/issues/328
-		_ = logger.Log.Sync()
+	if err := logging.Sync(); err != nil {
+		setupLog.Error(err, "Failed to sync logger before starting manager")
+		os.Exit(1)
 	}
 
 	// Register custom metrics with the controller-runtime Prometheus registry
 	// This makes the metrics available for scraping by Prometheus and direct endpoint access
 	setupLog.Info("Registering custom metrics with Prometheus registry")
 	if err := metrics.InitMetrics(crmetrics.Registry); err != nil {
-		setupLog.Error("failed to initialize metrics", zap.Error(err))
+		setupLog.Error(err, "failed to initialize metrics")
 		os.Exit(1)
 	}
 
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
-		setupLog.Error("problem running manager", zap.Error(err))
+		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}
 }

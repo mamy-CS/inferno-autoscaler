@@ -21,9 +21,10 @@ import (
 	"time"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/executor"
-	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logger"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/utils"
 )
 
@@ -64,13 +65,15 @@ func (e *Engine) StartOptimizeLoop(ctx context.Context) {
 
 // optimize performs the optimization logic.
 func (e *Engine) optimize(ctx context.Context) error {
+	logger := log.FromContext(ctx)
+
 	// Get all active VAs
 	activeVAs, err := utils.ActiveVariantAutoscalingByModel(ctx, e.client)
 	if err != nil {
 		return err
 	}
 
-	logger.Log.Debugw("Found active VariantAutoscaling resources", "count", len(activeVAs))
+	logger.V(logging.DEBUG).Info("Found active VariantAutoscaling resources", "count", len(activeVAs))
 
 	// TODO: Implement optimization logic
 
