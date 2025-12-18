@@ -38,8 +38,8 @@ var lowLoad = numPrompts <= 2000 && requestRate <= 8
 
 // Number of parallel load generation workers and requests per worker
 const (
-	numLoadWorkers    = 5
-	requestsPerWorker = 400
+	numLoadWorkers    = 10
+	requestsPerWorker = 500
 )
 
 var _ = Describe("ShareGPT Scale-Up Test", Ordered, func() {
@@ -287,9 +287,9 @@ for i in $(seq 1 $RETRIES); do
   sleep $RETRY_DELAY
 done
 
-# Send requests in parallel batches (ignore individual curl failures)
+# Send requests aggressively in parallel batches (ignore individual curl failures)
 TOTAL=%d
-BATCH_SIZE=20
+BATCH_SIZE=50
 SENT=0
 
 while [ $SENT -lt $TOTAL ]; do
@@ -297,15 +297,18 @@ while [ $SENT -lt $TOTAL ]; do
   for i in $(seq 1 $BATCH_SIZE); do
     if [ $SENT -ge $TOTAL ]; then break; fi
     # Use subshell with || true to ignore curl failures
-    (curl -s -o /dev/null --max-time 60 -X POST http://vllm-service:8200/v1/completions \
+    (curl -s -o /dev/null --max-time 120 -X POST http://vllm-service:8200/v1/completions \
       -H "Content-Type: application/json" \
-      -d '{"model":"%s","prompt":"What is AI?","max_tokens":50}' || true) &
+      -d '{"model":"%s","prompt":"Write a detailed explanation of machine learning algorithms and their applications in modern technology.","max_tokens":150}' || true) &
     SENT=$((SENT + 1))
   done
-  # Wait for batch to complete before starting next
-  wait || true
+  # Don't wait - keep sending to build queue pressure
   echo "Worker %d: sent $SENT / $TOTAL requests..."
+  sleep 0.1
 done
+
+# Wait for all to complete at the end
+wait || true
 
 echo "Worker %d: completed all %d requests"
 exit 0
@@ -338,12 +341,12 @@ exit 0
 							Args:    []string{script},
 							Resources: corev1.ResourceRequirements{
 								Limits: corev1.ResourceList{
-									corev1.ResourceMemory: resource.MustParse("1Gi"),
-									corev1.ResourceCPU:    resource.MustParse("1"),
+									corev1.ResourceMemory: resource.MustParse("2Gi"),
+									corev1.ResourceCPU:    resource.MustParse("2"),
 								},
 								Requests: corev1.ResourceList{
-									corev1.ResourceCPU:    resource.MustParse("200m"),
-									corev1.ResourceMemory: resource.MustParse("512Mi"),
+									corev1.ResourceCPU:    resource.MustParse("500m"),
+									corev1.ResourceMemory: resource.MustParse("1Gi"),
 								},
 							},
 						},
