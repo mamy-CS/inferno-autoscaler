@@ -36,10 +36,14 @@ import (
 
 var lowLoad = numPrompts <= 2000 && requestRate <= 8
 
-// Number of parallel load generation workers and requests per worker
+// Load generation configuration constants
 const (
-	numLoadWorkers    = 10
-	requestsPerWorker = 500
+	numLoadWorkers      = 10   // Number of parallel load generation workers
+	requestsPerWorker   = 500  // Requests each worker sends
+	batchSize           = 50   // Concurrent requests per batch
+	curlTimeoutSeconds  = 120  // Timeout for each curl request
+	maxTokens           = 150  // Max tokens for completion requests
+	batchSleepSeconds   = "0.1" // Sleep between batches to control rate
 )
 
 var _ = Describe("ShareGPT Scale-Up Test", Ordered, func() {
@@ -291,7 +295,10 @@ done
 
 # Send requests aggressively in parallel batches (ignore individual curl failures)
 TOTAL=%d
-BATCH_SIZE=50
+BATCH_SIZE=%d
+CURL_TIMEOUT=%d
+MAX_TOKENS=%d
+BATCH_SLEEP=%s
 SENT=0
 
 while [ $SENT -lt $TOTAL ]; do
@@ -299,14 +306,14 @@ while [ $SENT -lt $TOTAL ]; do
   for i in $(seq 1 $BATCH_SIZE); do
     if [ $SENT -ge $TOTAL ]; then break; fi
     # Use subshell with || true to ignore curl failures
-    (curl -s -o /dev/null --max-time 120 -X POST http://vllm-service:8200/v1/completions \
+    (curl -s -o /dev/null --max-time $CURL_TIMEOUT -X POST http://vllm-service:8200/v1/completions \
       -H "Content-Type: application/json" \
-      -d '{"model":"%s","prompt":"Write a detailed explanation of machine learning algorithms and their applications in modern technology.","max_tokens":150}' || true) &
+      -d '{"model":"%s","prompt":"Write a detailed explanation of machine learning algorithms and their applications in modern technology.","max_tokens":'$MAX_TOKENS'}' || true) &
     SENT=$((SENT + 1))
   done
   # Don't wait - keep sending to build queue pressure
   echo "Worker %d: sent $SENT / $TOTAL requests..."
-  sleep 0.1
+  sleep $BATCH_SLEEP
 done
 
 # Wait for all to complete at the end
@@ -314,7 +321,7 @@ wait || true
 
 echo "Worker %d: completed all %d requests"
 exit 0
-`, workerID, numRequests, numRequests, modelID, workerID, workerID, numRequests)
+`, workerID, numRequests, numRequests, batchSize, curlTimeoutSeconds, maxTokens, batchSleepSeconds, modelID, workerID, workerID, numRequests)
 
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
