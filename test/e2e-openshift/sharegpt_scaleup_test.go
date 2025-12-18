@@ -277,9 +277,8 @@ echo "Sending %d requests to vllm-service:8200"
 # Wait for vllm-service to be ready (up to 2 minutes)
 echo "Waiting for vllm-service to be ready..."
 max_retries=24
-retry_delay_seconds=5
 retries=$max_retries
-retry_delay=$retry_delay_seconds
+retry_delay=5
 for i in $(seq 1 $retries); do
   if curl -s -o /dev/null -w "%%{http_code}" http://vllm-service:8200/v1/models 2>/dev/null | grep -q 200; then
     echo "Connection test passed on attempt $i"
