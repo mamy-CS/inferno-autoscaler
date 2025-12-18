@@ -106,20 +106,26 @@ jobs:
           echo "Patching vLLM decode deployment to limit batch size for scaling test..."
           echo "  MAX_NUM_SEQS: $MAX_NUM_SEQS"
           DEPLOYMENT_NAME="ms-inference-scheduling-llm-d-modelservice-decode"
-          # Determine the index of the target container by name instead of assuming index 0.
-          # Here we assume the main container has the same name as the deployment.
-          TARGET_CONTAINER_NAME="$DEPLOYMENT_NAME"
+
+          # Find the vllm container index (container name is typically "vllm")
+          echo "Looking for vllm container in deployment..."
+          kubectl get deployment "$DEPLOYMENT_NAME" -n llm-d-inference-scheduler \
+            -o jsonpath='{range .spec.template.spec.containers[*]}{.name}{"\n"}{end}'
+
+          # Try to find container named "vllm", fall back to index 0
           CONTAINER_INDEX="$(
             kubectl get deployment "$DEPLOYMENT_NAME" -n llm-d-inference-scheduler \
               -o jsonpath='{range .spec.template.spec.containers[*]}{.name}{"\n"}{end}' \
             | nl -v0 -nln -w1 \
-            | awk -v name="$TARGET_CONTAINER_NAME" '$2 == name {print $1; exit}'
+            | awk '$2 == "vllm" {print $1; exit}'
           )"
           if [ -z "$CONTAINER_INDEX" ]; then
-            echo "Error: container '$TARGET_CONTAINER_NAME' not found in deployment '$DEPLOYMENT_NAME'" >&2
-            exit 1
+            echo "Container 'vllm' not found, using index 0"
+            CONTAINER_INDEX=0
           fi
-          # Add --max-num-seqs to force scaling under load on the correct container
+          echo "Using container index: $CONTAINER_INDEX"
+
+          # Add --max-num-seqs to force scaling under load
           kubectl patch deployment "$DEPLOYMENT_NAME" -n llm-d-inference-scheduler --type=json -p="[
             {\"op\": \"add\", \"path\": \"/spec/template/spec/containers/$CONTAINER_INDEX/args/-\", \"value\": \"--max-num-seqs=$MAX_NUM_SEQS\"}
           ]"
