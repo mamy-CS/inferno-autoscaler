@@ -132,11 +132,10 @@ jobs:
           echo "  NUM_PROMPTS: $NUM_PROMPTS"
           make test-e2e-openshift
 
-      # TODO: Re-enable cleanup after debugging
-      # - name: Cleanup infrastructure
-      #   if: always() && github.event.inputs.skip_cleanup != 'true'
-      #   env:
-      #     ENVIRONMENT: openshift
-      #   run: |
-      #     echo "Cleaning up infrastructure..."
-      #     ./deploy/install.sh --undeploy --environment openshift || true
+      - name: Cleanup infrastructure
+        if: always() && github.event.inputs.skip_cleanup != 'true'
+        env:
+          ENVIRONMENT: openshift
+        run: |
+          echo "Cleaning up infrastructure..."
+          ./deploy/install.sh --undeploy --environment openshift || true
