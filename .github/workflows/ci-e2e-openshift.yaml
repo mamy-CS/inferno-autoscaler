@@ -27,6 +27,14 @@ on:
         description: 'Skip cleanup after tests'
         required: false
         default: 'false'
+      max_num_seqs:
+        description: 'vLLM max batch size (lower = easier to saturate)'
+        required: false
+        default: '1'
+      hpa_stabilization_seconds:
+        description: 'HPA stabilization window in seconds'
+        required: false
+        default: '120'
 
 jobs:
   e2e-openshift:
@@ -36,6 +44,8 @@ jobs:
       ACCELERATOR_TYPE: ${{ github.event.inputs.accelerator_type || 'H100' }}
       REQUEST_RATE: ${{ github.event.inputs.request_rate || '20' }}
       NUM_PROMPTS: ${{ github.event.inputs.num_prompts || '3000' }}
+      MAX_NUM_SEQS: ${{ github.event.inputs.max_num_seqs || '1' }}
+      HPA_STABILIZATION_SECONDS: ${{ github.event.inputs.hpa_stabilization_seconds || '120' }}
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -94,6 +104,7 @@ jobs:
       - name: Patch vLLM deployment for e2e testing
         run: |
           echo "Patching vLLM decode deployment to limit batch size for scaling test..."
+          echo "  MAX_NUM_SEQS: $MAX_NUM_SEQS"
           DEPLOYMENT_NAME="ms-inference-scheduling-llm-d-modelservice-decode"
           # Determine the index of the target container by name instead of assuming index 0.
           # Here we assume the main container has the same name as the deployment.
@@ -108,19 +119,20 @@ jobs:
             echo "Error: container '$TARGET_CONTAINER_NAME' not found in deployment '$DEPLOYMENT_NAME'" >&2
             exit 1
           fi
-          # Add --max-num-seqs=1 to force scaling under load on the correct container
+          # Add --max-num-seqs to force scaling under load on the correct container
           kubectl patch deployment "$DEPLOYMENT_NAME" -n llm-d-inference-scheduler --type=json -p="[
-            {\"op\": \"add\", \"path\": \"/spec/template/spec/containers/$CONTAINER_INDEX/args/-\", \"value\": \"--max-num-seqs=1\"}
+            {\"op\": \"add\", \"path\": \"/spec/template/spec/containers/$CONTAINER_INDEX/args/-\", \"value\": \"--max-num-seqs=$MAX_NUM_SEQS\"}
           ]"
           echo "Waiting for patched deployment to roll out..."
           kubectl rollout status deployment/"$DEPLOYMENT_NAME" -n llm-d-inference-scheduler --timeout=300s
 
       - name: Patch HPA for faster e2e testing
         run: |
-          echo "Reducing HPA stabilization window to 2 minutes for faster e2e testing..."
+          echo "Patching HPA stabilization window for e2e testing..."
+          echo "  HPA_STABILIZATION_SECONDS: $HPA_STABILIZATION_SECONDS"
           kubectl patch hpa vllm-deployment-hpa -n llm-d-inference-scheduler --type=json -p='[
-            {"op": "replace", "path": "/spec/behavior/scaleUp/stabilizationWindowSeconds", "value": 120},
-            {"op": "replace", "path": "/spec/behavior/scaleDown/stabilizationWindowSeconds", "value": 120}
+            {"op": "replace", "path": "/spec/behavior/scaleUp/stabilizationWindowSeconds", "value": '"$HPA_STABILIZATION_SECONDS"'},
+            {"op": "replace", "path": "/spec/behavior/scaleDown/stabilizationWindowSeconds", "value": '"$HPA_STABILIZATION_SECONDS"'}
           ]'
           kubectl get hpa -n llm-d-inference-scheduler
 

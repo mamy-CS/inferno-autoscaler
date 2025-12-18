@@ -293,17 +293,17 @@ for i in $(seq 1 $retries); do
 done
 
 # Send requests aggressively in parallel batches (ignore individual curl failures)
-TOTAL=%d
+TOTAL_REQUESTS=%d
 BATCH_SIZE=%d
 CURL_TIMEOUT=%d
 MAX_TOKENS=%d
 BATCH_SLEEP=%s
 SENT=0
 
-while [ $SENT -lt $TOTAL ]; do
+while [ $SENT -lt $TOTAL_REQUESTS ]; do
   # Send a batch of concurrent requests
   for i in $(seq 1 $BATCH_SIZE); do
-    if [ $SENT -ge $TOTAL ]; then break; fi
+    if [ $SENT -ge $TOTAL_REQUESTS ]; then break; fi
     # Use subshell with || true to ignore curl failures
     (curl -s -o /dev/null --max-time $CURL_TIMEOUT -X POST http://vllm-service:8200/v1/completions \
       -H "Content-Type: application/json" \
@@ -311,7 +311,7 @@ while [ $SENT -lt $TOTAL ]; do
     SENT=$((SENT + 1))
   done
   # Don't wait - keep sending to build queue pressure
-  echo "Worker %d: sent $SENT / $TOTAL requests..."
+  echo "Worker %d: sent $SENT / $TOTAL_REQUESTS requests..."
   sleep $BATCH_SLEEP
 done
 
