@@ -270,12 +270,22 @@ func createLoadGenerationJob(name, namespace string, workerID, numRequests int) 
 echo "Load generator worker %d starting..."
 echo "Sending %d requests to vllm-service:8200"
 
-# Test connectivity
-if ! curl -s -o /dev/null -w "%%{http_code}" http://vllm-service:8200/v1/models | grep -q 200; then
-  echo "ERROR: Cannot connect to vllm-service"
-  exit 1
-fi
-echo "Connection test passed"
+# Wait for vllm-service to be ready (up to 2 minutes)
+echo "Waiting for vllm-service to be ready..."
+RETRIES=24
+RETRY_DELAY=5
+for i in $(seq 1 $RETRIES); do
+  if curl -s -o /dev/null -w "%%{http_code}" http://vllm-service:8200/v1/models 2>/dev/null | grep -q 200; then
+    echo "Connection test passed on attempt $i"
+    break
+  fi
+  if [ $i -eq $RETRIES ]; then
+    echo "ERROR: Cannot connect to vllm-service after $RETRIES attempts"
+    exit 1
+  fi
+  echo "Attempt $i failed, retrying in ${RETRY_DELAY}s..."
+  sleep $RETRY_DELAY
+done
 
 # Send requests in parallel batches
 TOTAL=%d
