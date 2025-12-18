@@ -270,57 +270,62 @@ func createLoadGenerationJob(name, namespace string, workerID, numRequests int) 
 	backoffLimit := int32(0)
 
 	// Script that sends concurrent requests to saturate the vLLM instance
+	// All Go template parameters are defined at the top as shell variables for clarity
 	script := fmt.Sprintf(`#!/bin/sh
-echo "Load generator worker %d starting..."
-echo "Sending %d requests to vllm-service:8200"
-
-# Wait for vllm-service to be ready (up to 2 minutes)
-echo "Waiting for vllm-service to be ready..."
-max_retries=24
-retries=$max_retries
-retry_delay=5
-for i in $(seq 1 $retries); do
-  if curl -s -o /dev/null -w "%%{http_code}" http://vllm-service:8200/v1/models 2>/dev/null | grep -q 200; then
-    echo "Connection test passed on attempt $i"
-    break
-  fi
-  if [ $i -eq $retries ]; then
-    echo "ERROR: Cannot connect to vllm-service after $retries attempts"
-    exit 1
-  fi
-  echo "Attempt $i failed, retrying in ${retry_delay}s..."
-  sleep $retry_delay
-done
-
-# Send requests aggressively in parallel batches (ignore individual curl failures)
+# =============================================================================
+# Load Generator Configuration (injected from Go constants)
+# =============================================================================
+WORKER_ID=%d
 TOTAL_REQUESTS=%d
 BATCH_SIZE=%d
 CURL_TIMEOUT=%d
 MAX_TOKENS=%d
 BATCH_SLEEP=%s
-SENT=0
+MODEL_ID="%s"
+MAX_RETRIES=24
+RETRY_DELAY=5
 
+# =============================================================================
+# Script Start
+# =============================================================================
+echo "Load generator worker $WORKER_ID starting..."
+echo "Sending $TOTAL_REQUESTS requests to vllm-service:8200"
+
+# Wait for vllm-service to be ready
+echo "Waiting for vllm-service to be ready..."
+for i in $(seq 1 $MAX_RETRIES); do
+  if curl -s -o /dev/null -w "%%{http_code}" http://vllm-service:8200/v1/models 2>/dev/null | grep -q 200; then
+    echo "Connection test passed on attempt $i"
+    break
+  fi
+  if [ $i -eq $MAX_RETRIES ]; then
+    echo "ERROR: Cannot connect to vllm-service after $MAX_RETRIES attempts"
+    exit 1
+  fi
+  echo "Attempt $i failed, retrying in ${RETRY_DELAY}s..."
+  sleep $RETRY_DELAY
+done
+
+# Send requests aggressively in parallel batches (ignore individual curl failures)
+SENT=0
 while [ $SENT -lt $TOTAL_REQUESTS ]; do
-  # Send a batch of concurrent requests
   for i in $(seq 1 $BATCH_SIZE); do
     if [ $SENT -ge $TOTAL_REQUESTS ]; then break; fi
-    # Use subshell with || true to ignore curl failures
     (curl -s -o /dev/null --max-time $CURL_TIMEOUT -X POST http://vllm-service:8200/v1/completions \
       -H "Content-Type: application/json" \
-      -d '{"model":"%s","prompt":"Write a detailed explanation of machine learning algorithms and their applications in modern technology.","max_tokens":'$MAX_TOKENS'}' || true) &
+      -d "{\"model\":\"$MODEL_ID\",\"prompt\":\"Write a detailed explanation of machine learning algorithms.\",\"max_tokens\":$MAX_TOKENS}" || true) &
     SENT=$((SENT + 1))
   done
-  # Don't wait - keep sending to build queue pressure
-  echo "Worker %d: sent $SENT / $TOTAL_REQUESTS requests..."
+  echo "Worker $WORKER_ID: sent $SENT / $TOTAL_REQUESTS requests..."
   sleep $BATCH_SLEEP
 done
 
 # Wait for all to complete at the end
 wait || true
 
-echo "Worker %d: completed all %d requests"
+echo "Worker $WORKER_ID: completed all $TOTAL_REQUESTS requests"
 exit 0
-`, workerID, numRequests, numRequests, batchSize, curlTimeoutSeconds, maxTokens, batchSleepDuration, modelID, workerID, workerID, numRequests)
+`, workerID, numRequests, batchSize, curlTimeoutSeconds, maxTokens, batchSleepDuration, modelID)
 
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
