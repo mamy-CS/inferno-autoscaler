@@ -118,8 +118,13 @@ func initializeK8sClient() {
 }
 
 var _ = BeforeSuite(func() {
-	if os.Getenv("KUBECONFIG") == "" {
-		Skip("KUBECONFIG is not set; skipping OpenShift e2e test")
+	// Verify cluster connectivity before proceeding
+	initializeK8sClient()
+
+	ctx := context.Background()
+	_, err := k8sClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{Limit: 1})
+	if err != nil {
+		Fail(fmt.Sprintf("Cannot connect to cluster: %v. Ensure KUBECONFIG is set or the test is running with in-cluster authentication.", err))
 	}
 
 	_, _ = fmt.Fprintf(GinkgoWriter, "-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=\n")
@@ -133,10 +138,6 @@ var _ = BeforeSuite(func() {
 	_, _ = fmt.Fprintf(GinkgoWriter, "DEPLOYMENT=%s\n", deployment)
 	_, _ = fmt.Fprintf(GinkgoWriter, "REQUEST_RATE=%d\n", requestRate)
 	_, _ = fmt.Fprintf(GinkgoWriter, "NUM_PROMPTS=%d\n", numPrompts)
-
-	initializeK8sClient()
-
-	ctx := context.Background()
 
 	By("verifying that the controller-manager pods are running")
 	Eventually(func(g Gomega) {
@@ -184,15 +185,6 @@ var _ = BeforeSuite(func() {
 	}, 2*time.Minute, 1*time.Second).Should(Succeed())
 
 	_, _ = fmt.Fprintf(GinkgoWriter, "Infrastructure verification complete\n")
-
-	cm, err := k8sClient.CoreV1().ConfigMaps(controllerNamespace).Get(context.Background(), "workload-variant-autoscaler-variantautoscaling-config", metav1.GetOptions{})
-	if err != nil {
-		Fail("Failed to get ConfigMap: " + err.Error())
-	}
-
-	if cm.Data["WVA_EXPERIMENTAL_PROACTIVE_MODEL"] == "false" {
-		Skip("Skipping E2E tests because WVA_EXPERIMENTAL_PROACTIVE_MODEL flag is not set in ConfigMap")
-	}
 })
 
 var _ = AfterSuite(func() {

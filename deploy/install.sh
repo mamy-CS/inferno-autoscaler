@@ -54,12 +54,9 @@ TTFT_AVERAGE_LATENCY_MS=${TTFT_AVERAGE_LATENCY_MS:-200}
 # Gateway Configuration
 GATEWAY_PROVIDER=${GATEWAY_PROVIDER:-"istio"} # Options: kgateway, istio
 BENCHMARK_MODE=${BENCHMARK_MODE:-"true"} # if true, updates to Istio config for benchmark
-# Track if INSTALL_GATEWAY_CTRLPLANE was explicitly set via environment variable
-if [ -n "${INSTALL_GATEWAY_CTRLPLANE:-}" ]; then
-    INSTALL_GATEWAY_CTRLPLANE_SET="true"
-else
-    INSTALL_GATEWAY_CTRLPLANE="false"
-fi
+# Save original value to detect if explicitly set via environment variable
+INSTALL_GATEWAY_CTRLPLANE_ORIGINAL="${INSTALL_GATEWAY_CTRLPLANE:-}"
+INSTALL_GATEWAY_CTRLPLANE="${INSTALL_GATEWAY_CTRLPLANE:-false}"
 
 # Model and SLO Configuration
 DEFAULT_MODEL_ID=${DEFAULT_MODEL_ID:-"Qwen/Qwen3-0.6B"}
@@ -956,6 +953,8 @@ main() {
     # Prompt for Gateway control plane installation
     if [[ "$E2E_TESTS_ENABLED" == "false" ]]; then
         prompt_gateway_installation
+    elif [[ -n "$INSTALL_GATEWAY_CTRLPLANE_ORIGINAL" ]]; then
+        log_info "Using explicitly set INSTALL_GATEWAY_CTRLPLANE=$INSTALL_GATEWAY_CTRLPLANE"
     else
         log_info "Enabling Gateway control plane installation for tests"
         export INSTALL_GATEWAY_CTRLPLANE="true"
