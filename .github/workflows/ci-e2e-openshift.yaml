@@ -116,8 +116,7 @@ jobs:
           CONTAINER_INDEX="$(
             kubectl get deployment "$DEPLOYMENT_NAME" -n llm-d-inference-scheduler \
               -o jsonpath='{range .spec.template.spec.containers[*]}{.name}{"\n"}{end}' \
-            | nl -v0 -nln -w1 \
-            | awk '$2 == "vllm" {print $1; exit}'
+            | awk '$1 == "vllm" {print NR-1; exit}'
           )"
           if [ -z "$CONTAINER_INDEX" ]; then
             echo "Container 'vllm' not found, using index 0"
