@@ -145,7 +145,7 @@ func main() {
 	flag.Parse()
 
 	logging.InitLogging(&opts, &loggerVerbosity)
-	defer logging.Sync()
+	defer logging.Sync() // nolint:errcheck
 
 	setupLog := ctrl.Log.WithName("setup")
 	setupLog.Info("Logger initialized")
@@ -457,7 +457,10 @@ func main() {
 	setupLog.Info("Starting manager")
 
 	// Sync the custom logger before starting the manager
-	logging.Sync() //nolint:errcheck
+	if err := logging.Sync(); err != nil {
+		setupLog.Error(err, "Failed to sync logger before starting manager")
+		os.Exit(1)
+	}
 
 	// Register custom metrics with the controller-runtime Prometheus registry
 	// This makes the metrics available for scraping by Prometheus and direct endpoint access

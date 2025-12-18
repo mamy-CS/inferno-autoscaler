@@ -7,10 +7,10 @@ import (
 	"net/url"
 	"os"
 
+	ctrl "sigs.k8s.io/controller-runtime"
+
 	interfaces "github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
-
-	ctrl "sigs.k8s.io/controller-runtime"
 )
 
 // CreateTLSConfig creates a TLS configuration from PrometheusConfig.

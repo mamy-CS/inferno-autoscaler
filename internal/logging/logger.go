@@ -33,7 +33,6 @@ func InitLogging(opts *zap.Options, logVerbosity *int) {
 	}
 
 	logger := zap.New(zap.UseFlagOptions(opts), zap.RawZapOpts(uberzap.AddCaller()))
-	logger.GetSink().(interface{ Sync() error }).Sync() // flushes buffer, if any
 	ctrl.SetLogger(logger)
 }
 
