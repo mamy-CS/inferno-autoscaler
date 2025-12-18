@@ -293,18 +293,21 @@ echo "Sending $TOTAL_REQUESTS requests to vllm-service:8200"
 
 # Wait for vllm-service to be ready
 echo "Waiting for vllm-service to be ready..."
+CONNECTED=false
 for i in $(seq 1 $MAX_RETRIES); do
   if curl -s -o /dev/null -w "%%{http_code}" http://vllm-service:8200/v1/models 2>/dev/null | grep -q 200; then
     echo "Connection test passed on attempt $i"
+    CONNECTED=true
     break
-  fi
-  if [ $i -eq $MAX_RETRIES ]; then
-    echo "ERROR: Cannot connect to vllm-service after $MAX_RETRIES attempts"
-    exit 1
   fi
   echo "Attempt $i failed, retrying in ${RETRY_DELAY}s..."
   sleep $RETRY_DELAY
 done
+
+if [ "$CONNECTED" != "true" ]; then
+  echo "ERROR: Cannot connect to vllm-service after $MAX_RETRIES attempts"
+  exit 1
+fi
 
 # Send requests aggressively in parallel batches (ignore individual curl failures)
 SENT=0
