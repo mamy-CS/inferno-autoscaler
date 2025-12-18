@@ -1,4 +1,4 @@
-package controller
+package modelanalyzer
 
 import (
 	interfaces "github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
