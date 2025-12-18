@@ -98,7 +98,6 @@ func GetVariantAutoscalingWithBackoff(ctx context.Context, c client.Client, name
 }
 
 // UpdateStatusWithBackoff performs a Status Update operation with exponential backoff retry logic.
-// DEPRECATED: Use UpdateStatusWithOptimisticLocking for proper conflict handling.
 // This function is kept for backward compatibility but doesn't handle resource version conflicts properly.
 func UpdateStatusWithBackoff[T client.Object](ctx context.Context, c client.Client, obj T, backoff wait.Backoff, resourceType string) error {
 	return wait.ExponentialBackoffWithContext(ctx, backoff, func(ctx context.Context) (bool, error) {
@@ -116,77 +115,6 @@ func UpdateStatusWithBackoff[T client.Object](ctx context.Context, c client.Clie
 			logger.Log.Error(err, "transient error updating status, retrying for resource ", resourceType, ", name: ", obj.GetName())
 			return false, nil // Retry on transient errors
 		}
-		return true, nil
-	})
-}
-
-// UpdateStatusWithOptimisticLocking performs a status update with proper optimistic locking.
-// On conflict errors (resource version mismatch), it re-fetches the resource, applies the mutation,
-// and retries the update. This ensures status updates don't fail due to concurrent modifications.
-//
-// Parameters:
-//   - ctx: context for the operation
-//   - c: Kubernetes client
-//   - objKey: object key (name/namespace) to identify the resource
-//   - obj: a zero-value instance of the resource type (used for fetching)
-//   - mutate: function that modifies the status of the fetched resource
-//   - backoff: retry backoff configuration
-//   - resourceType: human-readable resource type name for logging
-//
-// Example:
-//
-//	err := UpdateStatusWithOptimisticLocking(ctx, r.Client,
-//	    client.ObjectKey{Name: va.Name, Namespace: va.Namespace},
-//	    &llmdVariantAutoscalingV1alpha1.VariantAutoscaling{},
-//	    func(obj *llmdVariantAutoscalingV1alpha1.VariantAutoscaling) {
-//	        obj.Status.DesiredAlloc = newAlloc
-//	    },
-//	    StandardBackoff,
-//	    "VariantAutoscaling")
-func UpdateStatusWithOptimisticLocking[T client.Object](
-	ctx context.Context,
-	c client.Client,
-	objKey client.ObjectKey,
-	obj T,
-	mutate func(T),
-	backoff wait.Backoff,
-	resourceType string,
-) error {
-	// TODO: use retry.OnConflict from k8s.io/client-go/util/retry
-
-	return wait.ExponentialBackoffWithContext(ctx, backoff, func(ctx context.Context) (bool, error) {
-		// Fetch the latest version of the resource
-		err := c.Get(ctx, objKey, obj)
-		if err != nil {
-			if apierrors.IsNotFound(err) {
-				logger.Log.Error(err, "resource not found during status update", "resource", resourceType, "name", objKey.Name)
-				return false, err // Don't retry on not found
-			}
-			logger.Log.Error(err, "error fetching resource for status update, retrying", "resource", resourceType, "name", objKey.Name)
-			return false, nil // Retry on transient errors
-		}
-
-		// Apply the mutation to the fresh copy
-		mutate(obj)
-
-		// Try to update the status with the current resource version
-		err = c.Status().Update(ctx, obj)
-		if err != nil {
-			if apierrors.IsInvalid(err) || apierrors.IsForbidden(err) {
-				logger.Log.Error(err, "permanent error updating status", "resource", resourceType, "name", obj.GetName())
-				return false, err // Don't retry on permanent errors
-			}
-			if apierrors.IsConflict(err) {
-				// Resource was modified between fetch and update - retry with fresh fetch
-				logger.Log.Debug("conflict updating status (concurrent modification), will retry with fresh fetch",
-					"resource", resourceType, "name", obj.GetName())
-				return false, nil // Retry - will fetch fresh copy
-			}
-			logger.Log.Error(err, "transient error updating status, retrying", "resource", resourceType, "name", obj.GetName())
-			return false, nil // Retry on transient errors
-		}
-
-		logger.Log.Debug("status updated successfully", "resource", resourceType, "name", obj.GetName())
 		return true, nil
 	})
 }

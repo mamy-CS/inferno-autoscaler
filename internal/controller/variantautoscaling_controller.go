@@ -143,7 +143,6 @@ func (r *VariantAutoscalingReconciler) Reconcile(ctx context.Context, req ctrl.R
 		// Update VA status
 		// TODO: refactor to use retry utility function.
 		// UpdateStatusWithBackoff does not work as it goes not refresh the object before update
-		// UpdateStatusWithOptimisticLocking is too complex and not suitable for this case
 		if err := r.Status().Update(ctx, &va); err != nil {
 			logger.Log.Errorf("Failed to update VariantAutoscaling status: name=%s, namespace=%s, error=%v", va.Name, va.Namespace, err)
 			return ctrl.Result{}, err
