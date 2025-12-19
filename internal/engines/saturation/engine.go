@@ -27,7 +27,6 @@ import (
 	"gopkg.in/yaml.v3"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
@@ -123,8 +122,6 @@ func (e *Engine) optimize(ctx context.Context) error {
 		}
 	}
 
-	//TODO simplify Saturation loading configmap
-
 	if strings.EqualFold(os.Getenv("WVA_SCALE_TO_ZERO"), "true") {
 		logger.Info("Scaling to zero is enabled")
 	}
@@ -142,10 +139,9 @@ func (e *Engine) optimize(ctx context.Context) error {
 
 	saturationConfigMap, err := e.readSaturationScalingConfig(ctx, saturationConfigMapName, configMapNamespace)
 	if err != nil {
-		logger.Info("Failed to read saturation scaling config, using defaults: %v", err)
-		saturationConfigMap = map[string]interfaces.SaturationScalingConfig{
-			"default": interfaces.DefaultSaturationScalingConfig(),
-		}
+		logger.Error(err, "Failed to read saturation scaling config, skipping optimization iteration")
+		//TODO: should we retry again? readSaturationScalingConfig already has backoff with retry logic
+		return nil
 	}
 
 	// Group VAs by model for per-model capacity analysis
@@ -180,11 +176,11 @@ func (e *Engine) optimize(ctx context.Context) error {
 			// Metrics collection error - individual VAs are skipped
 		}
 
-		// Get saturation config for this model (with fallback to default)
+		// Get saturation config for this model (use default)
 		var saturationConfig interfaces.SaturationScalingConfig
 		//TODO: if modelVAs is less than zero we continue saturation analysis and fail??
 		if len(modelVAs) > 0 {
-			saturationConfig = e.getSaturationScalingConfigForVariant(ctx, saturationConfigMap, modelID, modelVAs[0].Namespace)
+			saturationConfig = saturationConfigMap["default"]
 		}
 		saturationTargets, saturationAnalysis, variantStates, err := e.RunSaturationAnalysis(ctx, modelID, modelVAs, saturationConfig, e.client, e.MetricsCollector)
 		if err != nil {
@@ -822,15 +818,6 @@ func (e *Engine) readSaturationScalingConfig(ctx context.Context, cmName, cmName
 	err := utils.GetConfigMapWithBackoff(ctx, e.client, cmName, cmNamespace, &cm)
 
 	if err != nil {
-		if apierrors.IsNotFound(err) {
-			logger.Info("Saturation scaling ConfigMap not found, using hardcoded defaults",
-				"configmap", cmName,
-				"namespace", cmNamespace)
-			// Return default config only
-			return map[string]interfaces.SaturationScalingConfig{
-				"default": interfaces.DefaultSaturationScalingConfig(),
-			}, nil
-		}
 		return nil, fmt.Errorf("failed to read ConfigMap %s/%s: %w", cmNamespace, cmName, err)
 	}
 
@@ -855,45 +842,7 @@ func (e *Engine) readSaturationScalingConfig(ctx context.Context, cmName, cmName
 		configs[key] = config
 	}
 
-	// Ensure default exists
-	if _, ok := configs["default"]; !ok {
-		logger.Info("No 'default' entry in saturation scaling ConfigMap, using hardcoded defaults")
-		configs["default"] = interfaces.DefaultSaturationScalingConfig()
-	}
-
 	return configs, nil
-}
-
-// getSaturationScalingConfigForVariant retrieves config for specific model/namespace with fallback to default.
-func (e *Engine) getSaturationScalingConfigForVariant(
-	ctx context.Context,
-	configs map[string]interfaces.SaturationScalingConfig,
-	modelID, namespace string,
-) interfaces.SaturationScalingConfig {
-	logger := ctrl.LoggerFrom(ctx)
-
-	// Start with default
-	config := configs["default"]
-
-	// Search for matching override
-	for key, override := range configs {
-		if key == "default" {
-			continue
-		}
-
-		// Check if this override matches our model_id and namespace
-		if override.ModelID == modelID && override.Namespace == namespace {
-			config.Merge(override)
-			logger.V(logging.DEBUG).Info("Applied saturation scaling override",
-				"key", key,
-				"modelID", modelID,
-				"namespace", namespace,
-				"config", config)
-			break
-		}
-	}
-
-	return config
 }
 
 func (e *Engine) readOptimizationConfig(ctx context.Context) (interval string, err error) {

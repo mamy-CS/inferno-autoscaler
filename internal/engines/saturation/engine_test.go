@@ -53,6 +53,14 @@ var _ = Describe("Saturation Engine", func() {
 			_, err := engine.readOptimizationConfig(ctx)
 			Expect(err).To(HaveOccurred(), "Expected error when reading missing variant autoscaling optimization ConfigMap")
 		})
+
+		It("should fail on missing saturation scaling ConfigMap", func() {
+			By("Creating Engine without required ConfigMaps")
+			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, nil)
+
+			_, err := engine.readSaturationScalingConfig(ctx, "saturation-scaling-config", "workload-variant-autoscaler-system")
+			Expect(err).To(HaveOccurred(), "Expected error when reading missing saturation scaling ConfigMap")
+		})
 	})
 
 	Context("When validating configurations", func() {
