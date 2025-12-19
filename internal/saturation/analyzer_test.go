@@ -16,7 +16,12 @@ func init() {
 
 func TestAnalyzeModelSaturation_ScaleUp(t *testing.T) {
 	analyzer := NewAnalyzer()
-	config := interfaces.DefaultSaturationScalingConfig()
+	config := interfaces.SaturationScalingConfig{
+		KvCacheThreshold:     0.80,
+		QueueLengthThreshold: 5,
+		KvSpareTrigger:       0.10,
+		QueueSpareTrigger:    3,
+	}
 
 	tests := []struct {
 		name                string
@@ -74,7 +79,12 @@ func TestAnalyzeModelSaturation_ScaleUp(t *testing.T) {
 
 func TestAnalyzeModelSaturation_ScaleDownSafety(t *testing.T) {
 	analyzer := NewAnalyzer()
-	config := interfaces.DefaultSaturationScalingConfig()
+	config := interfaces.SaturationScalingConfig{
+		KvCacheThreshold:     0.80,
+		QueueLengthThreshold: 5,
+		KvSpareTrigger:       0.10,
+		QueueSpareTrigger:    3,
+	}
 
 	tests := []struct {
 		name                string
@@ -131,7 +141,12 @@ func TestAnalyzeModelSaturation_ScaleDownSafety(t *testing.T) {
 
 func TestAnalyzeModelSaturation_MultiVariant(t *testing.T) {
 	analyzer := NewAnalyzer()
-	config := interfaces.DefaultSaturationScalingConfig()
+	config := interfaces.SaturationScalingConfig{
+		KvCacheThreshold:     0.80,
+		QueueLengthThreshold: 5,
+		KvSpareTrigger:       0.10,
+		QueueSpareTrigger:    3,
+	}
 
 	// Test with metrics from multiple variants
 	replicaMetrics := []interfaces.ReplicaMetrics{
@@ -178,7 +193,12 @@ func TestAnalyzeModelSaturation_MultiVariant(t *testing.T) {
 
 func TestAnalyzeModelSaturation_EmptyMetrics(t *testing.T) {
 	analyzer := NewAnalyzer()
-	config := interfaces.DefaultSaturationScalingConfig()
+	config := interfaces.SaturationScalingConfig{
+		KvCacheThreshold:     0.80,
+		QueueLengthThreshold: 5,
+		KvSpareTrigger:       0.10,
+		QueueSpareTrigger:    3,
+	}
 
 	analysis, err := analyzer.AnalyzeModelSaturation(
 		context.Background(),
@@ -207,7 +227,12 @@ func TestAnalyzeModelSaturation_EmptyMetrics(t *testing.T) {
 
 func TestAnalyzeVariant_SaturatedReplicas(t *testing.T) {
 	analyzer := &Analyzer{}
-	config := interfaces.DefaultSaturationScalingConfig()
+	config := interfaces.SaturationScalingConfig{
+		KvCacheThreshold:     0.80,
+		QueueLengthThreshold: 5,
+		KvSpareTrigger:       0.10,
+		QueueSpareTrigger:    3,
+	}
 
 	metrics := []interfaces.ReplicaMetrics{
 		{PodName: "pod-1", VariantName: "v1", KvCacheUsage: 0.85, QueueLength: 2}, // Saturated (KV)
@@ -242,7 +267,12 @@ func TestAnalyzeVariant_SaturatedReplicas(t *testing.T) {
 
 func TestAnalyzeModelSaturation_AllSaturated(t *testing.T) {
 	analyzer := NewAnalyzer()
-	config := interfaces.DefaultSaturationScalingConfig()
+	config := interfaces.SaturationScalingConfig{
+		KvCacheThreshold:     0.80,
+		QueueLengthThreshold: 5,
+		KvSpareTrigger:       0.10,
+		QueueSpareTrigger:    3,
+	}
 
 	// All replicas are saturated
 	replicaMetrics := []interfaces.ReplicaMetrics{
@@ -294,7 +324,12 @@ func TestAnalyzeModelSaturation_AllSaturated(t *testing.T) {
 
 func TestAnalyzeModelSaturation_TimestampSet(t *testing.T) {
 	analyzer := NewAnalyzer()
-	config := interfaces.DefaultSaturationScalingConfig()
+	config := interfaces.SaturationScalingConfig{
+		KvCacheThreshold:     0.80,
+		QueueLengthThreshold: 5,
+		KvSpareTrigger:       0.10,
+		QueueSpareTrigger:    3,
+	}
 
 	before := time.Now()
 

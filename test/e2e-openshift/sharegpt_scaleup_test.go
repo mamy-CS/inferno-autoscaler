@@ -38,12 +38,12 @@ var lowLoad = numPrompts <= 2000 && requestRate <= 8
 
 // Load generation configuration constants
 const (
-	numLoadWorkers      = 10   // Number of parallel load generation workers
-	requestsPerWorker   = 500  // Requests each worker sends
-	batchSize           = 50   // Concurrent requests per batch
-	curlTimeoutSeconds  = 120  // Timeout for each curl request
-	maxTokens           = 150  // Max tokens for completion requests
-	batchSleepDuration  = "0.1" // Sleep duration between batches to control rate
+	numLoadWorkers     = 10    // Number of parallel load generation workers
+	requestsPerWorker  = 500   // Requests each worker sends
+	batchSize          = 50    // Concurrent requests per batch
+	curlTimeoutSeconds = 120   // Timeout for each curl request
+	maxTokens          = 150   // Max tokens for completion requests
+	batchSleepDuration = "0.1" // Sleep duration between batches to control rate
 )
 
 var _ = Describe("ShareGPT Scale-Up Test", Ordered, func() {

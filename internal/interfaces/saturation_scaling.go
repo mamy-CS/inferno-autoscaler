@@ -25,35 +25,6 @@ type SaturationScalingConfig struct {
 	QueueSpareTrigger float64 `yaml:"queueSpareTrigger"`
 }
 
-// DefaultSaturationScalingConfig returns hardcoded default configuration.
-// Used as fallback when ConfigMap is missing or has no 'default' entry.
-func DefaultSaturationScalingConfig() SaturationScalingConfig {
-	return SaturationScalingConfig{
-		KvCacheThreshold:     0.80,
-		QueueLengthThreshold: 5,
-		KvSpareTrigger:       0.10,
-		QueueSpareTrigger:    3,
-	}
-}
-
-// Merge applies non-zero values from override on top of base config.
-// This allows partial overrides where unspecified fields inherit from default.
-// Note: model_id and namespace are not merged (they're metadata fields).
-func (base *SaturationScalingConfig) Merge(override SaturationScalingConfig) {
-	if override.KvCacheThreshold != 0 {
-		base.KvCacheThreshold = override.KvCacheThreshold
-	}
-	if override.QueueLengthThreshold != 0 {
-		base.QueueLengthThreshold = override.QueueLengthThreshold
-	}
-	if override.KvSpareTrigger != 0 {
-		base.KvSpareTrigger = override.KvSpareTrigger
-	}
-	if override.QueueSpareTrigger != 0 {
-		base.QueueSpareTrigger = override.QueueSpareTrigger
-	}
-}
-
 // Validate checks for invalid threshold values.
 // Returns error with descriptive message if validation fails.
 func (c *SaturationScalingConfig) Validate() error {
