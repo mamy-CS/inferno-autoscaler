@@ -1,3 +1,4 @@
+{{- if .Values.controller.enabled }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -56,3 +57,4 @@ data:
   # EPP_METRICS_CACHE_TTL: "15s"
   # EPP_METRICS_CACHE_MAX_SIZE: "500"
   # EPP_METRICS_CACHE_CLEANUP_INTERVAL: "30s"
+{{- end }}

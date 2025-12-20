@@ -1,3 +1,4 @@
+{{- if .Values.controller.enabled }}
 apiVersion: v1
 kind: ConfigMap
 # This configMap defines the set of accelerators available
@@ -37,3 +38,4 @@ data:
       - model: meta/llama0-7b
         slo-tpot: 150
         slo-ttft: 1500
+{{- end }}

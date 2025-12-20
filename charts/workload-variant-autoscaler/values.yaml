@@ -1,3 +1,9 @@
+# Controller deployment settings
+# Set controller.enabled=false to deploy only VA/HPA/ServiceMonitor resources
+# without deploying another controller instance (use existing cluster-wide controller)
+controller:
+  enabled: true
+
 wva:
   enabled: true
 

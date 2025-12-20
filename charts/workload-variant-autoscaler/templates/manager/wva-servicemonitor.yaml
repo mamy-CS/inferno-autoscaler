@@ -1,3 +1,4 @@
+{{- if .Values.controller.enabled }}
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
@@ -27,3 +28,4 @@ spec:
     matchLabels:
       {{- include "workload-variant-autoscaler.selectorLabels" . | nindent 6 }}
       control-plane: controller-manager
+{{- end }}
