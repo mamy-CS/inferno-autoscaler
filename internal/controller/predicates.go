@@ -7,14 +7,12 @@ import (
 )
 
 // ConfigMapPredicate returns a predicate that filters ConfigMap events to only the target ConfigMaps.
-// It matches the enqueue function logic:
-// - Allows configMapName from any namespace
-// - Allows saturationConfigMapName only if namespace matches configMapNamespace
-// This predicate is used to filter only the target configmap.
+// It matches the enqueue function logic - allows either configmap name if namespace matches.
+// This predicate is used to filter only the target configmaps.
 func ConfigMapPredicate() predicate.Predicate {
 	return predicate.NewPredicateFuncs(func(obj client.Object) bool {
 		name := obj.GetName()
-		return name == configMapName || (name == saturationConfigMapName && obj.GetNamespace() == configMapNamespace)
+		return (name == getConfigMapName() || name == getSaturationConfigMapName()) && obj.GetNamespace() == configMapNamespace
 	})
 }
 
@@ -25,7 +23,7 @@ func ConfigMapPredicate() predicate.Predicate {
 // Prometheus from scraping controller metrics (including optimized replicas).
 func ServiceMonitorPredicate() predicate.Predicate {
 	return predicate.NewPredicateFuncs(func(obj client.Object) bool {
-		return obj.GetName() == serviceMonitorName && obj.GetNamespace() == configMapNamespace
+		return obj.GetName() == defaultServiceMonitorName && obj.GetNamespace() == configMapNamespace
 	})
 }
 

@@ -75,11 +75,11 @@ type VariantAutoscalingReconciler struct {
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
 const (
-	configMapName = "workload-variant-autoscaler-variantautoscaling-config"
+	defaultConfigMapName = "workload-variant-autoscaler-variantautoscaling-config"
 	// ServiceMonitor constants for watching controller's own metrics ServiceMonitor
-	serviceMonitorName = "workload-variant-autoscaler-controller-manager-metrics-monitor"
+	defaultServiceMonitorName = "workload-variant-autoscaler-controller-manager-metrics-monitor"
 
-	saturationConfigMapName = "saturation-scaling-config"
+	defaultSaturationConfigMapName = "saturation-scaling-config"
 )
 
 func getNamespace() string {
@@ -87,6 +87,20 @@ func getNamespace() string {
 		return ns
 	}
 	return "workload-variant-autoscaler-system"
+}
+
+func getConfigMapName() string {
+	if name := os.Getenv("CONFIG_MAP_NAME"); name != "" {
+		return name
+	}
+	return defaultConfigMapName
+}
+
+func getSaturationConfigMapName() string {
+	if name := os.Getenv("SATURATION_CONFIG_MAP_NAME"); name != "" {
+		return name
+	}
+	return defaultSaturationConfigMapName
 }
 
 var (
@@ -134,9 +148,12 @@ func (r *VariantAutoscalingReconciler) Reconcile(ctx context.Context, req ctrl.R
 		"namespace", va.Namespace,
 		"modelID", va.Spec.ModelID)
 
-	// Attempts to resolve the target model variant
-	// TODO: replace by proper lookup mechanism using spec.scaleTargetRef in future
-	scaleTargetName := va.Name
+	// Attempts to resolve the target model variant using scaleTargetRef
+	scaleTargetName := va.Spec.ScaleTargetRef.Name
+	if scaleTargetName == "" {
+		// Fallback to VA name for backwards compatibility
+		scaleTargetName = va.Name
+	}
 
 	// TODO: generalize to other scale target kind in future
 	var deploy appsv1.Deployment
@@ -196,7 +213,7 @@ func BuildVariantStates(
 				"error", err)
 			// Fallback to status if deployment fetch fails
 			states = append(states, interfaces.VariantReplicaState{
-				VariantName:     va.Name,
+				VariantName:     va.GetScaleTargetName(),
 				CurrentReplicas: va.Status.CurrentAlloc.NumReplicas,
 				DesiredReplicas: va.Status.DesiredOptimizedAlloc.NumReplicas,
 			})
@@ -209,7 +226,7 @@ func BuildVariantStates(
 		}
 
 		states = append(states, interfaces.VariantReplicaState{
-			VariantName:     va.Name,
+			VariantName:     deploy.Name,
 			CurrentReplicas: currentReplicas,
 			DesiredReplicas: va.Status.DesiredOptimizedAlloc.NumReplicas,
 		})
@@ -240,13 +257,6 @@ func RunSaturationAnalysis(
 
 	for i := range modelVAs {
 		va := &modelVAs[i]
-		cost := saturation.DefaultVariantCost // default
-		if va.Spec.VariantCost != "" {
-			if parsedCost, err := strconv.ParseFloat(va.Spec.VariantCost, 64); err == nil {
-				cost = parsedCost
-			}
-		}
-		variantCosts[va.Name] = cost
 
 		// Get the deployment for this VA using ScaleTargetRef
 		var deploy appsv1.Deployment
@@ -258,8 +268,19 @@ func RunSaturationAnalysis(
 				"error", err)
 			continue
 		}
-		deployments[va.Name] = &deploy
-		variantAutoscalings[va.Name] = va
+
+		cost := saturation.DefaultVariantCost // default
+		if va.Spec.VariantCost != "" {
+			if parsedCost, err := strconv.ParseFloat(va.Spec.VariantCost, 64); err == nil {
+				cost = parsedCost
+			}
+		}
+
+		// Use deployment name as key (not VA name) since getExistingPods uses
+		// the key to build pod name regex filters for Prometheus queries
+		deployments[deploy.Name] = &deploy
+		variantAutoscalings[deploy.Name] = va
+		variantCosts[deploy.Name] = cost
 	}
 
 	// Collect Saturation metrics using the configured collector
@@ -440,7 +461,7 @@ func (r *VariantAutoscalingReconciler) SetupWithManager(mgr ctrl.Manager) error 
 		Watches(
 			&corev1.ConfigMap{},
 			handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
-				if obj.GetName() == configMapName || obj.GetName() == saturationConfigMapName && obj.GetNamespace() == configMapNamespace {
+				if (obj.GetName() == getConfigMapName() || obj.GetName() == getSaturationConfigMapName()) && obj.GetNamespace() == configMapNamespace {
 					return []reconcile.Request{{}}
 				}
 				return nil

@@ -44,11 +44,11 @@ import (
 )
 
 const (
-	configMapName = "workload-variant-autoscaler-variantautoscaling-config"
+	defaultConfigMapName = "workload-variant-autoscaler-variantautoscaling-config"
 	// Environment variable to enable experimental hybrid-based optimization
 	// When "off" or unset, runs saturation analyzer only (default, reactive mode)
 
-	saturationConfigMapName = "saturation-scaling-config"
+	defaultSaturationConfigMapName = "saturation-scaling-config"
 )
 
 var (
@@ -60,6 +60,20 @@ func getNamespace() string {
 		return ns
 	}
 	return "workload-variant-autoscaler-system"
+}
+
+func getConfigMapName() string {
+	if name := os.Getenv("CONFIG_MAP_NAME"); name != "" {
+		return name
+	}
+	return defaultConfigMapName
+}
+
+func getSaturationConfigMapName() string {
+	if name := os.Getenv("SATURATION_CONFIG_MAP_NAME"); name != "" {
+		return name
+	}
+	return defaultSaturationConfigMapName
 }
 
 type Engine struct {
@@ -137,7 +151,7 @@ func (e *Engine) optimize(ctx context.Context) error {
 		return nil
 	}
 
-	saturationConfigMap, err := e.readSaturationScalingConfig(ctx, saturationConfigMapName, configMapNamespace)
+	saturationConfigMap, err := e.readSaturationScalingConfig(ctx, getSaturationConfigMapName(), configMapNamespace)
 	if err != nil {
 		logger.Error(err, "Failed to read saturation scaling config, skipping optimization iteration")
 		//TODO: should we retry again? readSaturationScalingConfig already has backoff with retry logic
@@ -156,11 +170,11 @@ func (e *Engine) optimize(ctx context.Context) error {
 	errorCount := 0
 	// Create VA lookup map for applySaturationDecisions (used to access VA status and update decisions)
 	// Copy slice elements to local variable to ensure stable pointers
-	// Use simple name as key since decision.VariantName is just the name (not full name with namespace)
+	// Use deployment name (ScaleTargetName) as key since decision.VariantName uses deployment name
 	vaMap := make(map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling, len(activeVAs))
 	for i := range activeVAs {
 		va := activeVAs[i] // Copy to local variable to ensure stable pointer
-		vaMap[va.Name] = &va
+		vaMap[va.GetScaleTargetName()] = &va
 	}
 
 	for modelID, modelVAs := range modelGroups {
@@ -206,16 +220,19 @@ func (e *Engine) optimize(ctx context.Context) error {
 		}
 	}
 
-	// STEP 3: Apply all decisions
+	// STEP 3: Apply decisions and update VA status
+	// Always call applySaturationDecisions, even with empty decisions.
+	// This function also updates VA.Status.CurrentAlloc with collected metrics
+	// and emits HPA metrics, which must happen every reconciliation cycle.
 	if len(allDecisions) > 0 {
 		logger.Info("Applying scaling decisions",
 			"totalDecisions", len(allDecisions))
-		if err := e.applySaturationDecisions(ctx, allDecisions, vaMap); err != nil {
-			logger.Error(err, "Failed to apply saturation decisions")
-			return err
-		}
 	} else {
-		logger.Info("No scaling decisions to apply")
+		logger.Info("No scaling decisions to apply, updating VA status with metrics")
+	}
+	if err := e.applySaturationDecisions(ctx, allDecisions, vaMap); err != nil {
+		logger.Error(err, "Failed to apply saturation decisions")
+		return err
 	}
 
 	if errorCount > 0 {
@@ -253,7 +270,7 @@ func (e *Engine) BuildVariantStates(
 				"error", err)
 			// Fallback to status if deployment fetch fails
 			states = append(states, interfaces.VariantReplicaState{
-				VariantName:     va.Name,
+				VariantName:     va.GetScaleTargetName(),
 				CurrentReplicas: va.Status.CurrentAlloc.NumReplicas,
 				DesiredReplicas: va.Status.DesiredOptimizedAlloc.NumReplicas,
 			})
@@ -266,7 +283,7 @@ func (e *Engine) BuildVariantStates(
 		}
 
 		states = append(states, interfaces.VariantReplicaState{
-			VariantName:     va.Name,
+			VariantName:     deploy.Name,
 			CurrentReplicas: currentReplicas,
 			DesiredReplicas: va.Status.DesiredOptimizedAlloc.NumReplicas,
 		})
@@ -364,13 +381,6 @@ func (e *Engine) RunSaturationAnalysis(
 
 	for i := range modelVAs {
 		va := &modelVAs[i]
-		cost := saturation.DefaultVariantCost // default
-		if va.Spec.VariantCost != "" {
-			if parsedCost, err := strconv.ParseFloat(va.Spec.VariantCost, 64); err == nil {
-				cost = parsedCost
-			}
-		}
-		variantCosts[va.Name] = cost
 
 		// Get the deployment for this VA using ScaleTargetRef
 		var deploy appsv1.Deployment
@@ -382,8 +392,20 @@ func (e *Engine) RunSaturationAnalysis(
 				"error", err)
 			continue
 		}
-		deployments[va.Name] = &deploy
-		variantAutoscalings[va.Name] = va
+
+		// Parse variant cost
+		cost := saturation.DefaultVariantCost // default
+		if va.Spec.VariantCost != "" {
+			if parsedCost, err := strconv.ParseFloat(va.Spec.VariantCost, 64); err == nil {
+				cost = parsedCost
+			}
+		}
+
+		// Use deployment name as key (not VA name) since getExistingPods uses
+		// the key to build pod name regex filters for Prometheus queries
+		deployments[deploy.Name] = &deploy
+		variantAutoscalings[deploy.Name] = va
+		variantCosts[deploy.Name] = cost
 	}
 
 	// Collect Saturation metrics using the configured collector
@@ -541,7 +563,8 @@ func (e *Engine) CollectMetricsForSaturationMode(
 		updateVA.Status.CurrentAlloc = currentAllocation
 
 		// Update vaMap with the VA that has CurrentAlloc populated
-		vaMap[updateVA.Name] = &updateVA
+		// Use deployment name as key to match the initial vaMap population
+		vaMap[updateVA.GetScaleTargetName()] = &updateVA
 
 		logger.Info("Metrics collected for VA",
 			"variant", updateVA.Name,
@@ -595,6 +618,16 @@ func (e *Engine) applySaturationDecisions(
 		// valid check: we only update if we have a valid current alloc from the analysis phase
 		if va.Status.CurrentAlloc.Accelerator != "" {
 			updateVa.Status.CurrentAlloc = va.Status.CurrentAlloc
+		}
+
+		// Copy MetricsAvailable condition from local analysis (set during metrics collection)
+		// This condition was set on `va` but we fetched a fresh `updateVa` from API server
+		if metricsCondition := llmdVariantAutoscalingV1alpha1.GetCondition(va, llmdVariantAutoscalingV1alpha1.TypeMetricsAvailable); metricsCondition != nil {
+			llmdVariantAutoscalingV1alpha1.SetCondition(&updateVa,
+				llmdVariantAutoscalingV1alpha1.TypeMetricsAvailable,
+				metricsCondition.Status,
+				metricsCondition.Reason,
+				metricsCondition.Message)
 		}
 
 		// Determine target replicas and accelerator
@@ -847,7 +880,7 @@ func (e *Engine) readSaturationScalingConfig(ctx context.Context, cmName, cmName
 
 func (e *Engine) readOptimizationConfig(ctx context.Context) (interval string, err error) {
 	cm := corev1.ConfigMap{}
-	err = utils.GetConfigMapWithBackoff(ctx, e.client, configMapName, configMapNamespace, &cm)
+	err = utils.GetConfigMapWithBackoff(ctx, e.client, getConfigMapName(), configMapNamespace, &cm)
 
 	if err != nil {
 		return "", fmt.Errorf("failed to get optimization configmap after retries: %w", err)

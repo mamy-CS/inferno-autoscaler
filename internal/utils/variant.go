@@ -96,16 +96,23 @@ func filterVariantsByDeployment(ctx context.Context, client client.Client, filte
 		default:
 		}
 
+		// Skip VAs without scaleTargetRef (required to know which deployment to look up)
+		if va.Spec.ScaleTargetRef.Name == "" {
+			ctrl.LoggerFrom(ctx).V(logging.DEBUG).Info("Skipping VA without scaleTargetRef", "namespace", va.Namespace, "name", va.Name)
+			continue
+		}
+
 		// TODO: Generalize to other scale target kinds in future
+		deployName := va.Spec.ScaleTargetRef.Name
 		var deploy appsv1.Deployment
-		if err := GetDeploymentWithBackoff(ctx, client, va.Name, va.Namespace, &deploy); err != nil {
-			ctrl.LoggerFrom(ctx).Error(err, "Failed to get deployment", "namespace", va.Namespace, "name", va.Name)
+		if err := GetDeploymentWithBackoff(ctx, client, deployName, va.Namespace, &deploy); err != nil {
+			ctrl.LoggerFrom(ctx).Error(err, "Failed to get deployment", "namespace", va.Namespace, "deploymentName", deployName, "vaName", va.Name)
 			continue
 		}
 
 		// Skip deleted deployments
 		if !deploy.DeletionTimestamp.IsZero() {
-			ctrl.LoggerFrom(ctx).V(logging.DEBUG).Info("Skipping deleted deployment", "namespace", va.Namespace, "name", va.Name)
+			ctrl.LoggerFrom(ctx).V(logging.DEBUG).Info("Skipping deleted deployment", "namespace", va.Namespace, "deploymentName", deployName)
 			continue
 		}
 

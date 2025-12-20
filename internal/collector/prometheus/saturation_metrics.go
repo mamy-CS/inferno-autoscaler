@@ -311,13 +311,24 @@ func (cmc *SaturationMetricsCollector) mergeMetrics(
 	existingPods := cmc.getExistingPods(ctx, namespace, deployments, podSet)
 	stalePodCount := 0
 
-	// Filter out pods that don't exist according to the queried Prometheus kube-state-metrics
-	for podName := range podSet {
-		if !existingPods[podName] {
-			stalePodCount++
-			// TODO: remove debug log after verification
-			logger.V(logging.DEBUG).Info("Filtering pod from stale vLLM metrics", "pod", podName, "namespace", namespace, "model", modelID)
-			delete(podSet, podName)
+	// If getExistingPods returns empty but we have candidate pods with metrics,
+	// skip the filtering - this handles the case where kube_pod_info hasn't been
+	// scraped yet for new pods. It's better to include all candidates than to
+	// filter them all out and skip saturation analysis entirely.
+	// Note: This workaround may include metrics from recently-terminated pods if
+	// kube_pod_info is stale. The typical staleness window is ~30s based on scrape intervals.
+	// TODO: Consider adding time-based filtering or retry logic for more accurate pod filtering.
+	if len(existingPods) == 0 && len(podSet) > 0 {
+		logger.Info("kube_pod_info returned no pods but we have metric candidates, skipping stale pod filtering",
+			"candidatePods", len(podSet), "namespace", namespace, "model", modelID)
+	} else {
+		// Filter out pods that don't exist according to the queried Prometheus kube-state-metrics
+		for podName := range podSet {
+			if !existingPods[podName] {
+				stalePodCount++
+				logger.V(logging.DEBUG).Info("Filtering pod from stale vLLM metrics", "pod", podName, "namespace", namespace, "model", modelID)
+				delete(podSet, podName)
+			}
 		}
 	}
 
