@@ -36,12 +36,10 @@ jobs:
 
       # - name: Run precommit checks
       #   run: make precommit
-      
-      - name: Run make test-e2e
-        shell: bash
-        run: |
-          make test-e2e
-      
+
+      # Note: test-e2e requires Kind and full cluster setup
+      # E2E tests run in separate ci-e2e-openshift workflow on self-hosted runner
+
       - name: Run make build
         shell: bash
         run: |

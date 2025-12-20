@@ -65,6 +65,10 @@ llmd:
 va:
   enabled: true
   accelerator: H100
+  # Cost per replica in arbitrary units (higher = more expensive to scale)
+  # Used by saturation analysis to weight scaling decisions across variants
+  # Example: H100=10.0, A100=8.0, L40S=5.0 (relative GPU costs)
+  variantCost: "10.0"
   sloTpot: 10
   sloTtft: 1000
 

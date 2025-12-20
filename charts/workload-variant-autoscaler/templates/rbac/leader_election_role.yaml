@@ -2,10 +2,10 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  labels:
-    app.kubernetes.io/name: workload-variant-autoscaler
-  name: workload-variant-autoscaler-leader-election-role
+  name: {{ include "workload-variant-autoscaler.fullname" . }}-leader-election-role
   namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "workload-variant-autoscaler.labels" . | nindent 4 }}
 rules:
 - apiGroups:
   - ""

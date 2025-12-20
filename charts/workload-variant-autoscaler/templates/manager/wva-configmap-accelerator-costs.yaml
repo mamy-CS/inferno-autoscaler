@@ -1,8 +1,10 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: accelerator-unit-costs
+  name: {{ include "workload-variant-autoscaler.fullname" . }}-accelerator-unit-costs
   namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "workload-variant-autoscaler.labels" . | nindent 4 }}
 data:
   A100: |
     {
