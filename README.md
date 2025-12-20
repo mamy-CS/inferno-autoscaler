@@ -142,6 +142,36 @@ spec:
 
 More examples in [config/samples/](config/samples/).
 
+## Upgrading
+
+### CRD Updates
+
+**Important:** Helm does not automatically update CRDs during `helm upgrade`. When upgrading WVA to a new version with CRD changes, you must manually apply the updated CRDs first:
+
+```bash
+# Apply the latest CRDs before upgrading
+kubectl apply -f charts/workload-variant-autoscaler/crds/
+
+# Then upgrade the Helm release
+helm upgrade workload-variant-autoscaler ./charts/workload-variant-autoscaler \
+  --namespace workload-variant-autoscaler-system \
+  [your-values...]
+```
+
+### Breaking Changes
+
+#### v0.5.0 (upcoming)
+- **VariantAutoscaling CRD**: Added `scaleTargetRef` field to explicitly specify the target deployment. If not set, the controller infers the target from the `modelID` field.
+
+### Verifying CRD Version
+
+To check if your cluster has the latest CRD schema:
+
+```bash
+# Check the CRD fields
+kubectl get crd variantautoscalings.llmd.ai -o jsonpath='{.spec.versions[0].schema.openAPIV3Schema.properties.spec.properties}' | jq 'keys'
+```
+
 ## Contributing
 
 We welcome contributions! See the llm-d Contributing Guide for guidelines.
