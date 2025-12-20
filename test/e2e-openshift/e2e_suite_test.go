@@ -48,6 +48,9 @@ var (
 	deployment          = getEnvString("DEPLOYMENT", "ms-inference-scheduling-llm-d-modelservice-decode")
 	requestRate         = getEnvInt("REQUEST_RATE", 20)
 	numPrompts          = getEnvInt("NUM_PROMPTS", 3000)
+	// WVA_RELEASE_NAME is used to filter resources for the current test run
+	// This prevents conflicts when multiple runs exist simultaneously
+	wvaReleaseName = getEnvString("WVA_RELEASE_NAME", "")
 )
 
 var (
