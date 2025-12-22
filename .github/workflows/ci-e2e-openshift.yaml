@@ -773,7 +773,7 @@ jobs:
               state = 'success';
               description = 'E2E tests passed';
             } else if (e2eResult === 'skipped') {
-              state = 'success';
+              state = 'pending';
               description = 'E2E tests skipped';
             } else if (e2eResult === 'cancelled') {
               state = 'failure';
@@ -792,7 +792,7 @@ jobs:
               state: state,
               target_url: `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
               description: description,
-              context: 'CI - OpenShift E2E Tests / e2e (/ok-to-test)'
+              context: '${{ github.workflow }} / e2e (/ok-to-test)'
             });
 
             console.log('Status reported successfully');
