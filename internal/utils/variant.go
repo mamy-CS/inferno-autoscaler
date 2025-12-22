@@ -52,20 +52,46 @@ func InactiveVariantAutoscalingByModel(ctx context.Context, client client.Client
 	return GroupVariantAutoscalingByModel(vas), nil
 }
 
-// GroupVariantAutoscalingByModel groups VariantAutoscalings by model ID AND namespace.
-// This is necessary because the same model deployed in different namespaces
+// AcceleratorNameLabel is the label key used to specify the accelerator name for a VA.
+const AcceleratorNameLabel = "inference.optimization/acceleratorName"
+
+// GroupVariantAutoscalingByModel groups VariantAutoscalings by model ID, namespace, AND accelerator type.
+// This is necessary because the same model deployed in different namespaces or on different hardware
 // should be treated as separate scaling domains for saturation analysis.
-// The key format is "modelID|namespace" to ensure proper isolation.
+// The key format is "modelID|namespace|accelerator" to ensure proper isolation.
 func GroupVariantAutoscalingByModel(
 	vas []wvav1alpha1.VariantAutoscaling,
 ) map[string][]wvav1alpha1.VariantAutoscaling {
 	groups := make(map[string][]wvav1alpha1.VariantAutoscaling)
 	for _, va := range vas {
-		// Use modelID + namespace as key to isolate VAs in different namespaces
-		key := va.Spec.ModelID + "|" + va.Namespace
+		// Use modelID + namespace + accelerator as key to isolate VAs
+		// on different hardware types
+		accelerator := GetAcceleratorType(&va)
+		key := va.Spec.ModelID + "|" + va.Namespace + "|" + accelerator
 		groups[key] = append(groups[key], va)
 	}
 	return groups
+}
+
+// GetAcceleratorType extracts the accelerator type from a VariantAutoscaling.
+// It checks in order:
+// 1. The first accelerator in Spec.ModelProfile.Accelerators
+// 2. The inference.optimization/acceleratorName label
+// 3. Returns empty string if neither is available
+func GetAcceleratorType(va *wvav1alpha1.VariantAutoscaling) string {
+	// Try spec first (primary source of truth)
+	if len(va.Spec.ModelProfile.Accelerators) > 0 {
+		return va.Spec.ModelProfile.Accelerators[0].Acc
+	}
+
+	// Fall back to label
+	if va.Labels != nil {
+		if acc, exists := va.Labels[AcceleratorNameLabel]; exists {
+			return acc
+		}
+	}
+
+	return ""
 }
 
 // ActiveVariantAutoscalings retrieves all VariantAutoscaling resources that are ready for optimization

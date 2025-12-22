@@ -1312,3 +1312,231 @@ var _ = Describe("Test workload-variant-autoscaler in emulated environment - mul
 		}, 1*time.Minute, 1*time.Second).Should(Succeed())
 	})
 })
+
+// Test accelerator-based VA grouping isolation (issue #454)
+// This test validates that VAs with the same model but different accelerators
+// are treated as separate scaling domains and don't affect each other's scaling decisions.
+var _ = Describe("Test accelerator-based VA grouping isolation", Ordered, func() {
+	var (
+		// Two VAs with same model but different accelerators
+		a100Name           string
+		h100Name           string
+		namespace          string
+		a100DeployName     string
+		h100DeployName     string
+		a100AppLabel       string
+		h100AppLabel       string
+		a100ServiceName    string
+		h100ServiceName    string
+		a100ServiceMonName string
+		h100ServiceMonName string
+		modelName          string
+		a100VariantCost    float64
+		h100VariantCost    float64
+		port               int
+		loadRate           int
+		initialReplicas    int32
+		ctx                context.Context
+	)
+
+	BeforeAll(func() {
+		if os.Getenv("KUBECONFIG") == "" {
+			Skip("KUBECONFIG is not set; skipping e2e test")
+		}
+
+		initializeK8sClient()
+
+		ctx = context.Background()
+		port = 8000
+		namespace = llmDNamespace
+		modelName = llamaModelId // Same model for both
+
+		// A100 variant
+		a100Name = "llm-d-sim-a100"
+		a100DeployName = a100Name + "-deployment"
+		a100AppLabel = a100Name
+		a100ServiceName = a100Name + "-service"
+		a100ServiceMonName = a100Name + "-servicemonitor"
+
+		// H100 variant - same model, different accelerator
+		h100Name = "llm-d-sim-h100"
+		h100DeployName = h100Name + "-deployment"
+		h100AppLabel = h100Name
+		h100ServiceName = h100Name + "-service"
+		h100ServiceMonName = h100Name + "-servicemonitor"
+
+		loadRate = 5
+		initialReplicas = 1
+		a100VariantCost = 10.0
+		h100VariantCost = 15.0
+
+		By("ensuring unique app labels for deployments")
+		utils.ValidateAppLabelUniqueness(namespace, a100AppLabel, k8sClient, crClient)
+		utils.ValidateAppLabelUniqueness(namespace, h100AppLabel, k8sClient, crClient)
+		utils.ValidateVariantAutoscalingUniqueness(namespace, modelName, a100Acc, crClient)
+		utils.ValidateVariantAutoscalingUniqueness(namespace, modelName, h100Acc, crClient)
+
+		By("creating A100 deployment and VA")
+		a100Deployment := utils.CreateLlmdSimDeployment(namespace, a100DeployName, modelName, a100AppLabel, fmt.Sprintf("%d", port), avgTTFT, avgITL, initialReplicas)
+		_, err := k8sClient.AppsV1().Deployments(namespace).Create(ctx, a100Deployment, metav1.CreateOptions{})
+		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to create A100 Deployment: %s", a100DeployName))
+
+		a100Service := utils.CreateLlmdSimService(namespace, a100ServiceName, a100AppLabel, 30010, port)
+		_, err = k8sClient.CoreV1().Services(namespace).Create(ctx, a100Service, metav1.CreateOptions{})
+		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to create A100 Service: %s", a100ServiceName))
+
+		a100ServiceMon := utils.CreateLlmdSimServiceMonitor(a100ServiceMonName, controllerMonitoringNamespace, llmDNamespace, a100AppLabel)
+		err = crClient.Create(ctx, a100ServiceMon)
+		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to create A100 ServiceMonitor: %s", a100ServiceMonName))
+
+		By("waiting for A100 pod to be running")
+		Eventually(func(g Gomega) {
+			podList, err := k8sClient.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
+				LabelSelector: "app=" + a100AppLabel,
+			})
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(podList.Items).To(HaveLen(1))
+			g.Expect(podList.Items[0].Status.Phase).To(Equal(corev1.PodRunning))
+		}, 2*time.Minute, 5*time.Second).Should(Succeed())
+
+		a100VA := utils.CreateVariantAutoscalingResource(namespace, a100DeployName, modelName, a100Acc, a100VariantCost)
+		err = crClient.Create(ctx, a100VA)
+		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to create A100 VariantAutoscaling: %s", a100DeployName))
+
+		By("creating H100 deployment and VA with same model")
+		h100Deployment := utils.CreateLlmdSimDeployment(namespace, h100DeployName, modelName, h100AppLabel, fmt.Sprintf("%d", port), avgTTFT, avgITL, initialReplicas)
+		_, err = k8sClient.AppsV1().Deployments(namespace).Create(ctx, h100Deployment, metav1.CreateOptions{})
+		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to create H100 Deployment: %s", h100DeployName))
+
+		h100Service := utils.CreateLlmdSimService(namespace, h100ServiceName, h100AppLabel, 30011, port)
+		_, err = k8sClient.CoreV1().Services(namespace).Create(ctx, h100Service, metav1.CreateOptions{})
+		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to create H100 Service: %s", h100ServiceName))
+
+		h100ServiceMon := utils.CreateLlmdSimServiceMonitor(h100ServiceMonName, controllerMonitoringNamespace, llmDNamespace, h100AppLabel)
+		err = crClient.Create(ctx, h100ServiceMon)
+		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to create H100 ServiceMonitor: %s", h100ServiceMonName))
+
+		By("waiting for H100 pod to be running")
+		Eventually(func(g Gomega) {
+			podList, err := k8sClient.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
+				LabelSelector: "app=" + h100AppLabel,
+			})
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(podList.Items).To(HaveLen(1))
+			g.Expect(podList.Items[0].Status.Phase).To(Equal(corev1.PodRunning))
+		}, 2*time.Minute, 5*time.Second).Should(Succeed())
+
+		h100VA := utils.CreateVariantAutoscalingResource(namespace, h100DeployName, modelName, h100Acc, h100VariantCost)
+		err = crClient.Create(ctx, h100VA)
+		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to create H100 VariantAutoscaling: %s", h100DeployName))
+
+		logf.SetLogger(zap.New(zap.WriteTo(GinkgoWriter), zap.UseDevMode(true)))
+	})
+
+	It("should have both VAs with same model but different accelerators", func() {
+		By("verifying both VAs exist with same model ID")
+		a100VA := &v1alpha1.VariantAutoscaling{}
+		err := crClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: a100DeployName}, a100VA)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(a100VA.Spec.ModelID).To(Equal(modelName))
+
+		h100VA := &v1alpha1.VariantAutoscaling{}
+		err = crClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: h100DeployName}, h100VA)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(h100VA.Spec.ModelID).To(Equal(modelName))
+
+		By("verifying they have different accelerators")
+		Expect(a100VA.Spec.ModelProfile.Accelerators[0].Acc).To(Equal(a100Acc))
+		Expect(h100VA.Spec.ModelProfile.Accelerators[0].Acc).To(Equal(h100Acc))
+	})
+
+	It("should isolate scaling decisions between VAs with different accelerators", func() {
+		By("setting up Prometheus port-forward")
+		prometheusPortForwardCmd := utils.SetUpPortForward(k8sClient, ctx, "kube-prometheus-stack-prometheus", controllerMonitoringNamespace, 9090, 9090)
+		defer func() {
+			_ = utils.StopCmd(prometheusPortForwardCmd)
+		}()
+
+		err := utils.VerifyPortForwardReadiness(ctx, 9090, fmt.Sprintf("https://localhost:%d/api/v1/query?query=up", 9090))
+		Expect(err).NotTo(HaveOccurred())
+
+		By("waiting for both VAs to have MetricsAvailable condition")
+		Eventually(func(g Gomega) {
+			a100VA := &v1alpha1.VariantAutoscaling{}
+			err := crClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: a100DeployName}, a100VA)
+			g.Expect(err).NotTo(HaveOccurred())
+			cond := v1alpha1.GetCondition(a100VA, v1alpha1.TypeMetricsAvailable)
+			g.Expect(cond).NotTo(BeNil())
+			g.Expect(cond.Status).To(Equal(metav1.ConditionTrue))
+
+			h100VA := &v1alpha1.VariantAutoscaling{}
+			err = crClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: h100DeployName}, h100VA)
+			g.Expect(err).NotTo(HaveOccurred())
+			cond = v1alpha1.GetCondition(h100VA, v1alpha1.TypeMetricsAvailable)
+			g.Expect(cond).NotTo(BeNil())
+			g.Expect(cond.Status).To(Equal(metav1.ConditionTrue))
+		}, 4*time.Minute, 10*time.Second).Should(Succeed())
+
+		By("applying load ONLY to A100 deployment")
+		a100ServiceURL := fmt.Sprintf("http://%s.%s:%d", a100ServiceName, namespace, port)
+		loadGenJob, err := utils.CreateLoadGeneratorJob(GuidellmImage, namespace, a100ServiceURL, modelName, loadRate, maxExecutionTimeSec, inputTokens, outputTokens, k8sClient, ctx)
+		Expect(err).NotTo(HaveOccurred())
+		defer func() {
+			_ = utils.StopJob(namespace, loadGenJob, k8sClient, ctx)
+		}()
+
+		By("waiting for load generator to start")
+		Eventually(func(g Gomega) {
+			podList, err := k8sClient.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
+				LabelSelector: fmt.Sprintf("job-name=%s", loadGenJob.Name),
+			})
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(podList.Items).NotTo(BeEmpty())
+			g.Expect(podList.Items[0].Status.Phase).To(Or(Equal(corev1.PodRunning), Equal(corev1.PodSucceeded)))
+		}, 3*time.Minute, 5*time.Second).Should(Succeed())
+
+		By("verifying A100 VA scales up while H100 VA remains at minimum")
+		Eventually(func(g Gomega) {
+			// A100 should scale up due to load
+			a100VA := &v1alpha1.VariantAutoscaling{}
+			err := crClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: a100DeployName}, a100VA)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(a100VA.Status.DesiredOptimizedAlloc.NumReplicas).To(BeNumerically(">", 1),
+				fmt.Sprintf("A100 VA should scale up under load, got %d replicas", a100VA.Status.DesiredOptimizedAlloc.NumReplicas))
+
+			// H100 should remain at minimum (no load)
+			h100VA := &v1alpha1.VariantAutoscaling{}
+			err = crClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: h100DeployName}, h100VA)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(h100VA.Status.DesiredOptimizedAlloc.NumReplicas).To(BeNumerically("==", MinimumReplicas),
+				fmt.Sprintf("H100 VA should remain at minimum replicas (%d) with no load, got %d replicas - "+
+					"this validates accelerator-based isolation (issue #454)", MinimumReplicas, h100VA.Status.DesiredOptimizedAlloc.NumReplicas))
+		}, 5*time.Minute, 10*time.Second).Should(Succeed())
+
+		By("logging VA status to confirm isolation")
+		_ = utils.LogVariantAutoscalingStatus(ctx, a100DeployName, namespace, crClient, GinkgoWriter)
+		_ = utils.LogVariantAutoscalingStatus(ctx, h100DeployName, namespace, crClient, GinkgoWriter)
+	})
+
+	AfterAll(func() {
+		By("cleaning up A100 resources")
+		_ = crClient.Delete(ctx, &v1alpha1.VariantAutoscaling{ObjectMeta: metav1.ObjectMeta{Name: a100DeployName, Namespace: namespace}})
+		_ = crClient.Delete(ctx, &promoperator.ServiceMonitor{ObjectMeta: metav1.ObjectMeta{Name: a100ServiceMonName, Namespace: controllerMonitoringNamespace}})
+		_ = k8sClient.CoreV1().Services(namespace).Delete(ctx, a100ServiceName, metav1.DeleteOptions{})
+		_ = k8sClient.AppsV1().Deployments(namespace).Delete(ctx, a100DeployName, metav1.DeleteOptions{})
+
+		By("cleaning up H100 resources")
+		_ = crClient.Delete(ctx, &v1alpha1.VariantAutoscaling{ObjectMeta: metav1.ObjectMeta{Name: h100DeployName, Namespace: namespace}})
+		_ = crClient.Delete(ctx, &promoperator.ServiceMonitor{ObjectMeta: metav1.ObjectMeta{Name: h100ServiceMonName, Namespace: controllerMonitoringNamespace}})
+		_ = k8sClient.CoreV1().Services(namespace).Delete(ctx, h100ServiceName, metav1.DeleteOptions{})
+		_ = k8sClient.AppsV1().Deployments(namespace).Delete(ctx, h100DeployName, metav1.DeleteOptions{})
+
+		By("waiting for pods to be deleted")
+		Eventually(func(g Gomega) {
+			podList, _ := k8sClient.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
+				LabelSelector: fmt.Sprintf("app in (%s, %s)", a100AppLabel, h100AppLabel),
+			})
+			g.Expect(podList.Items).To(BeEmpty())
+		}, 1*time.Minute, 1*time.Second).Should(Succeed())
+	})
+})

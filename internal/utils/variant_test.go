@@ -1,0 +1,246 @@
+/*
+Copyright 2025 The llm-d Authors
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package utils
+
+import (
+	"testing"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	wvav1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
+)
+
+func TestGetAcceleratorType(t *testing.T) {
+	tests := []struct {
+		name     string
+		va       *wvav1alpha1.VariantAutoscaling
+		expected string
+	}{
+		{
+			name: "accelerator from spec",
+			va: &wvav1alpha1.VariantAutoscaling{
+				Spec: wvav1alpha1.VariantAutoscalingSpec{
+					ModelProfile: wvav1alpha1.ModelProfile{
+						Accelerators: []wvav1alpha1.AcceleratorProfile{
+							{Acc: "A100", AccCount: 1, MaxBatchSize: 32},
+						},
+					},
+				},
+			},
+			expected: "A100",
+		},
+		{
+			name: "accelerator from label when spec is empty",
+			va: &wvav1alpha1.VariantAutoscaling{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						AcceleratorNameLabel: "H100",
+					},
+				},
+				Spec: wvav1alpha1.VariantAutoscalingSpec{
+					ModelProfile: wvav1alpha1.ModelProfile{
+						Accelerators: []wvav1alpha1.AcceleratorProfile{},
+					},
+				},
+			},
+			expected: "H100",
+		},
+		{
+			name: "spec takes precedence over label",
+			va: &wvav1alpha1.VariantAutoscaling{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						AcceleratorNameLabel: "H100",
+					},
+				},
+				Spec: wvav1alpha1.VariantAutoscalingSpec{
+					ModelProfile: wvav1alpha1.ModelProfile{
+						Accelerators: []wvav1alpha1.AcceleratorProfile{
+							{Acc: "A100", AccCount: 1, MaxBatchSize: 32},
+						},
+					},
+				},
+			},
+			expected: "A100",
+		},
+		{
+			name: "empty when no accelerator info",
+			va: &wvav1alpha1.VariantAutoscaling{
+				Spec: wvav1alpha1.VariantAutoscalingSpec{
+					ModelProfile: wvav1alpha1.ModelProfile{
+						Accelerators: []wvav1alpha1.AcceleratorProfile{},
+					},
+				},
+			},
+			expected: "",
+		},
+		{
+			name: "empty when nil labels",
+			va: &wvav1alpha1.VariantAutoscaling{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: nil,
+				},
+				Spec: wvav1alpha1.VariantAutoscalingSpec{
+					ModelProfile: wvav1alpha1.ModelProfile{
+						Accelerators: []wvav1alpha1.AcceleratorProfile{},
+					},
+				},
+			},
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := GetAcceleratorType(tt.va)
+			if result != tt.expected {
+				t.Errorf("GetAcceleratorType() = %v, want %v", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestGroupVariantAutoscalingByModel(t *testing.T) {
+	tests := []struct {
+		name           string
+		vas            []wvav1alpha1.VariantAutoscaling
+		expectedGroups int
+		expectedKeys   []string
+	}{
+		{
+			name: "same model different accelerators creates separate groups",
+			vas: []wvav1alpha1.VariantAutoscaling{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "va-a100",
+						Namespace: "default",
+					},
+					Spec: wvav1alpha1.VariantAutoscalingSpec{
+						ModelID: "llama-8b",
+						ModelProfile: wvav1alpha1.ModelProfile{
+							Accelerators: []wvav1alpha1.AcceleratorProfile{
+								{Acc: "A100", AccCount: 1, MaxBatchSize: 32},
+							},
+						},
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "va-h100",
+						Namespace: "default",
+					},
+					Spec: wvav1alpha1.VariantAutoscalingSpec{
+						ModelID: "llama-8b",
+						ModelProfile: wvav1alpha1.ModelProfile{
+							Accelerators: []wvav1alpha1.AcceleratorProfile{
+								{Acc: "H100", AccCount: 1, MaxBatchSize: 64},
+							},
+						},
+					},
+				},
+			},
+			expectedGroups: 2,
+			expectedKeys:   []string{"llama-8b|default|A100", "llama-8b|default|H100"},
+		},
+		{
+			name: "same model same accelerator groups together",
+			vas: []wvav1alpha1.VariantAutoscaling{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "va-1",
+						Namespace: "default",
+					},
+					Spec: wvav1alpha1.VariantAutoscalingSpec{
+						ModelID: "llama-8b",
+						ModelProfile: wvav1alpha1.ModelProfile{
+							Accelerators: []wvav1alpha1.AcceleratorProfile{
+								{Acc: "A100", AccCount: 1, MaxBatchSize: 32},
+							},
+						},
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "va-2",
+						Namespace: "default",
+					},
+					Spec: wvav1alpha1.VariantAutoscalingSpec{
+						ModelID: "llama-8b",
+						ModelProfile: wvav1alpha1.ModelProfile{
+							Accelerators: []wvav1alpha1.AcceleratorProfile{
+								{Acc: "A100", AccCount: 1, MaxBatchSize: 32},
+							},
+						},
+					},
+				},
+			},
+			expectedGroups: 1,
+			expectedKeys:   []string{"llama-8b|default|A100"},
+		},
+		{
+			name: "different namespaces creates separate groups",
+			vas: []wvav1alpha1.VariantAutoscaling{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "va-1",
+						Namespace: "ns1",
+					},
+					Spec: wvav1alpha1.VariantAutoscalingSpec{
+						ModelID: "llama-8b",
+						ModelProfile: wvav1alpha1.ModelProfile{
+							Accelerators: []wvav1alpha1.AcceleratorProfile{
+								{Acc: "A100", AccCount: 1, MaxBatchSize: 32},
+							},
+						},
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "va-2",
+						Namespace: "ns2",
+					},
+					Spec: wvav1alpha1.VariantAutoscalingSpec{
+						ModelID: "llama-8b",
+						ModelProfile: wvav1alpha1.ModelProfile{
+							Accelerators: []wvav1alpha1.AcceleratorProfile{
+								{Acc: "A100", AccCount: 1, MaxBatchSize: 32},
+							},
+						},
+					},
+				},
+			},
+			expectedGroups: 2,
+			expectedKeys:   []string{"llama-8b|ns1|A100", "llama-8b|ns2|A100"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := GroupVariantAutoscalingByModel(tt.vas)
+
+			if len(result) != tt.expectedGroups {
+				t.Errorf("GroupVariantAutoscalingByModel() returned %d groups, want %d", len(result), tt.expectedGroups)
+			}
+
+			for _, key := range tt.expectedKeys {
+				if _, exists := result[key]; !exists {
+					t.Errorf("GroupVariantAutoscalingByModel() missing expected key %q", key)
+				}
+			}
+		})
+	}
+}
