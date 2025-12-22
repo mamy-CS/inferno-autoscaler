@@ -101,6 +101,9 @@ func filterVariantsByDeployment(ctx context.Context, client client.Client, filte
 		}
 
 		// Skip VAs without scaleTargetRef (required to know which deployment to look up)
+		// TODO: Remove this check once scaleTargetRef.name is made a required field in the CRD.
+		// This defensive check exists because the CRD currently allows empty scaleTargetRef,
+		// but it should be enforced at the schema level instead.
 		if va.Spec.ScaleTargetRef.Name == "" {
 			ctrl.LoggerFrom(ctx).V(logging.DEBUG).Info("Skipping VA without scaleTargetRef", "namespace", va.Namespace, "name", va.Name)
 			continue
