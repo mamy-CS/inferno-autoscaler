@@ -179,7 +179,7 @@ jobs:
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: prNumber,
-                body: `👋 Thanks for your contribution!\n\nThis PR is from a fork, so the e2e tests require maintainer approval to run (they use GPU resources).\n\n**For maintainers:** After reviewing the code, comment \`/ok-to-test\` to trigger the e2e tests.\n\n**Note:** Please review the PR changes carefully before approving, as the tests will run with access to cluster resources.`
+                body: `👋 Thanks for your contribution!\n\nThis PR is from a fork, so the e2e tests require maintainer approval to run (they use GPU resources).\n\n**For maintainers:** After reviewing the code, comment /ok-to-test to trigger the e2e tests.\n\n**Note:** Please review the PR changes carefully before approving, as the tests will run with access to cluster resources.`
               });
             }
 

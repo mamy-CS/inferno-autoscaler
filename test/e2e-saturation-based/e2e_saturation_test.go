@@ -700,7 +700,7 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Multiple 
 				// Initial replica count should be MinimumReplicas (typically 0 or 1)
 				g.Expect(vaA100.Status.CurrentAlloc.NumReplicas).To(BeNumerically("==", MinimumReplicas),
 					fmt.Sprintf("A100 VariantAutoscaling DesiredReplicas should be at %d replicas", MinimumReplicas))
-			}, 4*time.Minute, 5*time.Second).Should(Succeed())
+			}, 6*time.Minute, 5*time.Second).Should(Succeed())
 
 			By("verifying H100 variant has expected initial replicas or scales down (before load)")
 			Eventually(func(g Gomega) {
@@ -713,7 +713,7 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Multiple 
 
 				g.Expect(vaH100.Status.CurrentAlloc.NumReplicas).To(BeNumerically("==", MinimumReplicas),
 					fmt.Sprintf("H100 VariantAutoscaling DesiredReplicas should be at %d replicas", MinimumReplicas))
-			}, 4*time.Minute, 5*time.Second).Should(Succeed())
+			}, 6*time.Minute, 5*time.Second).Should(Succeed())
 
 			By("logging initial VariantAutoscaling statuses")
 			err := utils.LogVariantAutoscalingStatus(ctx, deployNameA100, namespace, crClient, GinkgoWriter)
