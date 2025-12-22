@@ -36,6 +36,7 @@ spec:
         selector:
           matchLabels:
             variant_name: {{ printf "%s-decode" .Values.llmd.modelName }}
+            exported_namespace: {{ .Values.llmd.namespace }}
       target:
         type: AverageValue
         averageValue: {{ .Values.hpa.targetAverageValue | quote }}

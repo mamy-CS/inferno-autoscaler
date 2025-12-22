@@ -177,10 +177,15 @@ func (e *Engine) optimize(ctx context.Context) error {
 		vaMap[va.GetScaleTargetName()] = &va
 	}
 
-	for modelID, modelVAs := range modelGroups {
+	for groupKey, modelVAs := range modelGroups {
+		// The groupKey is "modelID|namespace" - extract actual modelID from VAs
+		// All VAs in the group have the same modelID and namespace
+		modelID := modelVAs[0].Spec.ModelID
 		logger.Info("Processing model",
 			"modelID", modelID,
-			"variantCount", len(modelVAs))
+			"namespace", modelVAs[0].Namespace,
+			"variantCount", len(modelVAs),
+			"groupKey", groupKey)
 
 		// Collect metrics and populate CurrentAlloc for saturation-only mode
 		// This validates metrics availability and populates the VariantAutoscalings with CurrentAlloc

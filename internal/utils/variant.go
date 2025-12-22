@@ -52,14 +52,18 @@ func InactiveVariantAutoscalingByModel(ctx context.Context, client client.Client
 	return GroupVariantAutoscalingByModel(vas), nil
 }
 
-// GroupVariantAutoscalingByModel groups VariantAutoscalings by model ID
+// GroupVariantAutoscalingByModel groups VariantAutoscalings by model ID AND namespace.
+// This is necessary because the same model deployed in different namespaces
+// should be treated as separate scaling domains for saturation analysis.
+// The key format is "modelID|namespace" to ensure proper isolation.
 func GroupVariantAutoscalingByModel(
 	vas []wvav1alpha1.VariantAutoscaling,
 ) map[string][]wvav1alpha1.VariantAutoscaling {
 	groups := make(map[string][]wvav1alpha1.VariantAutoscaling)
 	for _, va := range vas {
-		modelID := va.Spec.ModelID
-		groups[modelID] = append(groups[modelID], va)
+		// Use modelID + namespace as key to isolate VAs in different namespaces
+		key := va.Spec.ModelID + "|" + va.Namespace
+		groups[key] = append(groups[key], va)
 	}
 	return groups
 }
