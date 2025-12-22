@@ -1366,7 +1366,7 @@ var _ = Describe("Test accelerator-based VA grouping isolation", Ordered, func()
 		h100ServiceMonName = h100Name + "-servicemonitor"
 
 		loadRate = 5
-		initialReplicas = 2
+		initialReplicas = 1
 		a100VariantCost = 10.0
 		h100VariantCost = 15.0
 
