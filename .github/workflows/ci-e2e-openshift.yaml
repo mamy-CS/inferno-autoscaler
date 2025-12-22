@@ -239,8 +239,6 @@ jobs:
       MAX_NUM_SEQS: ${{ github.event.inputs.max_num_seqs || '1' }}
       HPA_STABILIZATION_SECONDS: ${{ github.event.inputs.hpa_stabilization_seconds || '30' }}
       SKIP_CLEANUP: ${{ github.event.inputs.skip_cleanup || 'false' }}
-      # PR number from gate (works for pull_request and issue_comment)
-      PR_NUMBER: ${{ needs.gate.outputs.pr_number || github.run_id }}
       # PR-specific namespaces for isolation between concurrent PR tests
       # Primary llm-d namespace (Model A1 + A2)
       LLMD_NAMESPACE: llm-d-inference-scheduler-pr-${{ needs.gate.outputs.pr_number || github.run_id }}
