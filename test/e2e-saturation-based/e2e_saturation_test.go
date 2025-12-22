@@ -66,7 +66,7 @@ const (
 	llmDNamespace                 = "llm-d-sim"
 	gatewayName                   = "infra-sim-inference-gateway-istio"
 	WVAConfigMapName              = "workload-variant-autoscaler-variantautoscaling-config"
-	saturationConfigMapName       = "saturation-scaling-config"
+	saturationConfigMapName       = "workload-variant-autoscaler-saturation-scaling-config"
 )
 
 // Variant and Model constants
@@ -135,11 +135,8 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Single Va
 		initialReplicas int32
 		loadGenJob      *batchv1.Job
 		port            int
-		modelName       string
-		ctx             context.Context
-
-		// ConfigMap reference
-		saturationConfigMapName = "saturation-scaling-config"
+		modelName string
+		ctx       context.Context
 	)
 
 	BeforeAll(func() {
