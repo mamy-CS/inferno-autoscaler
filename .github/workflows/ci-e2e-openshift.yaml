@@ -5,6 +5,7 @@ permissions:
   contents: read
   packages: write
   pull-requests: write  # For posting comments on PRs
+  statuses: write  # For reporting status on fork PR commits
 
 # Cancel previous runs on the same PR to avoid resource conflicts
 concurrency:
@@ -60,6 +61,7 @@ jobs:
       should_run: ${{ steps.check.outputs.should_run }}
       pr_number: ${{ steps.check.outputs.pr_number }}
       pr_head_sha: ${{ steps.check.outputs.pr_head_sha }}
+      is_fork_pr: ${{ steps.check.outputs.is_fork_pr }}
     steps:
       - name: Check permissions and /ok-to-test
         id: check
@@ -87,6 +89,7 @@ jobs:
               core.setOutput('should_run', 'true');
               core.setOutput('pr_number', '');
               core.setOutput('pr_head_sha', context.sha);
+              core.setOutput('is_fork_pr', 'false');
               return;
             }
 
@@ -124,11 +127,18 @@ jobs:
                 pull_number: issue.number
               });
 
+              // Check if PR is from a fork
+              const baseRepo = `${context.repo.owner}/${context.repo.repo}`;
+              const headRepo = pr.head.repo ? pr.head.repo.full_name : baseRepo;
+              const isFork = headRepo !== baseRepo;
+
               console.log(`/ok-to-test approved by ${commenter} for PR #${issue.number}`);
               console.log(`PR head SHA: ${pr.head.sha}`);
+              console.log(`Is fork PR: ${isFork} (head: ${headRepo}, base: ${baseRepo})`);
               core.setOutput('should_run', 'true');
               core.setOutput('pr_number', issue.number.toString());
               core.setOutput('pr_head_sha', pr.head.sha);
+              core.setOutput('is_fork_pr', isFork ? 'true' : 'false');
 
               // Add reaction to acknowledge
               await github.rest.reactions.createForIssueComment({
@@ -146,8 +156,15 @@ jobs:
             const prNumber = pr.number;
             const prHeadSha = pr.head.sha;
 
+            // Check if PR is from a fork
+            const baseRepo = `${context.repo.owner}/${context.repo.repo}`;
+            const headRepo = pr.head.repo ? pr.head.repo.full_name : baseRepo;
+            const isFork = headRepo !== baseRepo;
+            console.log(`PR #${prNumber} is from fork: ${isFork} (head: ${headRepo}, base: ${baseRepo})`);
+
             core.setOutput('pr_number', prNumber.toString());
             core.setOutput('pr_head_sha', prHeadSha);
+            core.setOutput('is_fork_pr', isFork ? 'true' : 'false');
 
             // Check if PR author has write access
             const isPrivileged = await hasWriteAccess(prAuthor);
@@ -184,9 +201,13 @@ jobs:
             }
 
   # Build the WVA controller image on GitHub-hosted runner (has proper Docker setup)
+  # Note: Skip for fork PRs on pull_request event (no secrets access).
+  # For fork PRs, build-image runs via issue_comment trigger (/ok-to-test).
   build-image:
     needs: gate
-    if: needs.gate.outputs.should_run == 'true'
+    if: |
+      needs.gate.outputs.should_run == 'true' &&
+      (needs.gate.outputs.is_fork_pr != 'true' || github.event_name != 'pull_request')
     runs-on: ubuntu-latest
     outputs:
       image_tag: ${{ steps.build.outputs.image_tag }}
@@ -730,3 +751,48 @@ jobs:
           kubectl delete clusterrole,clusterrolebinding -l app.kubernetes.io/name=workload-variant-autoscaler --ignore-not-found || true
 
           echo "Cleanup complete"
+
+  # Report status back to PR for issue_comment triggered runs
+  # This ensures fork PRs show the correct status after /ok-to-test runs complete
+  report-status:
+    runs-on: ubuntu-latest
+    needs: [gate, e2e-openshift]
+    # Run always (even on failure) but only for issue_comment events
+    if: always() && github.event_name == 'issue_comment' && needs.gate.outputs.should_run == 'true'
+    steps:
+      - name: Report status to PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prHeadSha = '${{ needs.gate.outputs.pr_head_sha }}';
+            const e2eResult = '${{ needs.e2e-openshift.result }}';
+
+            // Map job result to commit status
+            let state, description;
+            if (e2eResult === 'success') {
+              state = 'success';
+              description = 'E2E tests passed';
+            } else if (e2eResult === 'skipped') {
+              state = 'pending';
+              description = 'E2E tests skipped';
+            } else if (e2eResult === 'cancelled') {
+              state = 'failure';
+              description = 'E2E tests cancelled';
+            } else {
+              state = 'failure';
+              description = 'E2E tests failed';
+            }
+
+            console.log(`Reporting status to PR commit ${prHeadSha}: ${state} - ${description}`);
+
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: prHeadSha,
+              state: state,
+              target_url: `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              description: description,
+              context: '${{ github.workflow }} / e2e (/ok-to-test)'
+            });
+
+            console.log('Status reported successfully');
