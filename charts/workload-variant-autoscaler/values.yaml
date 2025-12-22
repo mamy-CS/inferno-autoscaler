@@ -41,6 +41,10 @@ wva:
   #  When "model-only" runs model-based optimizer only
   #  When "off" or unset, runs capacity analyzer only (default, reactive mode)
   experimentalHybridOptimization: off  # Enable experimental hybrid optimization (default: off)
+  limitedMode: false  # Enable limited mode (default: false)
+  # Node selector for sharding WVA instances
+  # Example: "wva.llmd.ai/shard=instance-a"
+  nodeSelector: ""
   scaleToZero: false  # Enable scaling variants to zero replicas (default: false)
 
   # Saturation-based scaling configuration

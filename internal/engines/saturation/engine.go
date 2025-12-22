@@ -35,6 +35,7 @@ import (
 
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
 	actuator "github.com/llm-d-incubation/workload-variant-autoscaler/internal/actuator"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/prometheus"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/executor"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
@@ -149,6 +150,18 @@ func (e *Engine) optimize(ctx context.Context) error {
 	if len(activeVAs) == 0 {
 		logger.Info("No active VariantAutoscalings found, skipping optimization")
 		return nil
+	}
+
+	// Collected accelerator inventory (only in limited mode)
+	if strings.EqualFold(os.Getenv("WVA_LIMITED_MODE"), "true") {
+		inventory, err := collector.CollectInventoryK8S(ctx, e.client)
+		if err != nil {
+			logger.Error(err, "Failed to collect cluster inventory")
+			// do not proceed to optimization if inventory collection fails in limited mode
+			return err
+		}
+		// always print inventory until optimizer consumes it
+		logger.Info("Collected cluster accelerator inventory (Limited Mode)", "inventory", inventory)
 	}
 
 	saturationConfigMap, err := e.readSaturationScalingConfig(ctx, getSaturationConfigMapName(), configMapNamespace)

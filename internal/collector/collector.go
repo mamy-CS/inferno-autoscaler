@@ -19,35 +19,34 @@ import (
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/utils"
 
+	"fmt"
+
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/discovery"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	appsv1 "k8s.io/api/apps/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-type AcceleratorModelInfo struct {
-	Count  int
-	Memory string
-}
+type AcceleratorModelInfo = discovery.AcceleratorModelInfo
 
-// TODO: Resource accounting and capacity tracking for limited mode.
 // The WVA currently operates in unlimited mode only, where each variant receives
 // optimal allocation independently without cluster capacity constraints.
 // Limited mode support requires integration with the llmd stack and additional
 // design work to handle degraded mode operations without violating SLOs.
 // Future work: Implement CollectInventoryK8S and capacity-aware allocation for limited mode.
 
-// vendors list for GPU vendors - kept for future limited mode support
-var vendors = []string{
-	"nvidia.com",
-	"amd.com",
-	"intel.com",
-}
-
-// CollectInventoryK8S is a stub for future limited mode support.
-// Currently returns empty inventory as WVA operates in unlimited mode.
+// CollectInventoryK8S provides accelerator inventory using the discovery mechanism.
 func CollectInventoryK8S(ctx context.Context, r interface{}) (map[string]map[string]AcceleratorModelInfo, error) {
-	// Stub implementation - will be properly implemented for limited mode
-	return make(map[string]map[string]AcceleratorModelInfo), nil
+	c, ok := r.(client.Client)
+	if !ok {
+		return nil, fmt.Errorf("invalid client type: expected client.Client")
+	}
+
+	// Use the K8sWithGpuOperator discovery mechanism
+	// TODO: Make this configurable or dynamic based on environment
+	disc := &discovery.K8sWithGpuOperator{Client: c}
+	return disc.Discover(ctx)
 }
 
 type MetricKV struct {
