@@ -34,12 +34,6 @@ jobs:
           version: v2.1.6
           args: ""
 
-      # - name: Run precommit checks
-      #   run: make precommit
-
-      # Note: test-e2e requires Kind and full cluster setup
-      # E2E tests run in separate ci-e2e-openshift workflow on self-hosted runner
-
       - name: Run make build
         shell: bash
         run: |
@@ -49,3 +43,21 @@ jobs:
         shell: bash
         run: |
           make test
+
+      - name: Install Kind
+        run: |
+          ARCH=$(uname -m)
+          case "$ARCH" in
+            x86_64)  KIND_ARCH="amd64" ;;
+            aarch64) KIND_ARCH="arm64" ;;
+            *)       echo "Unsupported architecture: $ARCH"; exit 1 ;;
+          esac
+          curl -Lo ./kind "https://kind.sigs.k8s.io/dl/v0.25.0/kind-linux-${KIND_ARCH}"
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+          kind version
+
+      - name: Run make test-e2e
+        shell: bash
+        run: |
+          make test-e2e
