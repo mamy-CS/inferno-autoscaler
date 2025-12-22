@@ -72,7 +72,7 @@ var _ = Describe("VariantAutoscalings Controller", func() {
 			configMap = testutils.CreateAcceleratorUnitCostConfigMap(ns.Name)
 			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
 
-			configMap = testutils.CreateVariantAutoscalingConfigMap(configMapName, ns.Name)
+			configMap = testutils.CreateVariantAutoscalingConfigMap(defaultConfigMapName, ns.Name)
 			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
 
 			By("creating the custom resource for the Kind VariantAutoscalings")
@@ -140,7 +140,7 @@ var _ = Describe("VariantAutoscalings Controller", func() {
 
 			configMap = &v1.ConfigMap{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      configMapName,
+					Name:      defaultConfigMapName,
 					Namespace: configMapNamespace,
 				},
 			}
@@ -190,7 +190,7 @@ var _ = Describe("VariantAutoscalings Controller", func() {
 			configMap = testutils.CreateAcceleratorUnitCostConfigMap(ns.Name)
 			Expect(k8sClient.Create(ctx, configMap)).NotTo(HaveOccurred())
 
-			configMap = testutils.CreateVariantAutoscalingConfigMap(configMapName, ns.Name)
+			configMap = testutils.CreateVariantAutoscalingConfigMap(defaultConfigMapName, ns.Name)
 			Expect(k8sClient.Create(ctx, configMap)).NotTo(HaveOccurred())
 		})
 
@@ -216,7 +216,7 @@ var _ = Describe("VariantAutoscalings Controller", func() {
 
 			configMap = &v1.ConfigMap{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      configMapName,
+					Name:      defaultConfigMapName,
 					Namespace: configMapNamespace,
 				},
 			}
@@ -338,7 +338,7 @@ var _ = Describe("VariantAutoscalings Controller", func() {
 				now := metav1.Now()
 				serviceMonitor := &promoperator.ServiceMonitor{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:              serviceMonitorName,
+						Name:              defaultServiceMonitorName,
 						Namespace:         configMapNamespace,
 						DeletionTimestamp: &now,
 					},
@@ -354,7 +354,7 @@ var _ = Describe("VariantAutoscalings Controller", func() {
 				select {
 				case event := <-fakeRecorder.Events:
 					Expect(event).To(ContainSubstring("ServiceMonitorDeleted"))
-					Expect(event).To(ContainSubstring(serviceMonitorName))
+					Expect(event).To(ContainSubstring(defaultServiceMonitorName))
 				case <-time.After(2 * time.Second):
 					Fail("Expected event to be emitted but none was received")
 				}
@@ -364,7 +364,7 @@ var _ = Describe("VariantAutoscalings Controller", func() {
 				By("Creating a ServiceMonitor without deletion timestamp")
 				serviceMonitor := &promoperator.ServiceMonitor{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:      serviceMonitorName,
+						Name:      defaultServiceMonitorName,
 						Namespace: configMapNamespace,
 					},
 				}

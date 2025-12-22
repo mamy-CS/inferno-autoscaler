@@ -52,14 +52,18 @@ func InactiveVariantAutoscalingByModel(ctx context.Context, client client.Client
 	return GroupVariantAutoscalingByModel(vas), nil
 }
 
-// GroupVariantAutoscalingByModel groups VariantAutoscalings by model ID
+// GroupVariantAutoscalingByModel groups VariantAutoscalings by model ID AND namespace.
+// This is necessary because the same model deployed in different namespaces
+// should be treated as separate scaling domains for saturation analysis.
+// The key format is "modelID|namespace" to ensure proper isolation.
 func GroupVariantAutoscalingByModel(
 	vas []wvav1alpha1.VariantAutoscaling,
 ) map[string][]wvav1alpha1.VariantAutoscaling {
 	groups := make(map[string][]wvav1alpha1.VariantAutoscaling)
 	for _, va := range vas {
-		modelID := va.Spec.ModelID
-		groups[modelID] = append(groups[modelID], va)
+		// Use modelID + namespace as key to isolate VAs in different namespaces
+		key := va.Spec.ModelID + "|" + va.Namespace
+		groups[key] = append(groups[key], va)
 	}
 	return groups
 }
@@ -96,16 +100,26 @@ func filterVariantsByDeployment(ctx context.Context, client client.Client, filte
 		default:
 		}
 
+		// Skip VAs without scaleTargetRef (required to know which deployment to look up)
+		// TODO: Remove this check once scaleTargetRef.name is made a required field in the CRD.
+		// This defensive check exists because the CRD currently allows empty scaleTargetRef,
+		// but it should be enforced at the schema level instead.
+		if va.Spec.ScaleTargetRef.Name == "" {
+			ctrl.LoggerFrom(ctx).V(logging.DEBUG).Info("Skipping VA without scaleTargetRef", "namespace", va.Namespace, "name", va.Name)
+			continue
+		}
+
 		// TODO: Generalize to other scale target kinds in future
+		deployName := va.Spec.ScaleTargetRef.Name
 		var deploy appsv1.Deployment
-		if err := GetDeploymentWithBackoff(ctx, client, va.Name, va.Namespace, &deploy); err != nil {
-			ctrl.LoggerFrom(ctx).Error(err, "Failed to get deployment", "namespace", va.Namespace, "name", va.Name)
+		if err := GetDeploymentWithBackoff(ctx, client, deployName, va.Namespace, &deploy); err != nil {
+			ctrl.LoggerFrom(ctx).Error(err, "Failed to get deployment", "namespace", va.Namespace, "deploymentName", deployName, "vaName", va.Name)
 			continue
 		}
 
 		// Skip deleted deployments
 		if !deploy.DeletionTimestamp.IsZero() {
-			ctrl.LoggerFrom(ctx).V(logging.DEBUG).Info("Skipping deleted deployment", "namespace", va.Namespace, "name", va.Name)
+			ctrl.LoggerFrom(ctx).V(logging.DEBUG).Info("Skipping deleted deployment", "namespace", va.Namespace, "deploymentName", deployName)
 			continue
 		}
 

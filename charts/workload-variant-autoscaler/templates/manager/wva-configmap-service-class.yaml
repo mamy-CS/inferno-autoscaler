@@ -1,3 +1,4 @@
+{{- if .Values.controller.enabled }}
 apiVersion: v1
 kind: ConfigMap
 # This configMap defines the set of accelerators available
@@ -9,8 +10,10 @@ kind: ConfigMap
 # - cost is the cents/hour cost of this accelerator
 #
 metadata:
-  name: service-classes-config
+  name: {{ include "workload-variant-autoscaler.fullname" . }}-service-classes-config
   namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "workload-variant-autoscaler.labels" . | nindent 4 }}
 data:
   premium.yaml: |
     name: Premium
@@ -35,3 +38,4 @@ data:
       - model: meta/llama0-7b
         slo-tpot: 150
         slo-ttft: 1500
+{{- end }}

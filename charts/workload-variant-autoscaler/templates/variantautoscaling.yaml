@@ -4,10 +4,11 @@ apiVersion: llmd.ai/v1alpha1
 # this is for the collector the collect existing (previous) running metrics of the variant.
 kind: VariantAutoscaling
 metadata:
-  # Unique name of the variant
-  name: {{ printf "%s-decode" .Values.llmd.modelName }}
+  # Unique name of the variant (includes release name for multi-install support)
+  name: {{ include "workload-variant-autoscaler.fullname" . }}-va
   namespace: {{ .Values.llmd.namespace }}
   labels:
+    {{- include "workload-variant-autoscaler.labels" . | nindent 4 }}
     inference.optimization/acceleratorName: {{ .Values.va.accelerator }}
 # This is essentially static input to the optimizer
 spec:
@@ -18,6 +19,8 @@ spec:
     name: {{ .Values.llmd.deploymentName | default (printf "%s-decode" .Values.llmd.modelName) }}
   # OpenAI API compatible name of the model
   modelID: {{ .Values.llmd.modelID | quote }}
+  # Cost per replica for this variant (used in saturation analysis)
+  variantCost: {{ .Values.va.variantCost | default "10.0" | quote }}
   {{- if .Values.wva.experimentalHybridOptimization }}
   # Static profiled benchmarked data for a variant running on different accelerators
   modelProfile:

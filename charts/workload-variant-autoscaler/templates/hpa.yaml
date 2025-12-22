@@ -2,8 +2,10 @@
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: vllm-deployment-hpa
+  name: {{ include "workload-variant-autoscaler.fullname" . }}-hpa
   namespace: {{ .Values.llmd.namespace }}
+  labels:
+    {{- include "workload-variant-autoscaler.labels" . | nindent 4 }}
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
@@ -34,6 +36,7 @@ spec:
         selector:
           matchLabels:
             variant_name: {{ printf "%s-decode" .Values.llmd.modelName }}
+            exported_namespace: {{ .Values.llmd.namespace }}
       target:
         type: AverageValue
         averageValue: {{ .Values.hpa.targetAverageValue | quote }}

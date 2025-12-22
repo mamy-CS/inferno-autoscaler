@@ -84,7 +84,8 @@ func NewMetricsEmitter() *MetricsEmitter {
 // EmitReplicaScalingMetrics emits metrics related to replica scaling
 func (m *MetricsEmitter) EmitReplicaScalingMetrics(ctx context.Context, va *llmdOptv1alpha1.VariantAutoscaling, direction, reason string) error {
 	labels := prometheus.Labels{
-		constants.LabelVariantName: va.Name,
+		// Use deployment name (scaleTargetRef) as variant_name for consistency
+		constants.LabelVariantName: va.GetScaleTargetName(),
 		constants.LabelNamespace:   va.Namespace,
 		constants.LabelDirection:   direction,
 		constants.LabelReason:      reason,
@@ -102,7 +103,9 @@ func (m *MetricsEmitter) EmitReplicaScalingMetrics(ctx context.Context, va *llmd
 // EmitReplicaMetrics emits current and desired replica metrics
 func (m *MetricsEmitter) EmitReplicaMetrics(ctx context.Context, va *llmdOptv1alpha1.VariantAutoscaling, current, desired int32, acceleratorType string) error {
 	baseLabels := prometheus.Labels{
-		constants.LabelVariantName:     va.Name,
+		// Use deployment name (scaleTargetRef) as variant_name to match HPA selector
+		// HPA selects on variant_name=<deployment-name>, not the VA name
+		constants.LabelVariantName:     va.GetScaleTargetName(),
 		constants.LabelNamespace:       va.Namespace,
 		constants.LabelAcceleratorType: acceleratorType,
 	}

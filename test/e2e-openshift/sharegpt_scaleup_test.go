@@ -19,6 +19,8 @@ package e2eopenshift
 import (
 	"context"
 	"fmt"
+	"regexp"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -34,6 +36,21 @@ import (
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/constants"
 )
 
+// sanitizeK8sName converts a human-readable name to a valid Kubernetes resource name.
+// Kubernetes names must be lowercase alphanumeric, may contain '-' and '.', and
+// must start and end with an alphanumeric character.
+func sanitizeK8sName(name string) string {
+	// Convert to lowercase and replace spaces with hyphens
+	result := strings.ToLower(name)
+	result = strings.ReplaceAll(result, " ", "-")
+	// Remove any characters that aren't lowercase alphanumeric or hyphens
+	re := regexp.MustCompile(`[^a-z0-9-]`)
+	result = re.ReplaceAllString(result, "")
+	// Trim leading/trailing hyphens
+	result = strings.Trim(result, "-")
+	return result
+}
+
 var lowLoad = numPrompts <= 2000 && requestRate <= 8
 
 // Load generation configuration constants
@@ -46,239 +63,403 @@ const (
 	batchSleepDuration = "0.1" // Sleep duration between batches to control rate
 )
 
+// modelTestConfig holds configuration for testing a specific model
+type modelTestConfig struct {
+	name       string // Human-readable name for logging
+	namespace  string // Kubernetes namespace
+	deployment string // Deployment name
+	// gatewayService is the Istio gateway service name for routing traffic
+	// Traffic should go through the gateway to be properly routed via InferencePool
+	gatewayService string
+}
+
+// getModelsToTest returns the list of models to test based on configuration
+func getModelsToTest() []modelTestConfig {
+	// Gateway service name pattern for llm-d infrastructure
+	// This is created by the llm-d-infra chart
+	gatewayServiceName := "infra-inference-scheduling-inference-gateway-istio"
+
+	models := []modelTestConfig{
+		{
+			name:           "Model A1",
+			namespace:      llmDNamespace,
+			deployment:     deployment,
+			gatewayService: gatewayServiceName,
+		},
+	}
+
+	// Add Model B if secondary namespace is configured (multi-model mode)
+	if multiModelMode && llmDNamespaceB != "" {
+		models = append(models, modelTestConfig{
+			name:           "Model B",
+			namespace:      llmDNamespaceB,
+			deployment:     deployment, // Model B uses the same deployment name as A1
+			gatewayService: gatewayServiceName,
+		})
+	}
+
+	return models
+}
+
 var _ = Describe("ShareGPT Scale-Up Test", Ordered, func() {
-	var (
-		ctx                  context.Context
-		jobBaseName          string
-		initialReplicas      int32
-		initialOptimized     int32
-		hpaMinReplicas       int32
-		scaledReplicas       int32
-		scaledOptimized      int32
-		jobCompletionTimeout = 10 * time.Minute
-	)
+	var ctx context.Context
 
 	BeforeAll(func() {
 		ctx = context.Background()
-		jobBaseName = "load-gen-e2e"
-
-		By("recording initial state of the deployment")
-		deploy, err := k8sClient.AppsV1().Deployments(llmDNamespace).Get(ctx, deployment, metav1.GetOptions{})
-		Expect(err).NotTo(HaveOccurred(), "Should be able to get vLLM deployment")
-		initialReplicas = deploy.Status.ReadyReplicas
-		_, _ = fmt.Fprintf(GinkgoWriter, "Initial ready replicas: %d\n", initialReplicas)
-
-		By("recording initial VariantAutoscaling state")
-		va := &v1alpha1.VariantAutoscaling{}
-		err = crClient.Get(ctx, client.ObjectKey{
-			Namespace: llmDNamespace,
-			Name:      deployment,
-		}, va)
-		Expect(err).NotTo(HaveOccurred(), "Should be able to get VariantAutoscaling")
-		initialOptimized = int32(va.Status.DesiredOptimizedAlloc.NumReplicas)
-		_, _ = fmt.Fprintf(GinkgoWriter, "Initial optimized replicas: %d\n", initialOptimized)
-
-		By("verifying HPA exists and is configured correctly")
-		hpa, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(llmDNamespace).Get(ctx, "vllm-deployment-hpa", metav1.GetOptions{})
-		Expect(err).NotTo(HaveOccurred(), "HPA should exist")
-		Expect(hpa.Spec.ScaleTargetRef.Name).To(Equal(deployment), "HPA should target the correct deployment")
-		Expect(hpa.Spec.Metrics).To(HaveLen(1), "HPA should have one metric")
-		Expect(hpa.Spec.Metrics[0].Type).To(Equal(autoscalingv2.ExternalMetricSourceType), "HPA should use external metrics")
-		Expect(hpa.Spec.Metrics[0].External.Metric.Name).To(Equal(constants.InfernoDesiredReplicas), "HPA should use inferno_desired_replicas metric")
-
-		// Store HPA minReplicas for assertions - we compare against this, not current state
-		hpaMinReplicas = *hpa.Spec.MinReplicas
-		_, _ = fmt.Fprintf(GinkgoWriter, "HPA minReplicas: %d\n", hpaMinReplicas)
 	})
 
-	It("should verify external metrics API is accessible", func() {
-		By("querying external metrics API for inferno_desired_replicas")
-		Eventually(func(g Gomega) {
-			// Use raw API client to query external metrics
-			result, err := k8sClient.RESTClient().
-				Get().
-				AbsPath("/apis/external.metrics.k8s.io/v1beta1/namespaces/" + llmDNamespace + "/" + constants.InfernoDesiredReplicas).
-				DoRaw(ctx)
-			g.Expect(err).NotTo(HaveOccurred(), "Should be able to query external metrics API")
-			g.Expect(string(result)).To(ContainSubstring(constants.InfernoDesiredReplicas), "Metric should be available")
-			g.Expect(string(result)).To(ContainSubstring(deployment), "Metric should be for the correct variant")
-		}, 2*time.Minute, 5*time.Second).Should(Succeed())
-	})
+	// Test each model sequentially
+	models := getModelsToTest()
+	for _, model := range models {
+		// Capture model in closure
+		model := model
 
-	It("should create and run parallel load generation jobs", func() {
-		By("cleaning up any existing jobs")
-		deleteParallelLoadJobs(ctx, jobBaseName, llmDNamespace, numLoadWorkers)
-		// Wait a bit for cleanup
-		time.Sleep(2 * time.Second)
+		Context(fmt.Sprintf("Testing %s in namespace %s", model.name, model.namespace), Ordered, func() {
+			var (
+				sanitizedName        string // Kubernetes-safe version of model name
+				jobBaseName          string
+				initialReplicas      int32
+				initialOptimized     int32
+				hpaMinReplicas       int32
+				hpaName              string
+				vaName               string
+				scaledReplicas       int32
+				scaledOptimized      int32
+				jobCompletionTimeout = 10 * time.Minute
+			)
 
-		By(fmt.Sprintf("creating %d parallel load generation jobs", numLoadWorkers))
-		err := createParallelLoadJobs(ctx, jobBaseName, llmDNamespace, numLoadWorkers, requestsPerWorker)
-		Expect(err).NotTo(HaveOccurred(), "Should be able to create load generation jobs")
+			BeforeAll(func() {
+				// Use sanitized model name for Kubernetes resource names
+				sanitizedName = sanitizeK8sName(model.name)
+				jobBaseName = fmt.Sprintf("load-gen-%s", sanitizedName)
 
-		By("waiting for job pods to be running")
-		Eventually(func(g Gomega) {
-			podList, err := k8sClient.CoreV1().Pods(llmDNamespace).List(ctx, metav1.ListOptions{
-				LabelSelector: "experiment=load-gen-e2e",
-			})
-			g.Expect(err).NotTo(HaveOccurred(), "Should be able to list job pods")
-			g.Expect(len(podList.Items)).To(BeNumerically(">=", numLoadWorkers), "All job pods should exist")
+				_, _ = fmt.Fprintf(GinkgoWriter, "\n========================================\n")
+				_, _ = fmt.Fprintf(GinkgoWriter, "Starting test for %s\n", model.name)
+				_, _ = fmt.Fprintf(GinkgoWriter, "  Namespace: %s\n", model.namespace)
+				_, _ = fmt.Fprintf(GinkgoWriter, "  Deployment: %s\n", model.deployment)
+				_, _ = fmt.Fprintf(GinkgoWriter, "========================================\n\n")
 
-			runningCount := 0
-			for _, pod := range podList.Items {
-				if pod.Status.Phase == corev1.PodRunning || pod.Status.Phase == corev1.PodSucceeded {
-					runningCount++
-				}
-			}
-			g.Expect(runningCount).To(BeNumerically(">=", numLoadWorkers),
-				fmt.Sprintf("At least %d job pods should be running, got %d", numLoadWorkers, runningCount))
-		}, 3*time.Minute, 5*time.Second).Should(Succeed())
+				By(fmt.Sprintf("recording initial state of %s deployment", model.name))
+				deploy, err := k8sClient.AppsV1().Deployments(model.namespace).Get(ctx, model.deployment, metav1.GetOptions{})
+				Expect(err).NotTo(HaveOccurred(), "Should be able to get vLLM deployment")
+				initialReplicas = deploy.Status.ReadyReplicas
+				_, _ = fmt.Fprintf(GinkgoWriter, "Initial ready replicas: %d\n", initialReplicas)
 
-		_, _ = fmt.Fprintf(GinkgoWriter, "All %d load generation jobs are running\n", numLoadWorkers)
-	})
+				// Get HPA first to know minReplicas for VA stabilization check
+				By("verifying HPA exists and getting minReplicas")
+				hpaList, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(model.namespace).List(ctx, metav1.ListOptions{
+					LabelSelector: "app.kubernetes.io/name=workload-variant-autoscaler",
+				})
+				Expect(err).NotTo(HaveOccurred(), "Should be able to list HPAs")
+				Expect(hpaList.Items).NotTo(BeEmpty(), "At least one WVA HPA should exist")
 
-	It("should detect increased load and recommend scale-up", func() {
-		By("waiting for load generation to ramp up (30 seconds)")
-		time.Sleep(30 * time.Second)
-
-		By("monitoring VariantAutoscaling for scale-up recommendation")
-		Eventually(func(g Gomega) {
-			va := &v1alpha1.VariantAutoscaling{}
-			err := crClient.Get(ctx, client.ObjectKey{
-				Namespace: llmDNamespace,
-				Name:      deployment,
-			}, va)
-			g.Expect(err).NotTo(HaveOccurred(), "Should be able to get VariantAutoscaling")
-
-			scaledOptimized = int32(va.Status.DesiredOptimizedAlloc.NumReplicas)
-			currentRateStr := va.Status.CurrentAlloc.Load.ArrivalRate
-			_, _ = fmt.Fprintf(GinkgoWriter, "Current optimized replicas: %d (initial: %d, minReplicas: %d), arrival rate: %s\n",
-				scaledOptimized, initialOptimized, hpaMinReplicas, currentRateStr)
-
-			// Expect scale-up recommendation (more than minReplicas)
-			// We compare against minReplicas, not initial state, to ensure test passes
-			// regardless of starting deployment state
-			if !lowLoad {
-				g.Expect(scaledOptimized).To(BeNumerically(">", hpaMinReplicas),
-					fmt.Sprintf("WVA should recommend more replicas than minReplicas under load (current: %d, min: %d)", scaledOptimized, hpaMinReplicas))
-			} else {
-				_, _ = fmt.Fprintf(GinkgoWriter, "Low load detected, skipping scale-up recommendation check\n")
-			}
-
-		}, 5*time.Minute, 10*time.Second).Should(Succeed())
-
-		_, _ = fmt.Fprintf(GinkgoWriter, "WVA detected load and recommended %d replicas (up from %d)\n", scaledOptimized, initialOptimized)
-	})
-
-	It("should trigger HPA to scale up the deployment", func() {
-		By("monitoring HPA for scale-up action")
-		Eventually(func(g Gomega) {
-			hpa, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(llmDNamespace).Get(ctx, "vllm-deployment-hpa", metav1.GetOptions{})
-			g.Expect(err).NotTo(HaveOccurred(), "Should be able to get HPA")
-
-			// Check if HPA has processed the new metric value
-			g.Expect(hpa.Status.CurrentMetrics).NotTo(BeEmpty(), "HPA should have current metrics")
-
-			// The HPA should show a target value > 1 (indicating scale-up needed)
-			if !lowLoad {
-				for _, metric := range hpa.Status.CurrentMetrics {
-					if metric.External != nil && metric.External.Metric.Name == constants.InfernoDesiredReplicas {
-						currentValue := metric.External.Current.AverageValue
-						g.Expect(currentValue).NotTo(BeNil(), "Current metric value should not be nil")
-
-						currentReplicas := currentValue.AsApproximateFloat64()
-						_, _ = fmt.Fprintf(GinkgoWriter, "HPA current metric value: %.2f (minReplicas: %d)\n", currentReplicas, hpaMinReplicas)
-						g.Expect(currentReplicas).To(BeNumerically(">", float64(hpaMinReplicas)),
-							"HPA should see increased replica recommendation above minReplicas")
+				// Select the HPA that targets the expected deployment
+				var hpa *autoscalingv2.HorizontalPodAutoscaler
+				for i := range hpaList.Items {
+					if hpaList.Items[i].Spec.ScaleTargetRef.Name == model.deployment {
+						hpa = &hpaList.Items[i]
+						break
 					}
 				}
-				// Check desired replicas - compare against minReplicas, not current state
-				// This ensures test passes regardless of starting deployment state
-				g.Expect(hpa.Status.DesiredReplicas).To(BeNumerically(">", hpaMinReplicas),
-					fmt.Sprintf("HPA should desire more replicas than minReplicas (desired: %d, min: %d)", hpa.Status.DesiredReplicas, hpaMinReplicas))
-			} else {
-				_, _ = fmt.Fprintf(GinkgoWriter, "Low load detected, skipping HPA scale-up check\n")
-			}
-		}, 3*time.Minute, 10*time.Second).Should(Succeed())
+				Expect(hpa).NotTo(BeNil(), "An HPA targeting deployment %s should exist", model.deployment)
+				hpaName = hpa.Name
+				hpaMinReplicas = *hpa.Spec.MinReplicas
+				_, _ = fmt.Fprintf(GinkgoWriter, "Found HPA: %s (targets %s, minReplicas=%d)\n", hpaName, model.deployment, hpaMinReplicas)
 
-		_, _ = fmt.Fprintf(GinkgoWriter, "HPA triggered scale-up\n")
-	})
+				Expect(hpa.Spec.Metrics).To(HaveLen(1), "HPA should have one metric")
+				Expect(hpa.Spec.Metrics[0].Type).To(Equal(autoscalingv2.ExternalMetricSourceType), "HPA should use external metrics")
+				Expect(hpa.Spec.Metrics[0].External.Metric.Name).To(Equal(constants.InfernoDesiredReplicas), "HPA should use inferno_desired_replicas metric")
 
-	It("should scale deployment to match recommended replicas", func() {
-		By("monitoring deployment for actual scale-up")
-		Eventually(func(g Gomega) {
-			deploy, err := k8sClient.AppsV1().Deployments(llmDNamespace).Get(ctx, deployment, metav1.GetOptions{})
-			g.Expect(err).NotTo(HaveOccurred(), "Should be able to get deployment")
+				By("verifying gateway service exists for load routing")
+				// Traffic goes through the Istio gateway to be properly routed via InferencePool/EPP
+				// The gateway service is created by the llm-d-infra chart
+				gatewaySvc, err := k8sClient.CoreV1().Services(model.namespace).Get(ctx, model.gatewayService, metav1.GetOptions{})
+				Expect(err).NotTo(HaveOccurred(), "Gateway service %s should exist in namespace %s", model.gatewayService, model.namespace)
+				_, _ = fmt.Fprintf(GinkgoWriter, "Found gateway service: %s (ClusterIP: %s)\n", gatewaySvc.Name, gatewaySvc.Spec.ClusterIP)
 
-			scaledReplicas = deploy.Status.ReadyReplicas
-			_, _ = fmt.Fprintf(GinkgoWriter, "Current ready replicas: %d (initial: %d, desired: %d)\n",
-				scaledReplicas, initialReplicas, scaledOptimized)
+				By("recording initial VariantAutoscaling state")
+				vaList := &v1alpha1.VariantAutoscalingList{}
+				err = crClient.List(ctx, vaList, client.InNamespace(model.namespace), client.MatchingLabels{
+					"app.kubernetes.io/name": "workload-variant-autoscaler",
+				})
+				Expect(err).NotTo(HaveOccurred(), "Should be able to list VariantAutoscalings")
+				Expect(vaList.Items).NotTo(BeEmpty(), "At least one WVA VariantAutoscaling should exist")
 
-			// Verify that deployment has scaled up
-			if !lowLoad {
-				// Only expect scaling when load is high - compare against minReplicas, not starting state
-				g.Expect(deploy.Status.Replicas).To(BeNumerically(">", hpaMinReplicas),
-					fmt.Sprintf("Deployment should have more total replicas than minReplicas under high load (current: %d, min: %d)", deploy.Status.Replicas, hpaMinReplicas))
-				g.Expect(scaledReplicas).To(BeNumerically(">=", scaledOptimized),
-					fmt.Sprintf("Deployment should have at least %d ready replicas to match optimizer recommendation", scaledOptimized))
-			} else {
-				// Under low load, scaling up is optional
-				_, _ = fmt.Fprintf(GinkgoWriter, "Low load detected, skipping scale-up check\n")
-			}
-
-		}, 10*time.Minute, 10*time.Second).Should(Succeed())
-
-		_, _ = fmt.Fprintf(GinkgoWriter, "Deployment scaled to %d replicas (up from %d, target was %d)\n", scaledReplicas, initialReplicas, scaledOptimized)
-	})
-
-	It("should maintain scaled state while load is active", func() {
-		By("verifying deployment stays scaled for at least 30 seconds")
-		Consistently(func(g Gomega) {
-			deploy, err := k8sClient.AppsV1().Deployments(llmDNamespace).Get(ctx, deployment, metav1.GetOptions{})
-			g.Expect(err).NotTo(HaveOccurred(), "Should be able to get deployment")
-			g.Expect(deploy.Status.ReadyReplicas).To(BeNumerically(">=", scaledOptimized),
-				fmt.Sprintf("Deployment should maintain at least %d replicas while job is running", scaledOptimized))
-		}, 30*time.Second, 5*time.Second).Should(Succeed())
-
-		_, _ = fmt.Fprintf(GinkgoWriter, "Deployment maintained %d replicas under load (target: %d)\n", scaledReplicas, scaledOptimized)
-	})
-
-	It("should complete the load generation jobs successfully", func() {
-		By("waiting for jobs to complete")
-		Eventually(func(g Gomega) {
-			succeededCount := 0
-			for i := 1; i <= numLoadWorkers; i++ {
-				jobName := fmt.Sprintf("%s-%d", jobBaseName, i)
-				job, err := k8sClient.BatchV1().Jobs(llmDNamespace).Get(ctx, jobName, metav1.GetOptions{})
-				if err != nil {
-					continue
+				// Select the VA that targets the expected deployment
+				var va *v1alpha1.VariantAutoscaling
+				for i := range vaList.Items {
+					if vaList.Items[i].Spec.ScaleTargetRef.Name == model.deployment {
+						va = &vaList.Items[i]
+						break
+					}
 				}
-				if job.Status.Succeeded >= 1 {
-					succeededCount++
+				Expect(va).NotTo(BeNil(), "A VariantAutoscaling targeting deployment %s should exist", model.deployment)
+				vaName = va.Name
+				_, _ = fmt.Fprintf(GinkgoWriter, "Found VariantAutoscaling: %s (targets %s)\n", vaName, model.deployment)
+
+				// Wait for VA to stabilize at minReplicas before recording initial state
+				// This ensures we're measuring scale-up from load, not residual scale from prior activity
+				By("waiting for VA to stabilize at minReplicas")
+				Eventually(func(g Gomega) {
+					currentVA := &v1alpha1.VariantAutoscaling{}
+					err := crClient.Get(ctx, client.ObjectKey{
+						Namespace: model.namespace,
+						Name:      va.Name,
+					}, currentVA)
+					g.Expect(err).NotTo(HaveOccurred())
+					optimized := int32(currentVA.Status.DesiredOptimizedAlloc.NumReplicas)
+					_, _ = fmt.Fprintf(GinkgoWriter, "Waiting for VA to stabilize: optimized=%d, target minReplicas=%d\n", optimized, hpaMinReplicas)
+					g.Expect(optimized).To(Equal(hpaMinReplicas), "VA should stabilize at minReplicas before load test")
+				}, 5*time.Minute, 10*time.Second).Should(Succeed())
+
+				// Re-read VA to get stabilized state
+				err = crClient.Get(ctx, client.ObjectKey{
+					Namespace: model.namespace,
+					Name:      va.Name,
+				}, va)
+				Expect(err).NotTo(HaveOccurred())
+				initialOptimized = int32(va.Status.DesiredOptimizedAlloc.NumReplicas)
+				_, _ = fmt.Fprintf(GinkgoWriter, "Initial optimized replicas (after stabilization): %d\n", initialOptimized)
+			})
+
+			It("should verify external metrics API is accessible", func() {
+				By("querying external metrics API for inferno_desired_replicas")
+				Eventually(func(g Gomega) {
+					result, err := k8sClient.RESTClient().
+						Get().
+						AbsPath("/apis/external.metrics.k8s.io/v1beta1/namespaces/" + model.namespace + "/" + constants.InfernoDesiredReplicas).
+						DoRaw(ctx)
+					g.Expect(err).NotTo(HaveOccurred(), "Should be able to query external metrics API")
+					g.Expect(string(result)).To(ContainSubstring(constants.InfernoDesiredReplicas), "Metric should be available")
+					g.Expect(string(result)).To(ContainSubstring(model.deployment), "Metric should be for the correct variant")
+				}, 5*time.Minute, 5*time.Second).Should(Succeed())
+			})
+
+			It("should create and run parallel load generation jobs", func() {
+				By("cleaning up any existing jobs")
+				deleteParallelLoadJobs(ctx, jobBaseName, model.namespace, numLoadWorkers)
+				time.Sleep(2 * time.Second)
+
+				By("waiting for gateway endpoints to exist")
+				Eventually(func(g Gomega) {
+					endpoints, err := k8sClient.CoreV1().Endpoints(model.namespace).Get(ctx, model.gatewayService, metav1.GetOptions{})
+					g.Expect(err).NotTo(HaveOccurred(), "gateway endpoints should exist")
+					g.Expect(endpoints.Subsets).NotTo(BeEmpty(), "gateway should have endpoints")
+
+					readyCount := 0
+					for _, subset := range endpoints.Subsets {
+						readyCount += len(subset.Addresses)
+					}
+					_, _ = fmt.Fprintf(GinkgoWriter, "Gateway %s has %d ready endpoints\n", model.gatewayService, readyCount)
+					g.Expect(readyCount).To(BeNumerically(">", 0), "gateway should have at least one ready endpoint")
+				}, 5*time.Minute, 10*time.Second).Should(Succeed())
+
+				By("waiting for gateway to be ready to accept requests")
+				healthCheckBackoffLimit := int32(15)
+				healthCheckJobName := fmt.Sprintf("gateway-health-check-%s", sanitizedName)
+				healthCheckJob := &batchv1.Job{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      healthCheckJobName,
+						Namespace: model.namespace,
+					},
+					Spec: batchv1.JobSpec{
+						BackoffLimit: &healthCheckBackoffLimit,
+						Template: corev1.PodTemplateSpec{
+							Spec: corev1.PodSpec{
+								RestartPolicy: corev1.RestartPolicyNever,
+								Containers: []corev1.Container{{
+									Name:    "health-check",
+									Image:   "quay.io/curl/curl:8.11.1",
+									Command: []string{"/bin/sh", "-c"},
+									Args: []string{fmt.Sprintf(`
+echo "Checking gateway readiness at %s:80..."
+curl -sf --max-time 10 http://%s:80/v1/models && echo "Gateway is ready!" && exit 0
+echo "Gateway not ready yet"
+exit 1`,
+										model.gatewayService, model.gatewayService)},
+								}},
+							},
+						},
+					},
 				}
-			}
-			_, _ = fmt.Fprintf(GinkgoWriter, "Jobs completed: %d / %d\n", succeededCount, numLoadWorkers)
-			g.Expect(succeededCount).To(BeNumerically(">=", numLoadWorkers),
-				fmt.Sprintf("All %d jobs should have succeeded, got %d", numLoadWorkers, succeededCount))
-		}, jobCompletionTimeout, 15*time.Second).Should(Succeed())
 
-		_, _ = fmt.Fprintf(GinkgoWriter, "All load generation jobs completed successfully\n")
-	})
+				backgroundPropagation := metav1.DeletePropagationBackground
+				_ = k8sClient.BatchV1().Jobs(model.namespace).Delete(ctx, healthCheckJobName, metav1.DeleteOptions{
+					PropagationPolicy: &backgroundPropagation,
+				})
+				time.Sleep(2 * time.Second)
 
-	AfterAll(func() {
-		By("cleaning up load generation jobs")
-		deleteParallelLoadJobs(ctx, jobBaseName, llmDNamespace, numLoadWorkers)
+				_, createErr := k8sClient.BatchV1().Jobs(model.namespace).Create(ctx, healthCheckJob, metav1.CreateOptions{})
+				Expect(createErr).NotTo(HaveOccurred(), "Should be able to create health check job")
 
-		_, _ = fmt.Fprintf(GinkgoWriter, "Test completed - scaled from %d to %d replicas\n", initialReplicas, scaledReplicas)
-	})
+				Eventually(func(g Gomega) {
+					job, err := k8sClient.BatchV1().Jobs(model.namespace).Get(ctx, healthCheckJobName, metav1.GetOptions{})
+					g.Expect(err).NotTo(HaveOccurred())
+					_, _ = fmt.Fprintf(GinkgoWriter, "Health check job: succeeded=%d, failed=%d, active=%d\n",
+						job.Status.Succeeded, job.Status.Failed, job.Status.Active)
+					g.Expect(job.Status.Succeeded).To(BeNumerically(">=", 1), "Health check should succeed")
+				}, 10*time.Minute, 10*time.Second).Should(Succeed())
+
+				_ = k8sClient.BatchV1().Jobs(model.namespace).Delete(ctx, healthCheckJobName, metav1.DeleteOptions{
+					PropagationPolicy: &backgroundPropagation,
+				})
+
+				_, _ = fmt.Fprintf(GinkgoWriter, "Gateway %s is ready and accepting requests, creating load generation jobs\n", model.gatewayService)
+
+				By("cleaning up any existing load generation jobs")
+				_ = k8sClient.BatchV1().Jobs(model.namespace).DeleteCollection(ctx,
+					metav1.DeleteOptions{
+						PropagationPolicy: &backgroundPropagation,
+					},
+					metav1.ListOptions{
+						LabelSelector: fmt.Sprintf("experiment=%s", jobBaseName),
+					})
+				time.Sleep(2 * time.Second)
+
+				By(fmt.Sprintf("creating %d parallel load generation jobs targeting gateway", numLoadWorkers))
+				loadErr := createParallelLoadJobsForModel(ctx, jobBaseName, model.namespace, model.gatewayService, numLoadWorkers, requestsPerWorker)
+				Expect(loadErr).NotTo(HaveOccurred(), "Should be able to create load generation jobs")
+
+				By("waiting for job pods to be running")
+				Eventually(func(g Gomega) {
+					podList, err := k8sClient.CoreV1().Pods(model.namespace).List(ctx, metav1.ListOptions{
+						LabelSelector: fmt.Sprintf("experiment=%s", jobBaseName),
+					})
+					g.Expect(err).NotTo(HaveOccurred(), "Should be able to list job pods")
+					g.Expect(len(podList.Items)).To(BeNumerically(">=", numLoadWorkers), "All job pods should exist")
+
+					runningCount := 0
+					for _, pod := range podList.Items {
+						if pod.Status.Phase == corev1.PodRunning || pod.Status.Phase == corev1.PodSucceeded {
+							runningCount++
+						}
+					}
+					g.Expect(runningCount).To(BeNumerically(">=", numLoadWorkers),
+						fmt.Sprintf("At least %d job pods should be running, got %d", numLoadWorkers, runningCount))
+				}, 3*time.Minute, 5*time.Second).Should(Succeed())
+
+				_, _ = fmt.Fprintf(GinkgoWriter, "All %d load generation jobs are running\n", numLoadWorkers)
+			})
+
+			It("should detect increased load and trigger scale-up", func() {
+				By("waiting for load generation to ramp up (30 seconds)")
+				time.Sleep(30 * time.Second)
+
+				By("monitoring VariantAutoscaling and HPA for scale-up")
+				Eventually(func(g Gomega) {
+					va := &v1alpha1.VariantAutoscaling{}
+					err := crClient.Get(ctx, client.ObjectKey{
+						Namespace: model.namespace,
+						Name:      vaName,
+					}, va)
+					g.Expect(err).NotTo(HaveOccurred(), "Should be able to get VariantAutoscaling")
+
+					scaledOptimized = int32(va.Status.DesiredOptimizedAlloc.NumReplicas)
+					currentRateStr := va.Status.CurrentAlloc.Load.ArrivalRate
+					_, _ = fmt.Fprintf(GinkgoWriter, "VA optimized replicas: %d (initial: %d, minReplicas: %d), arrival rate: %s\n",
+						scaledOptimized, initialOptimized, hpaMinReplicas, currentRateStr)
+
+					if !lowLoad {
+						// Scale-up means we should have MORE replicas than our initial stabilized state
+						// (not just more than minReplicas, which could be satisfied by initial startup)
+						g.Expect(scaledOptimized).To(BeNumerically(">", initialOptimized),
+							fmt.Sprintf("WVA should recommend more replicas than initial under load (current: %d, initial: %d)", scaledOptimized, initialOptimized))
+					} else {
+						_, _ = fmt.Fprintf(GinkgoWriter, "Low load detected, skipping scale-up recommendation check\n")
+					}
+
+					hpa, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(model.namespace).Get(ctx, hpaName, metav1.GetOptions{})
+					g.Expect(err).NotTo(HaveOccurred(), "Should be able to get HPA")
+
+					_, _ = fmt.Fprintf(GinkgoWriter, "HPA desiredReplicas: %d, currentReplicas: %d\n",
+						hpa.Status.DesiredReplicas, hpa.Status.CurrentReplicas)
+
+					if !lowLoad {
+						// HPA should also desire more replicas than initial
+						g.Expect(hpa.Status.DesiredReplicas).To(BeNumerically(">", initialOptimized),
+							fmt.Sprintf("HPA should desire more replicas than initial (desired: %d, initial: %d)", hpa.Status.DesiredReplicas, initialOptimized))
+					}
+
+				}, 5*time.Minute, 10*time.Second).Should(Succeed())
+
+				_, _ = fmt.Fprintf(GinkgoWriter, "WVA detected load and recommended %d replicas (up from %d)\n", scaledOptimized, initialOptimized)
+			})
+
+			It("should scale deployment to match recommended replicas", func() {
+				By("monitoring deployment for actual scale-up")
+				Eventually(func(g Gomega) {
+					deploy, err := k8sClient.AppsV1().Deployments(model.namespace).Get(ctx, model.deployment, metav1.GetOptions{})
+					g.Expect(err).NotTo(HaveOccurred(), "Should be able to get deployment")
+
+					scaledReplicas = deploy.Status.ReadyReplicas
+					_, _ = fmt.Fprintf(GinkgoWriter, "Current ready replicas: %d (initial: %d, desired: %d)\n",
+						scaledReplicas, initialReplicas, scaledOptimized)
+
+					if !lowLoad {
+						g.Expect(deploy.Status.Replicas).To(BeNumerically(">", hpaMinReplicas),
+							fmt.Sprintf("Deployment should have more total replicas than minReplicas under high load (current: %d, min: %d)", deploy.Status.Replicas, hpaMinReplicas))
+						g.Expect(scaledReplicas).To(BeNumerically(">=", scaledOptimized),
+							fmt.Sprintf("Deployment should have at least %d ready replicas to match optimizer recommendation", scaledOptimized))
+					} else {
+						_, _ = fmt.Fprintf(GinkgoWriter, "Low load detected, skipping scale-up check\n")
+					}
+
+				}, 10*time.Minute, 10*time.Second).Should(Succeed())
+
+				_, _ = fmt.Fprintf(GinkgoWriter, "Deployment scaled to %d replicas (up from %d, target was %d)\n", scaledReplicas, initialReplicas, scaledOptimized)
+			})
+
+			It("should maintain scaled state while load is active", func() {
+				By("verifying deployment stays scaled for at least 30 seconds")
+				Consistently(func(g Gomega) {
+					deploy, err := k8sClient.AppsV1().Deployments(model.namespace).Get(ctx, model.deployment, metav1.GetOptions{})
+					g.Expect(err).NotTo(HaveOccurred(), "Should be able to get deployment")
+					g.Expect(deploy.Status.ReadyReplicas).To(BeNumerically(">=", scaledOptimized),
+						fmt.Sprintf("Deployment should maintain at least %d replicas while job is running", scaledOptimized))
+				}, 30*time.Second, 5*time.Second).Should(Succeed())
+
+				_, _ = fmt.Fprintf(GinkgoWriter, "Deployment maintained %d replicas under load (target: %d)\n", scaledReplicas, scaledOptimized)
+			})
+
+			It("should complete the load generation jobs successfully", func() {
+				By("waiting for jobs to complete")
+				Eventually(func(g Gomega) {
+					succeededCount := 0
+					for i := 1; i <= numLoadWorkers; i++ {
+						jobName := fmt.Sprintf("%s-%d", jobBaseName, i)
+						job, err := k8sClient.BatchV1().Jobs(model.namespace).Get(ctx, jobName, metav1.GetOptions{})
+						if err != nil {
+							continue
+						}
+						if job.Status.Succeeded >= 1 {
+							succeededCount++
+						}
+					}
+					_, _ = fmt.Fprintf(GinkgoWriter, "Jobs completed: %d / %d\n", succeededCount, numLoadWorkers)
+					g.Expect(succeededCount).To(BeNumerically(">=", numLoadWorkers),
+						fmt.Sprintf("All %d jobs should have succeeded, got %d", numLoadWorkers, succeededCount))
+				}, jobCompletionTimeout, 15*time.Second).Should(Succeed())
+
+				_, _ = fmt.Fprintf(GinkgoWriter, "All load generation jobs completed successfully\n")
+			})
+
+			AfterAll(func() {
+				By("cleaning up load generation jobs")
+				deleteParallelLoadJobs(ctx, jobBaseName, model.namespace, numLoadWorkers)
+
+				_, _ = fmt.Fprintf(GinkgoWriter, "\n========================================\n")
+				_, _ = fmt.Fprintf(GinkgoWriter, "%s test completed - scaled from %d to %d replicas\n", model.name, initialReplicas, scaledReplicas)
+				_, _ = fmt.Fprintf(GinkgoWriter, "========================================\n\n")
+			})
+		})
+	}
 })
 
 // createLoadGenerationJob creates a lightweight Kubernetes Job that generates load using curl
-// This uses a small image and sends requests directly to vllm-service to avoid gateway routing issues
-func createLoadGenerationJob(name, namespace string, workerID, numRequests int) *batchv1.Job {
+// The gatewayService parameter should be the Istio gateway service name (port 80)
+func createLoadGenerationJob(name, namespace, gatewayService, experimentLabel string, workerID, numRequests int) *batchv1.Job {
 	backoffLimit := int32(0)
 
-	// Script that sends concurrent requests to saturate the vLLM instance
-	// All Go template parameters are defined at the top as shell variables for clarity
 	script := fmt.Sprintf(`#!/bin/sh
 # =============================================================================
 # Load Generator Configuration (injected from Go constants)
@@ -290,6 +471,7 @@ CURL_TIMEOUT=%d
 MAX_TOKENS=%d
 BATCH_SLEEP=%s
 MODEL_ID="%s"
+GATEWAY_SERVICE="%s"
 MAX_RETRIES=24
 RETRY_DELAY=5
 
@@ -297,13 +479,13 @@ RETRY_DELAY=5
 # Script Start
 # =============================================================================
 echo "Load generator worker $WORKER_ID starting..."
-echo "Sending $TOTAL_REQUESTS requests to vllm-service:8200"
+echo "Sending $TOTAL_REQUESTS requests to gateway $GATEWAY_SERVICE:80"
 
-# Wait for vllm-service to be ready
-echo "Waiting for vllm-service to be ready..."
+# Wait for gateway to be ready
+echo "Waiting for gateway $GATEWAY_SERVICE to be ready..."
 CONNECTED=false
 for i in $(seq 1 $MAX_RETRIES); do
-  if curl -s -o /dev/null -w "%%{http_code}" http://vllm-service:8200/v1/models 2>/dev/null | grep -q 200; then
+  if curl -s -o /dev/null -w "%%{http_code}" http://$GATEWAY_SERVICE:80/v1/models 2>/dev/null | grep -q 200; then
     echo "Connection test passed on attempt $i"
     CONNECTED=true
     break
@@ -313,7 +495,7 @@ for i in $(seq 1 $MAX_RETRIES); do
 done
 
 if [ "$CONNECTED" != "true" ]; then
-  echo "ERROR: Cannot connect to vllm-service after $MAX_RETRIES attempts"
+  echo "ERROR: Cannot connect to gateway $GATEWAY_SERVICE after $MAX_RETRIES attempts"
   exit 1
 fi
 
@@ -322,7 +504,7 @@ SENT=0
 while [ $SENT -lt $TOTAL_REQUESTS ]; do
   for i in $(seq 1 $BATCH_SIZE); do
     if [ $SENT -ge $TOTAL_REQUESTS ]; then break; fi
-    (curl -s -o /dev/null --max-time $CURL_TIMEOUT -X POST http://vllm-service:8200/v1/completions \
+    (curl -s -o /dev/null --max-time $CURL_TIMEOUT -X POST http://$GATEWAY_SERVICE:80/v1/completions \
       -H "Content-Type: application/json" \
       -d "{\"model\":\"$MODEL_ID\",\"prompt\":\"Write a detailed explanation of machine learning algorithms.\",\"max_tokens\":$MAX_TOKENS}" || true) &
     SENT=$((SENT + 1))
@@ -336,14 +518,14 @@ wait || true
 
 echo "Worker $WORKER_ID: completed all $TOTAL_REQUESTS requests"
 exit 0
-`, workerID, numRequests, batchSize, curlTimeoutSeconds, maxTokens, batchSleepDuration, modelID)
+`, workerID, numRequests, batchSize, curlTimeoutSeconds, maxTokens, batchSleepDuration, modelID, gatewayService)
 
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
 			Labels: map[string]string{
-				"experiment": "load-gen-e2e",
+				"experiment": experimentLabel,
 				"worker":     fmt.Sprintf("%d", workerID),
 			},
 		},
@@ -352,7 +534,7 @@ exit 0
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: map[string]string{
-						"experiment": "load-gen-e2e",
+						"experiment": experimentLabel,
 						"worker":     fmt.Sprintf("%d", workerID),
 					},
 				},
@@ -360,7 +542,7 @@ exit 0
 					Containers: []corev1.Container{
 						{
 							Name:    "load-generator",
-							Image:   "curlimages/curl:latest",
+							Image:   "quay.io/curl/curl:8.11.1",
 							Command: []string{"/bin/sh", "-c"},
 							Args:    []string{script},
 							Resources: corev1.ResourceRequirements{
@@ -382,16 +564,17 @@ exit 0
 	}
 }
 
-// createParallelLoadJobs creates multiple parallel load generation jobs
-func createParallelLoadJobs(ctx context.Context, baseName, namespace string, numWorkers, requestsPerWorker int) error {
+// createParallelLoadJobsForModel creates multiple parallel load generation jobs for a specific model
+// Traffic is routed through the gateway service (port 80) to be properly handled by InferencePool/EPP
+func createParallelLoadJobsForModel(ctx context.Context, baseName, namespace, gatewayService string, numWorkers, requestsPerWorker int) error {
 	for i := 1; i <= numWorkers; i++ {
 		jobName := fmt.Sprintf("%s-%d", baseName, i)
-		job := createLoadGenerationJob(jobName, namespace, i, requestsPerWorker)
+		job := createLoadGenerationJob(jobName, namespace, gatewayService, baseName, i, requestsPerWorker)
 		_, err := k8sClient.BatchV1().Jobs(namespace).Create(ctx, job, metav1.CreateOptions{})
 		if err != nil {
 			return fmt.Errorf("failed to create job %s: %w", jobName, err)
 		}
-		_, _ = fmt.Fprintf(GinkgoWriter, "Created load generation job: %s\n", jobName)
+		_, _ = fmt.Fprintf(GinkgoWriter, "Created load generation job: %s (targeting gateway %s)\n", jobName, gatewayService)
 	}
 	return nil
 }

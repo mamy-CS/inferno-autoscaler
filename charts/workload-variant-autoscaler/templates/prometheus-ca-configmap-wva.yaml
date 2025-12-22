@@ -1,8 +1,11 @@
+{{- if .Values.controller.enabled }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: prometheus-ca
+  name: {{ include "workload-variant-autoscaler.fullname" . }}-prometheus-ca
   namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "workload-variant-autoscaler.labels" . | nindent 4 }}
 data:
   ca.crt: |
     {{- if .Values.wva.prometheus.caCert }}
@@ -10,3 +13,4 @@ data:
     {{- else }}
     # CA certificate not provided - using system CA bundle
     {{- end }}
+{{- end }}

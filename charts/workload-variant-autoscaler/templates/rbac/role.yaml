@@ -1,8 +1,11 @@
+{{- if .Values.controller.enabled }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: workload-variant-autoscaler-manager-role
+  name: {{ include "workload-variant-autoscaler.fullname" . }}-manager-role
+  labels:
+    {{- include "workload-variant-autoscaler.labels" . | nindent 4 }}
 rules:
 - apiGroups:
   - ""
@@ -83,3 +86,4 @@ rules:
   verbs:
   - create
   - patch
+{{- end }}

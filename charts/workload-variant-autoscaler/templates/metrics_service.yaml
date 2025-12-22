@@ -1,11 +1,12 @@
+{{- if .Values.controller.enabled }}
 apiVersion: v1
 kind: Service
 metadata:
+  name: {{ include "workload-variant-autoscaler.fullname" . }}-metrics
+  namespace: {{ .Release.Namespace }}
   labels:
     control-plane: controller-manager
-    app.kubernetes.io/name: workload-variant-autoscaler
-  name: workload-variant-autoscaler-controller-manager-metrics-service
-  namespace: {{ .Release.Namespace }}
+    {{- include "workload-variant-autoscaler.labels" . | nindent 4 }}
 spec:
   ports:
   - name: https
@@ -14,4 +15,5 @@ spec:
     targetPort: 8443
   selector:
     control-plane: controller-manager
-    app.kubernetes.io/name: workload-variant-autoscaler
+    {{- include "workload-variant-autoscaler.selectorLabels" . | nindent 4 }}
+{{- end }}

@@ -240,15 +240,6 @@ func (pc *PrometheusCollector) buildModelMaps(ctx context.Context, modelID, name
 			continue // Skip VAs that don't match the modelID
 		}
 
-		// Parse variant cost
-		cost := saturation.DefaultVariantCost // default
-		if va.Spec.VariantCost != "" {
-			if parsedCost, parseErr := strconv.ParseFloat(va.Spec.VariantCost, 64); parseErr == nil {
-				cost = parsedCost
-			}
-		}
-		variantCosts[va.Name] = cost
-
 		// Get the deployment for this VA
 		var deploy appsv1.Deployment
 		if err := utils.GetDeploymentWithBackoff(ctx, k8sClient, va.GetScaleTargetName(), va.Namespace, &deploy); err != nil {
@@ -256,8 +247,19 @@ func (pc *PrometheusCollector) buildModelMaps(ctx context.Context, modelID, name
 			continue // Skip this VA if we can't get its deployment
 		}
 
-		deployments[va.Name] = &deploy
-		variantAutoscalings[va.Name] = va
+		// Parse variant cost
+		cost := saturation.DefaultVariantCost // default
+		if va.Spec.VariantCost != "" {
+			if parsedCost, parseErr := strconv.ParseFloat(va.Spec.VariantCost, 64); parseErr == nil {
+				cost = parsedCost
+			}
+		}
+
+		// Use deployment name as key (not VA name) since getExistingPods uses
+		// the key to build pod name regex filters for Prometheus queries
+		deployments[deploy.Name] = &deploy
+		variantAutoscalings[deploy.Name] = va
+		variantCosts[deploy.Name] = cost
 	}
 
 	return deployments, variantAutoscalings, variantCosts, nil

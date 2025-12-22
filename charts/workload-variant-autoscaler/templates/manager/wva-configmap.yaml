@@ -1,10 +1,11 @@
+{{- if .Values.controller.enabled }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: workload-variant-autoscaler-variantautoscaling-config
+  name: {{ include "workload-variant-autoscaler.fullname" . }}-variantautoscaling-config
   namespace: {{ .Release.Namespace }}
   labels:
-    app.kubernetes.io/name: workload-variant-autoscaler
+    {{- include "workload-variant-autoscaler.labels" . | nindent 4 }}
 data:
   # Prometheus configuration - REQUIRED: Set your Prometheus server URL
   # Examples:
@@ -21,11 +22,11 @@ data:
   # PROMETHEUS_CLIENT_KEY_PATH: "/path/to/client.key"   # Client private key for mutual TLS
   # PROMETHEUS_SERVER_NAME: "prometheus.example.com"    # Expected server name for SNI
   PROMETHEUS_TLS_INSECURE_SKIP_VERIFY: {{ if and .Values.wva.prometheus.tls (hasKey .Values.wva.prometheus.tls "insecureSkipVerify") }}{{ .Values.wva.prometheus.tls.insecureSkipVerify | quote }}{{ else }}"true"{{ end }}
-  
+
   # Authentication Configuration (BearerToken takes precedence over TokenPath)
   # PROMETHEUS_BEARER_TOKEN: "your-token-here"           # Direct bearer token (development/testing)
   # PROMETHEUS_TOKEN_PATH: "/path/to/token/file"        # Path to bearer token file (production with mounted secrets)
-  
+
   # Optimization configuration
   GLOBAL_OPT_INTERVAL: {{ .Values.wva.reconcileInterval | quote }}
 
@@ -56,3 +57,4 @@ data:
   # EPP_METRICS_CACHE_TTL: "15s"
   # EPP_METRICS_CACHE_MAX_SIZE: "500"
   # EPP_METRICS_CACHE_CLEANUP_INTERVAL: "30s"
+{{- end }}

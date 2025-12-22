@@ -196,6 +196,50 @@ Load generation job completed successfully
 Test completed - scaled from 1 to 2 replicas
 ```
 
+## Monitoring CI Runs
+
+When the CI e2e tests are running on OpenShift, you can monitor the cluster resources using the following commands. Replace `<PR_NUMBER>` with your actual PR number:
+
+```bash
+# Watch WVA controller pods
+oc get pods,deploy -n llm-d-autoscaler-pr-<PR_NUMBER>
+
+# Watch Model A (primary namespace) - pods, deployments, VAs, and HPAs
+oc get pods,deploy,va,hpa -n llm-d-inference-scheduler-pr-<PR_NUMBER>
+
+# Watch Model B (secondary namespace) - pods, deployments, VAs, and HPAs
+oc get pods,deploy,va,hpa -n llm-d-inference-scheduler-pr-<PR_NUMBER>-b
+
+# Watch all VAs across namespaces with detailed status
+oc get va -A -o custom-columns='NAMESPACE:.metadata.namespace,NAME:.metadata.name,OPTIMIZED:.status.desiredOptimizedAlloc.numReplicas,REPLICAS:.status.currentAlloc.numReplicas,RATE:.status.currentAlloc.load.arrivalRate'
+
+# Watch load generation jobs
+oc get jobs -n llm-d-inference-scheduler-pr-<PR_NUMBER>
+oc get jobs -n llm-d-inference-scheduler-pr-<PR_NUMBER>-b
+```
+
+### CI Cleanup Behavior
+
+The CI workflow handles cleanup as follows:
+- **Before tests**: All PR-specific namespaces are cleaned up to ensure a fresh start
+- **After successful tests**: Resources are cleaned up automatically
+- **After failed tests**: Resources are left in place for debugging
+
+To manually trigger a run with cleanup disabled after success, use `SKIP_CLEANUP=true`.
+
+## Multi-Model Testing
+
+The CI tests deploy 2 models in 2 separate namespaces with 1 shared WVA controller:
+
+- **Model A**: Full llm-d stack in `llm-d-inference-scheduler-pr-<PR>`
+- **Model B**: Full llm-d stack in `llm-d-inference-scheduler-pr-<PR>-b`
+- **Shared WVA**: Single controller in `llm-d-autoscaler-pr-<PR>` managing both
+
+This validates:
+1. Multi-namespace WVA controller operation
+2. Independent scaling for each model
+3. Namespace isolation for metrics and HPA
+
 ## Troubleshooting
 
 ### Test Fails: Infrastructure Not Ready

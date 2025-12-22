@@ -33,6 +33,7 @@ PROMETHEUS_SECRET_NS=${PROMETHEUS_SECRET_NS:-$MONITORING_NAMESPACE}
 WVA_IMAGE_REPO=${WVA_IMAGE_REPO:-"ghcr.io/llm-d-incubation/workload-variant-autoscaler"}
 WVA_IMAGE_TAG=${WVA_IMAGE_TAG:-"latest"}
 WVA_IMAGE_PULL_POLICY=${WVA_IMAGE_PULL_POLICY:-"Always"}
+WVA_RELEASE_NAME=${WVA_RELEASE_NAME:-"workload-variant-autoscaler"}
 VLLM_SVC_ENABLED=${VLLM_SVC_ENABLED:-true}
 VLLM_SVC_NODEPORT=${VLLM_SVC_NODEPORT:-30000}
 SKIP_TLS_VERIFY=${SKIP_TLS_VERIFY:-"false"}
@@ -121,6 +122,7 @@ Options:
   -i, --wva-image IMAGE        Container image to use for the WVA (default: $WVA_IMAGE_REPO:$WVA_IMAGE_TAG)
   -m, --model MODEL            Model ID to use (default: $MODEL_ID)
   -a, --accelerator TYPE       Accelerator type: A100, H100, L40S, etc. (default: $ACCELERATOR_TYPE)
+  -r, --release-name NAME      Helm release name for WVA (default: $WVA_RELEASE_NAME)
   -u, --undeploy               Undeploy all components
   -e, --environment            Specify deployment environment: kubernetes, openshift, kind-emulated (default: kubernetes)
   -h, --help                   Show this help and exit
@@ -128,6 +130,7 @@ Options:
 Environment Variables:
   IMG                          Container image to use for the WVA (alternative to -i flag)
   HF_TOKEN                     HuggingFace token for model access (required for llm-d deployment)
+  WVA_RELEASE_NAME             Helm release name for WVA (alternative to -r flag)
   INSTALL_GATEWAY_CTRLPLANE    Install Gateway control plane (default: prompt user, can be set to "true"/"false")
   DEPLOY_PROMETHEUS            Deploy Prometheus stack (default: true)
   DEPLOY_WVA                   Deploy WVA controller (default: true)
@@ -144,9 +147,12 @@ Examples:
 
   # Deploy with custom WVA image
   IMG=<your_registry>/workload-variant-autoscaler:tag $(basename "$0")
-  
+
   # Deploy with custom model and accelerator
   $(basename "$0") -m unsloth/Meta-Llama-3.1-8B -a A100
+
+  # Deploy with custom release name (for multi-install support)
+  $(basename "$0") -r my-wva-release
 EOF
 }
 
@@ -184,6 +190,7 @@ parse_args() {
         ;;
       -m|--model)             MODEL_ID="$2"; shift 2 ;;
       -a|--accelerator)       ACCELERATOR_TYPE="$2"; shift 2 ;;
+      -r|--release-name)      WVA_RELEASE_NAME="$2"; shift 2 ;;
       -u|--undeploy)          UNDEPLOY=true; shift ;;
       -e|--environment)
         ENVIRONMENT="$2" ; shift 2
@@ -388,6 +395,7 @@ set_wva_logging_level() {
 deploy_wva_controller() {
     log_info "Deploying Workload-Variant-Autoscaler..."
     log_info "Using image: $WVA_IMAGE_REPO:$WVA_IMAGE_TAG"
+    log_info "Using release name: $WVA_RELEASE_NAME"
 
     # Deploy WVA using Helm chart
     log_info "Installing Workload-Variant-Autoscaler via Helm chart"
@@ -395,8 +403,8 @@ deploy_wva_controller() {
     # Default namespaceScoped to true if not set (matches chart default)
     # But allow override via env var (e.g. for E2E tests)
     NAMESPACE_SCOPED=${NAMESPACE_SCOPED:-true}
-    
-    helm upgrade -i workload-variant-autoscaler ${WVA_PROJECT}/charts/workload-variant-autoscaler \
+
+    helm upgrade -i "$WVA_RELEASE_NAME" ${WVA_PROJECT}/charts/workload-variant-autoscaler \
         -n $WVA_NS \
         --values $VALUES_FILE \
         --set-file wva.prometheus.caCert=$PROM_CA_CERT_PATH \
@@ -804,13 +812,13 @@ undeploy_llm_d_infrastructure() {
 }
 
 undeploy_wva_controller() {
-    log_info "Uninstalling Workload-Variant-Autoscaler..."
-    
-    helm uninstall workload-variant-autoscaler -n $WVA_NS 2>/dev/null || \
+    log_info "Uninstalling Workload-Variant-Autoscaler (release: $WVA_RELEASE_NAME)..."
+
+    helm uninstall "$WVA_RELEASE_NAME" -n $WVA_NS 2>/dev/null || \
         log_warning "Workload-Variant-Autoscaler not found or already uninstalled"
-    
+
     rm -f "$PROM_CA_CERT_PATH"
-    
+
     log_success "WVA uninstalled"
 }
 

@@ -1,3 +1,4 @@
+{{- if .Values.controller.enabled }}
 apiVersion: v1
 kind: ConfigMap
 # This ConfigMap defines saturation-based scaling thresholds for model variants.
@@ -15,8 +16,10 @@ kind: ConfigMap
 # - queueSpareTrigger: Scale-up signal if avg spare queue capacity < trigger (integer)
 #
 metadata:
-  name: saturation-scaling-config
+  name: {{ include "workload-variant-autoscaler.fullname" . }}-saturation-scaling-config
   namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "workload-variant-autoscaler.labels" . | nindent 4 }}
 data:
   # Global defaults applied to all variants unless overridden
   default: |
@@ -62,3 +65,4 @@ data:
   #   namespace: production
   #   kvCacheThreshold: 0.85
   #   kvSpareTrigger: 0.15
+{{- end }}
