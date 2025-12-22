@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"os"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -36,9 +37,7 @@ var _ = Describe("Collector", func() {
 		Expect(llmdVariantAutoscalingV1alpha1.AddToScheme(scheme)).To(Succeed())
 	})
 
-	// TODO: Re-enable these tests when implementing limited mode support
-	// These tests are for CollectInventoryK8S which is not used in unlimited mode
-	PContext("When collecting inventory from K8s", func() {
+	Context("When collecting inventory from K8s", func() {
 		It("should collect GPU inventory from multiple nodes", func() {
 			// Create nodes with fake GPU labels
 			nodes := []corev1.Node{
@@ -60,8 +59,9 @@ var _ = Describe("Collector", func() {
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "gpu-node-2",
 						Labels: map[string]string{
-							"amd.com/gpu.product": "MI300X",
-							"amd.com/gpu.memory":  "192Gi",
+							"amd.com/gpu.product":    "MI300X",
+							"amd.com/gpu.memory":     "192Gi",
+							"nvidia.com/gpu.product": "ignored",
 						},
 					},
 					Status: corev1.NodeStatus{
@@ -150,8 +150,9 @@ var _ = Describe("Collector", func() {
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "gpu-node-2",
 						Labels: map[string]string{
-							"amd.com/gpu.product": "MI300X",
-							"amd.com/gpu.memory":  "192Gi",
+							"amd.com/gpu.product":    "MI300X",
+							"amd.com/gpu.memory":     "192Gi",
+							"nvidia.com/gpu.product": "ignored",
 						},
 					},
 					Status: corev1.NodeStatus{
@@ -200,8 +201,9 @@ var _ = Describe("Collector", func() {
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "gpu-node-2",
 						Labels: map[string]string{
-							"amd.com/gpu.product": "MI300X",
-							"amd.com/gpu.memory":  "192Gi",
+							"amd.com/gpu.product":    "MI300X",
+							"amd.com/gpu.memory":     "192Gi",
+							"nvidia.com/gpu.product": "ignored",
 						},
 					},
 					Status: corev1.NodeStatus{
@@ -224,9 +226,66 @@ var _ = Describe("Collector", func() {
 			Expect(inventory["gpu-node-1"]).To(HaveLen(2))
 			Expect(inventory["gpu-node-1"]["A100"].Count).To(Equal(2))
 			Expect(inventory["gpu-node-1"]["G2"].Count).To(Equal(1))
-			Expect(inventory["gpu-node-2"]).To(HaveLen(1))
+			Expect(inventory["gpu-node-2"]).To(HaveLen(2))
 			Expect(inventory["gpu-node-2"]["MI300X"].Count).To(Equal(2))
 			Expect(inventory["gpu-node-2"]["MI300X"].Memory).To(Equal("192Gi"))
+		})
+
+		It("should filter nodes based on WVA_NODE_SELECTOR environment variable", func() {
+			// Set environment variable
+			os.Setenv("WVA_NODE_SELECTOR", "wva.llmd.ai/shard=instance-a")
+			defer os.Unsetenv("WVA_NODE_SELECTOR")
+
+			// Create nodes: one matching the shard, one not
+			nodes := []corev1.Node{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "shard-node-a",
+						Labels: map[string]string{
+							"nvidia.com/gpu.product": "A100",
+							"nvidia.com/gpu.memory":  "40Gi",
+							"wva.llmd.ai/shard":      "instance-a",
+						},
+					},
+					Status: corev1.NodeStatus{
+						Allocatable: corev1.ResourceList{
+							"nvidia.com/gpu": resource.MustParse("1"),
+						},
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "shard-node-b",
+						Labels: map[string]string{
+							"nvidia.com/gpu.product": "A100",
+							"nvidia.com/gpu.memory":  "40Gi",
+							"wva.llmd.ai/shard":      "instance-b",
+						},
+					},
+					Status: corev1.NodeStatus{
+						Allocatable: corev1.ResourceList{
+							"nvidia.com/gpu": resource.MustParse("1"),
+						},
+					},
+				},
+			}
+
+			// Create fake client with filtered nodes
+			// Note: controller-runtime fake client supports basic label filtering
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(&nodes[0], &nodes[1]).
+				Build()
+
+			inventory, err := CollectInventoryK8S(ctx, fakeClient)
+
+			Expect(err).NotTo(HaveOccurred())
+			// Should only find shard-node-a
+			// Note: 1 because 1 matching node. Assertions check keys.
+			Expect(inventory).To(HaveLen(1))
+			Expect(inventory).To(HaveKey("shard-node-a"))
+			Expect(inventory).NotTo(HaveKey("shard-node-b"))
+			Expect(inventory["shard-node-a"]["A100"].Count).To(Equal(1))
 		})
 	})
 
@@ -568,16 +627,4 @@ var _ = Describe("Collector", func() {
 		})
 	})
 
-	// TODO: Re-enable when implementing limited mode support
-	PContext("When testing vendor list", func() {
-		It("should have expected GPU vendors", func() {
-			expectedVendors := []string{
-				"nvidia.com",
-				"amd.com",
-				"intel.com",
-			}
-
-			Expect(vendors).To(ConsistOf(expectedVendors))
-		})
-	})
 })

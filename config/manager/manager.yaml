@@ -97,6 +97,16 @@ spec:
               configMapKeyRef:
                 name: variantautoscaling-config
                 key: EXPERIMENTAL_HYBRID_OPTIMIZATION
+          - name: WVA_LIMITED_MODE
+            valueFrom:
+              configMapKeyRef:
+                name: variantautoscaling-config
+                key: WVA_LIMITED_MODE
+          - name: WVA_NODE_SELECTOR
+            valueFrom:
+              configMapKeyRef:
+                name: variantautoscaling-config
+                key: WVA_NODE_SELECTOR
           - name: POD_NAMESPACE
             valueFrom:
               fieldRef:
