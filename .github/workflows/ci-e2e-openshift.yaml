@@ -147,6 +147,15 @@ jobs:
                 comment_id: context.payload.comment.id,
                 content: 'rocket'
               });
+
+              // Post comment with link to the e2e workflow run
+              const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body: `🚀 **E2E tests triggered by /ok-to-test**\n\n[View the OpenShift E2E workflow run](${runUrl})`
+              });
               return;
             }
 
