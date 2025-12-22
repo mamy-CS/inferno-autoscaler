@@ -233,8 +233,11 @@ var _ = Describe("Collector", func() {
 
 		It("should filter nodes based on WVA_NODE_SELECTOR environment variable", func() {
 			// Set environment variable
-			os.Setenv("WVA_NODE_SELECTOR", "wva.llmd.ai/shard=instance-a")
-			defer os.Unsetenv("WVA_NODE_SELECTOR")
+			err := os.Setenv("WVA_NODE_SELECTOR", "wva.llmd.ai/shard=instance-a")
+			Expect(err).NotTo(HaveOccurred())
+			defer func() {
+				_ = os.Unsetenv("WVA_NODE_SELECTOR")
+			}()
 
 			// Create nodes: one matching the shard, one not
 			nodes := []corev1.Node{
