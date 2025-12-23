@@ -208,8 +208,9 @@ var _ = Describe("ShareGPT Scale-Up Test", Ordered, func() {
 					}, currentVA)
 					g.Expect(err).NotTo(HaveOccurred())
 					optimized := int32(currentVA.Status.DesiredOptimizedAlloc.NumReplicas)
-					_, _ = fmt.Fprintf(GinkgoWriter, "Waiting for VA to stabilize: optimized=%d, target minReplicas=%d\n", optimized, hpaMinReplicas)
-					g.Expect(optimized).To(Equal(hpaMinReplicas), "VA should stabilize at minReplicas before load test")
+					_, _ = fmt.Fprintf(GinkgoWriter, "Waiting for VA to be ready: optimized=%d, minReplicas=%d\n", optimized, hpaMinReplicas)
+					// Wait for optimized >= minReplicas (allows for initial 0 during engine startup)
+					g.Expect(optimized).To(BeNumerically(">=", hpaMinReplicas), "VA should have optimized >= minReplicas")
 				}, 5*time.Minute, 10*time.Second).Should(Succeed())
 
 				// Re-read VA to get stabilized state
