@@ -334,6 +334,8 @@ After code changes, update relevant docs in:
 - `docs/design/` - Architecture/design changes
 - `docs/integrations/` - Integration guide updates
 
+**Note**: Documentation updates are partially automated via the [Update Docs workflow](agentic-workflows.md#update-docs). The workflow analyzes code changes and creates draft PRs with documentation updates.
+
 ### Testing Documentation
 
 Verify all commands and examples in documentation work:
@@ -343,6 +345,17 @@ Verify all commands and examples in documentation work:
 # Test configuration examples
 # Test all code snippets
 ```
+
+## GitHub Agentic Workflows
+
+The repository uses AI-powered workflows to automate documentation updates, workflow creation, and debugging. These workflows are powered by the `gh-aw` CLI extension.
+
+Key workflows:
+- **Update Docs**: Automatically updates documentation on every push to main
+- **Create Agentic Workflow**: Interactive workflow designer
+- **Debug Agentic Workflow**: Workflow debugging assistant
+
+See [Agentic Workflows Guide](agentic-workflows.md) for detailed information on working with these automation tools.
 
 ## Release Process
 

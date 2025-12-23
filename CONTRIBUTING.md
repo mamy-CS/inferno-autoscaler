@@ -48,6 +48,16 @@ This document covers **WVA-specific** development setup and workflows.
 
 See [Developer Guide](docs/developer-guide/development.md) for detailed setup instructions.
 
+### GitHub Agentic Workflows
+
+The repository uses AI-powered workflows to automate repetitive tasks:
+
+- **Documentation Updates**: Automatically syncs docs with code changes
+- **Workflow Creation**: Interactive designer for new workflows
+- **Workflow Debugging**: Assists with troubleshooting
+
+Learn more in the [Agentic Workflows Guide](docs/developer-guide/agentic-workflows.md).
+
 ## WVA Project Structure
 
 ```
