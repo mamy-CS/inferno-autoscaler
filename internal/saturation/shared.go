@@ -51,3 +51,45 @@ func DecisionToOptimizedAlloc(d interfaces.VariantDecision) (int, string, metav1
 	// For now we assume the consumer sets LastRunTime or uses Now
 	return d.TargetReplicas, d.AcceleratorName, metav1.NewTime(time.Now())
 }
+
+// GlobalConfig holds the shared configuration for the autoscaler components.
+type GlobalConfig struct {
+	sync.RWMutex
+	OptimizationInterval string
+	SaturationConfig     map[string]interfaces.SaturationScalingConfig
+}
+
+// UpdateOptimizationConfig updates the optimization interval.
+func (c *GlobalConfig) UpdateOptimizationConfig(interval string) {
+	c.Lock()
+	defer c.Unlock()
+	c.OptimizationInterval = interval
+}
+
+// UpdateSaturationConfig updates the saturation scaling configuration.
+func (c *GlobalConfig) UpdateSaturationConfig(config map[string]interfaces.SaturationScalingConfig) {
+	c.Lock()
+	defer c.Unlock()
+	c.SaturationConfig = config
+}
+
+// GetOptimizationInterval returns the current optimization interval.
+func (c *GlobalConfig) GetOptimizationInterval() string {
+	c.RLock()
+	defer c.RUnlock()
+	return c.OptimizationInterval
+}
+
+// GetSaturationConfig returns the current saturation scaling configuration.
+func (c *GlobalConfig) GetSaturationConfig() map[string]interfaces.SaturationScalingConfig {
+	c.RLock()
+	defer c.RUnlock()
+	// Return a copy or just the map (caller should not modify it)
+	// For efficiency, expecting caller to treat as read-only or we copy if needed.
+	// Returning map directly for now as readers are expected to be well-behaved.
+	return c.SaturationConfig
+}
+
+// TransformationConfig is the global singleton for configuration.
+// (Using name TransformationConfig as a placeholder/legacy name if suitable, or just Config)
+var Config = &GlobalConfig{}
