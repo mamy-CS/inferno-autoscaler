@@ -19,6 +19,8 @@ package utils
 import (
 	"context"
 
+	"sync" // NEW
+
 	appsv1 "k8s.io/api/apps/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -161,19 +163,36 @@ func filterVariantsByDeployment(ctx context.Context, client client.Client, filte
 	return filteredVAs, nil
 }
 
+// Global cache for VariantAutoscalings to avoid API server queries in Engine
+var (
+	vaCache     = make(map[client.ObjectKey]*wvav1alpha1.VariantAutoscaling)
+	vaCacheLock sync.RWMutex
+)
+
+// UpdateVACache updates the global cache with a VariantAutoscaling.
+func UpdateVACache(va *wvav1alpha1.VariantAutoscaling) {
+	vaCacheLock.Lock()
+	defer vaCacheLock.Unlock()
+	key := client.ObjectKey{Name: va.Name, Namespace: va.Namespace}
+	vaCache[key] = va.DeepCopy()
+}
+
+// RemoveVACache removes a VariantAutoscaling from the global cache.
+func RemoveVACache(key client.ObjectKey) {
+	vaCacheLock.Lock()
+	defer vaCacheLock.Unlock()
+	delete(vaCache, key)
+}
+
 // readyVariantAutoscalings retrieves all VariantAutoscaling resources that are ready for optimization
 // (condition TargetResolved is true).
 func readyVariantAutoscalings(ctx context.Context, client client.Client) ([]wvav1alpha1.VariantAutoscaling, error) {
-	// List all VariantAutoscaling resources
-	var variantAutoscalingList wvav1alpha1.VariantAutoscalingList
-	if err := client.List(ctx, &variantAutoscalingList); err != nil {
-		ctrl.LoggerFrom(ctx).Error(err, "unable to list variantAutoscaling resources")
-		return nil, err
-	}
+	// Read VAs from cache instead of API server
+	vaCacheLock.RLock()
+	defer vaCacheLock.RUnlock()
 
-	// Filter VAs that are ready for optimization
-	readyVAs := make([]wvav1alpha1.VariantAutoscaling, 0, len(variantAutoscalingList.Items))
-	for _, va := range variantAutoscalingList.Items {
+	readyVAs := make([]wvav1alpha1.VariantAutoscaling, 0, len(vaCache))
+	for _, va := range vaCache {
 		// Skip deleted VAs
 		if !va.DeletionTimestamp.IsZero() {
 			continue
@@ -182,7 +201,7 @@ func readyVariantAutoscalings(ctx context.Context, client client.Client) ([]wvav
 		// TODO: Uncomment when TypeTargetResolved condition is added
 
 		// if wvav1alpha1.IsConditionTrue(&va, wvav1alpha1.TypeTargetResolved) { // TODO: add a Ready condition
-		readyVAs = append(readyVAs, va) // Shallow copy
+		readyVAs = append(readyVAs, *va) // Shallow copy
 		// }
 	}
 
