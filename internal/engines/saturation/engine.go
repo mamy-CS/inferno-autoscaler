@@ -24,9 +24,7 @@ import (
 	"strings"
 	"time"
 
-	"gopkg.in/yaml.v3"
 	appsv1 "k8s.io/api/apps/v1"
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
@@ -44,39 +42,6 @@ import (
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/saturation"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/utils"
 )
-
-const (
-	defaultConfigMapName = "workload-variant-autoscaler-variantautoscaling-config"
-	// Environment variable to enable experimental hybrid-based optimization
-	// When "off" or unset, runs saturation analyzer only (default, reactive mode)
-
-	defaultSaturationConfigMapName = "saturation-scaling-config"
-)
-
-var (
-	configMapNamespace = getNamespace()
-)
-
-func getNamespace() string {
-	if ns := os.Getenv("POD_NAMESPACE"); ns != "" {
-		return ns
-	}
-	return "workload-variant-autoscaler-system"
-}
-
-func getConfigMapName() string {
-	if name := os.Getenv("CONFIG_MAP_NAME"); name != "" {
-		return name
-	}
-	return defaultConfigMapName
-}
-
-func getSaturationConfigMapName() string {
-	if name := os.Getenv("SATURATION_CONFIG_MAP_NAME"); name != "" {
-		return name
-	}
-	return defaultSaturationConfigMapName
-}
 
 type Engine struct {
 	client   client.Client
@@ -120,11 +85,7 @@ func (e *Engine) optimize(ctx context.Context) error {
 	//TODO: move interval to manager.yaml
 	logger := ctrl.LoggerFrom(ctx)
 
-	interval, err := e.readOptimizationConfig(ctx)
-	if err != nil {
-		logger.Error(err, "Unable to read optimization config")
-		return err
-	}
+	interval := saturation.Config.GetOptimizationInterval()
 
 	// Update the executor interval if changed
 	// Note: simple polling executor might not support dynamic interval update easily without restart,
@@ -165,10 +126,9 @@ func (e *Engine) optimize(ctx context.Context) error {
 		logger.Info("Collected cluster accelerator inventory (Limited Mode)", "inventory", inventory)
 	}
 
-	saturationConfigMap, err := e.readSaturationScalingConfig(ctx, getSaturationConfigMapName(), configMapNamespace)
-	if err != nil {
-		logger.Error(err, "Failed to read saturation scaling config, skipping optimization iteration")
-		//TODO: should we retry again? readSaturationScalingConfig already has backoff with retry logic
+	saturationConfigMap := saturation.Config.GetSaturationConfig()
+	if len(saturationConfigMap) == 0 {
+		logger.Info("Saturation scaling config not loaded yet, skipping optimization")
 		return nil
 	}
 
@@ -872,50 +832,4 @@ func (e *Engine) emitSafetyNetMetrics(
 			"accelerator", accelerator,
 			"fallbackSource", fallbackSource)
 	}
-}
-
-// readSaturationScalingConfig reads saturation scaling configuration from ConfigMap.
-func (e *Engine) readSaturationScalingConfig(ctx context.Context, cmName, cmNamespace string) (map[string]interfaces.SaturationScalingConfig, error) {
-	logger := ctrl.LoggerFrom(ctx)
-	cm := corev1.ConfigMap{}
-	err := utils.GetConfigMapWithBackoff(ctx, e.client, cmName, cmNamespace, &cm)
-
-	if err != nil {
-		return nil, fmt.Errorf("failed to read ConfigMap %s/%s: %w", cmNamespace, cmName, err)
-	}
-
-	configs := make(map[string]interfaces.SaturationScalingConfig)
-
-	// Parse all entries
-	for key, yamlStr := range cm.Data {
-		var config interfaces.SaturationScalingConfig
-		if err := yaml.Unmarshal([]byte(yamlStr), &config); err != nil {
-			logger.Error(err, "Failed to parse saturation scaling config entry, skipping",
-				"key", key)
-			continue
-		}
-
-		// Validate configuration
-		if err := config.Validate(); err != nil {
-			logger.Error(err, "Invalid saturation scaling config entry, skipping",
-				"key", key)
-			continue
-		}
-
-		configs[key] = config
-	}
-
-	return configs, nil
-}
-
-func (e *Engine) readOptimizationConfig(ctx context.Context) (interval string, err error) {
-	cm := corev1.ConfigMap{}
-	err = utils.GetConfigMapWithBackoff(ctx, e.client, getConfigMapName(), configMapNamespace, &cm)
-
-	if err != nil {
-		return "", fmt.Errorf("failed to get optimization configmap after retries: %w", err)
-	}
-
-	interval = cm.Data["GLOBAL_OPT_INTERVAL"]
-	return interval, nil
 }

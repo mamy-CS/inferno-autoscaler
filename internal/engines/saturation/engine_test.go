@@ -35,33 +35,16 @@ import (
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/config"
 	interfaces "github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
+	saturationPkg "github.com/llm-d-incubation/workload-variant-autoscaler/internal/saturation"
 	utils "github.com/llm-d-incubation/workload-variant-autoscaler/internal/utils"
 	testutils "github.com/llm-d-incubation/workload-variant-autoscaler/test/utils"
 )
 
 var _ = Describe("Saturation Engine", func() {
 
-	Context("When handling error conditions on missing config maps", func() {
-		BeforeEach(func() {
-			logging.NewTestLogger()
-		})
-
-		It("should fail on missing variant autoscaling optimization ConfigMap", func() {
-			By("Creating Engine without required ConfigMaps")
-			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, nil)
-
-			_, err := engine.readOptimizationConfig(ctx)
-			Expect(err).To(HaveOccurred(), "Expected error when reading missing variant autoscaling optimization ConfigMap")
-		})
-
-		It("should fail on missing saturation scaling ConfigMap", func() {
-			By("Creating Engine without required ConfigMaps")
-			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, nil)
-
-			_, err := engine.readSaturationScalingConfig(ctx, "saturation-scaling-config", "workload-variant-autoscaler-system")
-			Expect(err).To(HaveOccurred(), "Expected error when reading missing saturation scaling ConfigMap")
-		})
-	})
+	var getNamespace = func() string {
+		return "workload-variant-autoscaler-system"
+	}
 
 	Context("When validating configurations", func() {
 		const configMapName = "workload-variant-autoscaler-variantautoscaling-config"
@@ -115,40 +98,6 @@ var _ = Describe("Saturation Engine", func() {
 			}
 			err = k8sClient.Delete(ctx, configMap)
 			Expect(client.IgnoreNotFound(err)).NotTo(HaveOccurred())
-		})
-
-		It("should return empty on variant autoscaling optimization ConfigMap with missing interval value", func() {
-			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, nil)
-
-			// delete correct configMap
-			configMap := &v1.ConfigMap{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      configMapName,
-					Namespace: configMapNamespace,
-				},
-			}
-			err := k8sClient.Delete(ctx, configMap)
-			Expect(err).NotTo(HaveOccurred())
-
-			configMap = &v1.ConfigMap{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      configMapName,
-					Namespace: configMapNamespace,
-					Labels: map[string]string{
-						"app.kubernetes.io/name": "workload-variant-autoscaler",
-					},
-				},
-				Data: map[string]string{
-					"PROMETHEUS_BASE_URL": "https://kube-prometheus-stack-prometheus.workload-variant-autoscaler-monitoring.svc.cluster.local:9090",
-					"GLOBAL_OPT_INTERVAL": "",
-					"GLOBAL_OPT_TRIGGER":  "false",
-				},
-			}
-			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
-
-			interval, err := engine.readOptimizationConfig(ctx)
-			Expect(err).NotTo(HaveOccurred(), "Unexpected error when reading variant autoscaling optimization ConfigMap with missing interval")
-			Expect(interval).To(Equal(""), "Expected empty interval value")
 		})
 
 		It("should return empty on variant autoscaling optimization ConfigMap with missing prometheus base URL", func() {
@@ -453,6 +402,11 @@ data:
 			// Initialize MetricsCollector with mock Prometheus API
 			metricsCollector := collector.NewPrometheusCollector(mockPromAPI)
 			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, metricsCollector)
+
+			// Populate global config
+			saturationPkg.Config.UpdateSaturationConfig(map[string]interfaces.SaturationScalingConfig{
+				"default": {}, // Empty config is valid enough to proceed? Validate() might fail if not checked.
+			})
 
 			By("Performing optimization loop")
 			err := engine.optimize(ctx)

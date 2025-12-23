@@ -24,6 +24,7 @@ import (
 
 	promoperator "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
+	yaml "gopkg.in/yaml.v3"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -475,13 +476,61 @@ func CollectMetricsForSaturationMode(
 func (r *VariantAutoscalingReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&llmdVariantAutoscalingV1alpha1.VariantAutoscaling{}).
-		// Watch the specific ConfigMap to trigger global reconcile
+		// Watch the specific ConfigMap to trigger global reconcile and update shared config
 		Watches(
 			&corev1.ConfigMap{},
 			handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
-				if (obj.GetName() == getConfigMapName() || obj.GetName() == getSaturationConfigMapName()) && obj.GetNamespace() == configMapNamespace {
+				// We expect a ConfigMap but check to be safe
+				cm, ok := obj.(*corev1.ConfigMap)
+				if !ok {
+					return nil
+				}
+
+				logger := ctrl.LoggerFrom(ctx)
+				name := cm.GetName()
+				namespace := cm.GetNamespace()
+
+				// Only interested in config maps in the configured namespace
+				if namespace != configMapNamespace {
+					return nil
+				}
+
+				if name == getConfigMapName() {
+					// Optimization Config (Global Interval)
+					if interval, ok := cm.Data["GLOBAL_OPT_INTERVAL"]; ok {
+						saturation.Config.UpdateOptimizationConfig(interval)
+						logger.Info("Updated global optimization config from ConfigMap", "interval", interval)
+					}
+					// Return empty request to trigger reconcile for all VAs if needed?
+					// Changing global interval affects Engine loop, but not necessarily individual VAs immediately.
+					// Engine loop reads new interval on next tick.
+					return []reconcile.Request{{}}
+				} else if name == getSaturationConfigMapName() {
+					// Saturation Scaling Config
+					configs := make(map[string]interfaces.SaturationScalingConfig)
+					count := 0
+					for key, yamlStr := range cm.Data {
+						var config interfaces.SaturationScalingConfig
+						if err := yaml.Unmarshal([]byte(yamlStr), &config); err != nil {
+							logger.Error(err, "Failed to parse saturation scaling config entry", "key", key)
+							continue
+						}
+						// Validate
+						if err := config.Validate(); err != nil {
+							logger.Error(err, "Invalid saturation scaling config entry", "key", key)
+							continue
+						}
+						configs[key] = config
+						count++
+					}
+					saturation.Config.UpdateSaturationConfig(configs)
+					logger.Info("Updated global saturation config from ConfigMap", "entries", count)
+
+					// Return empty request (or requests for all VAs) to trigger reconciliation?
+					// Like optimization interval, the Engine picks this up.
 					return []reconcile.Request{{}}
 				}
+
 				return nil
 			}),
 			// Predicate to filter only the target configmap
