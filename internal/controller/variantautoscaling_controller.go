@@ -36,6 +36,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
 	interfaces "github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
@@ -136,6 +137,9 @@ func (r *VariantAutoscalingReconciler) Reconcile(ctx context.Context, req ctrl.R
 		return ctrl.Result{}, err
 	}
 
+	// Keep a copy of the original object for Patch generation
+	originalVA := va.DeepCopy()
+
 	// Skip if the VA is being deleted
 	if !va.DeletionTimestamp.IsZero() {
 		logger.Info("VariantAutoscaling is being deleted, skipping reconciliation",
@@ -149,45 +153,59 @@ func (r *VariantAutoscalingReconciler) Reconcile(ctx context.Context, req ctrl.R
 		"modelID", va.Spec.ModelID)
 
 	// Attempts to resolve the target model variant using scaleTargetRef
-	scaleTargetName := va.Spec.ScaleTargetRef.Name
-	if scaleTargetName == "" {
-		// Fallback to VA name for backwards compatibility
-		scaleTargetName = va.Name
-	}
 
-	// TODO: generalize to other scale target kind in future
-	var deploy appsv1.Deployment
-	if err := utils.GetDeploymentWithBackoff(ctx, r.Client, scaleTargetName, va.Namespace, &deploy); err != nil {
+	// Fetch scale target Deployment
+	scaleTargetName := va.GetScaleTargetName()
+	var deployment appsv1.Deployment
+	if err := utils.GetDeploymentWithBackoff(ctx, r.Client, scaleTargetName, va.Namespace, &deployment); err != nil {
+		if apierrors.IsNotFound(err) {
+			logger.Info("Scale target Deployment not found",
+				"name", scaleTargetName,
+				"namespace", va.Namespace)
+			// Don't requeue if deployment is missing, wait for it to be created
+			return ctrl.Result{}, nil
+		}
 		logger.Error(err, "Failed to get scale target Deployment",
 			"name", scaleTargetName,
 			"namespace", va.Namespace)
-		llmdVariantAutoscalingV1alpha1.SetCondition(&va,
-			llmdVariantAutoscalingV1alpha1.TypeTargetResolved,
-			metav1.ConditionFalse,
-			"ScaleTargetNotFound",
-			fmt.Sprintf("Scale target Deployment not found: name=%s, namespace=%s", scaleTargetName, va.Namespace),
-		)
-
-		// Update VA status
-		// TODO: refactor to use retry utility function.
-		// UpdateStatusWithBackoff does not work as it goes not refresh the object before update
-		if err := r.Status().Update(ctx, &va); err != nil {
-			logger.Error(err, "Failed to update VariantAutoscaling status",
-				"name", va.Name,
-				"namespace", va.Namespace)
-			return ctrl.Result{}, err
-		}
-
 		return ctrl.Result{}, err
 	}
 
-	// TODO: Refactor to record mutation and apply as one update operation.
-	llmdVariantAutoscalingV1alpha1.SetCondition(&va,
-		llmdVariantAutoscalingV1alpha1.TypeTargetResolved,
-		metav1.ConditionTrue,
-		"ScaleTargetFound",
+	logger.V(logging.DEBUG).Info(
 		fmt.Sprintf("Scale target Deployment found: name=%s, namespace=%s", scaleTargetName, va.Namespace),
 	)
+
+	// Collect Metrics for this VA to populate Status.CurrentAlloc
+	// We reuse CollectMetricsForSaturationMode which expects a map and list
+	vaMap := make(map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling)
+	if err := CollectMetricsForSaturationMode(ctx, []llmdVariantAutoscalingV1alpha1.VariantAutoscaling{va}, vaMap, r.Client, r.MetricsCollector); err != nil {
+		logger.Error(err, "Failed to collect metrics", "variant", va.Name)
+		// We continue to ensure decisions are applied even if metrics fail (though decision might depend on metrics)
+	}
+	// If the VA was updated during collection (it fetches fresh copy), update our local reference
+	if updatedVA, ok := vaMap[va.Name]; ok {
+		va = *updatedVA
+	}
+
+	// Process Engine Decisions from Shared Cache
+	// This mechanism allows the Engine to trigger updates without touching the API server directly.
+	if decision, ok := saturation.DecisionCache.Get(va.Name, va.Namespace); ok {
+		// Only apply if the decision is fresher than the last one applied or if we haven't applied it
+		// Note: We blindly apply for now, assuming the Engine acts as the source of truth for "Desired" state
+		numReplicas, accelerator, lastRunTime := saturation.DecisionToOptimizedAlloc(decision)
+
+		va.Status.DesiredOptimizedAlloc.NumReplicas = numReplicas
+		va.Status.DesiredOptimizedAlloc.Accelerator = accelerator
+		va.Status.DesiredOptimizedAlloc.LastRunTime = lastRunTime
+	}
+
+	// Update Status if we have changes (Conditions or OptimizedAlloc)
+	// We use Patch to only send changed fields, avoiding validation errors on unchanged fields
+	if err := r.Status().Patch(ctx, &va, client.MergeFrom(originalVA)); err != nil {
+		logger.Error(err, "Failed to update VariantAutoscaling status",
+			"name", va.Name)
+		return ctrl.Result{}, err
+	}
 
 	// END: Per VA logic
 
@@ -470,13 +488,15 @@ func (r *VariantAutoscalingReconciler) SetupWithManager(mgr ctrl.Manager) error 
 			builder.WithPredicates(ConfigMapPredicate()),
 		).
 		// Watch ServiceMonitor for controller's own metrics
-		// This enables detection when ServiceMonitor is deleted, which would prevent
-		// Prometheus from scraping controller metrics (including optimized replicas).
 		Watches(
 			&promoperator.ServiceMonitor{},
 			handler.EnqueueRequestsFromMapFunc(r.handleServiceMonitorEvent),
-			// Predicate to filter only the target ServiceMonitor
 			builder.WithPredicates(ServiceMonitorPredicate()),
+		).
+		// Watch DecisionTrigger channel for Engine decisions
+		// This enables the Engine to trigger reconciliation without updating the object in API server
+		WatchesRawSource(
+			source.Channel(saturation.DecisionTrigger, &handler.EnqueueRequestForObject{}),
 		).
 		Named("variantAutoscaling").
 		WithEventFilter(EventFilter()).

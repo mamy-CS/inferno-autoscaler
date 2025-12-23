@@ -46,7 +46,7 @@ var (
 	// Secondary llm-d namespace for Model B (multi-model testing)
 	llmDNamespaceB = getEnvString("LLMD_NAMESPACE_B", "")
 	gatewayName    = getEnvString("GATEWAY_NAME", "infra-inference-scheduling-inference-gateway")
-	modelID     = getEnvString("MODEL_ID", "unsloth/Meta-Llama-3.1-8B")
+	modelID        = getEnvString("MODEL_ID", "unsloth/Meta-Llama-3.1-8B")
 	deployment     = getEnvString("DEPLOYMENT", "ms-inference-scheduling-llm-d-modelservice-decode")
 	requestRate    = getEnvInt("REQUEST_RATE", 20)
 	numPrompts     = getEnvInt("NUM_PROMPTS", 3000)

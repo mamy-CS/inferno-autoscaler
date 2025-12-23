@@ -32,6 +32,7 @@ import (
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
 	actuator "github.com/llm-d-incubation/workload-variant-autoscaler/internal/actuator"
@@ -750,15 +751,26 @@ func (e *Engine) applySaturationDecisions(
 			updateVa.Status.Actuation.Applied = true
 		}
 
-		// Update VA status in API
-		if err := utils.UpdateStatusWithBackoff(ctx, e.client, &updateVa, utils.StandardBackoff, "VariantAutoscaling"); err != nil {
-			logger.Error(err, "Failed to update VA status after retries",
-				"name", updateVa.Name)
-			continue
+		// Update Shared State and Trigger Reconcile via Channel
+		// This avoids any API server interaction from the Engine.
+
+		// 1. Update Cache
+		saturation.DecisionCache.Set(va.Name, va.Namespace, interfaces.VariantDecision{
+			VariantName:     vaName,
+			Namespace:       va.Namespace,
+			TargetReplicas:  targetReplicas,
+			AcceleratorName: acceleratorName,
+			LastRunTime:     metav1.Now(),
+			// Pass other fields if needed, but these are crucial for Status
+		})
+
+		// 2. Trigger Reconciler
+		saturation.DecisionTrigger <- event.GenericEvent{
+			Object: &updateVa,
 		}
 
 		if hasDecision {
-			logger.Info("Applied saturation decision",
+			logger.Info("Applied saturation decision via shared cache",
 				"variant", vaName,
 				"action", decision.Action,
 				"target", targetReplicas,

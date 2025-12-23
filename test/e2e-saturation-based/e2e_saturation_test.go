@@ -135,8 +135,8 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Single Va
 		initialReplicas int32
 		loadGenJob      *batchv1.Job
 		port            int
-		modelName string
-		ctx       context.Context
+		modelName       string
+		ctx             context.Context
 	)
 
 	BeforeAll(func() {
