@@ -385,17 +385,14 @@ func main() {
 	setupLog.Info("Metrics collector initialized successfully")
 
 	// Register optimization engine loops with the manager. Only start when leader.
-	// Create the saturation engine
-	saturationEngine := saturation.NewEngine(
-		mgr.GetClient(),
-		mgr.GetScheme(),
-		mgr.GetEventRecorderFor("workload-variant-autoscaler-saturation-engine"),
-		metricsCollector,
-	)
-
-	// Register optimization engine loops with the manager. Only start when leader.
 	err = mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
-		go saturationEngine.StartOptimizeLoop(ctx)
+		engine := saturation.NewEngine(
+			mgr.GetClient(),
+			mgr.GetScheme(),
+			mgr.GetEventRecorderFor("workload-variant-autoscaler-saturation-engine"),
+			metricsCollector,
+		)
+		go engine.StartOptimizeLoop(ctx)
 		return nil
 	}))
 
@@ -423,7 +420,6 @@ func main() {
 		Recorder:         mgr.GetEventRecorderFor("workload-variant-autoscaler-controller-manager"),
 		PromAPI:          promAPI,
 		MetricsCollector: metricsCollector,
-		Engine:           saturationEngine,
 	}
 
 	// Setup the controller with the manager

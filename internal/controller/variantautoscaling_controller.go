@@ -44,8 +44,6 @@ import (
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/saturation"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/utils"
-
-	saturationEngine "github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/saturation"
 )
 
 // VariantAutoscalingReconciler reconciles a variantAutoscaling object
@@ -65,8 +63,6 @@ type VariantAutoscalingReconciler struct {
 	MetricsCollector interfaces.MetricsCollector
 
 	// Saturation scaling config cache (thread-safe, updated on ConfigMap changes)
-
-	Engine *saturationEngine.Engine
 }
 
 // +kubebuilder:rbac:groups=llmd.ai,resources=variantautoscalings,verbs=get;list;watch;create;update;patch;delete
@@ -134,9 +130,6 @@ func (r *VariantAutoscalingReconciler) Reconcile(ctx context.Context, req ctrl.R
 			logger.Info("VariantAutoscaling resource not found, may have been deleted",
 				"name", req.Name,
 				"namespace", req.Namespace)
-			if r.Engine != nil {
-				r.Engine.RemoveVA(req.Namespace, req.Name)
-			}
 			return ctrl.Result{}, nil
 		}
 		logger.Error(err, "Unable to fetch VariantAutoscaling",
@@ -153,9 +146,6 @@ func (r *VariantAutoscalingReconciler) Reconcile(ctx context.Context, req ctrl.R
 		logger.Info("VariantAutoscaling is being deleted, skipping reconciliation",
 			"name", va.Name,
 			"namespace", va.Namespace)
-		if r.Engine != nil {
-			r.Engine.RemoveVA(va.Namespace, va.Name)
-		}
 		return ctrl.Result{}, nil
 	}
 	logger.Info("Reconciling VariantAutoscaling",
@@ -208,13 +198,6 @@ func (r *VariantAutoscalingReconciler) Reconcile(ctx context.Context, req ctrl.R
 		va.Status.DesiredOptimizedAlloc.NumReplicas = numReplicas
 		va.Status.DesiredOptimizedAlloc.Accelerator = accelerator
 		va.Status.DesiredOptimizedAlloc.LastRunTime = lastRunTime
-		va.Status.DesiredOptimizedAlloc.LastRunTime = lastRunTime
-	}
-
-	// Update Engine Cache
-	// Push the latest VA state to the Engine so it doesn't need to poll API server
-	if r.Engine != nil {
-		r.Engine.UpdateVA(&va)
 	}
 
 	// Update Status if we have changes (Conditions or OptimizedAlloc)

@@ -22,7 +22,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -52,8 +51,7 @@ type Engine struct {
 	Recorder         record.EventRecorder
 	MetricsCollector interfaces.MetricsCollector
 
-	activeVAsMux sync.RWMutex
-	activeVAs    map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling
+	// Saturation scaling config cache (thread-safe, updated on ConfigMap changes)
 }
 
 // NewEngine creates a new instance of the saturation engine.
@@ -63,7 +61,6 @@ func NewEngine(client client.Client, scheme *runtime.Scheme, recorder record.Eve
 		scheme:           scheme,
 		Recorder:         recorder,
 		MetricsCollector: collector,
-		activeVAs:        make(map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling),
 	}
 
 	engine.executor = executor.NewPollingExecutor(executor.PollingConfig{
@@ -83,22 +80,6 @@ func (e *Engine) StartOptimizeLoop(ctx context.Context) {
 	e.executor.Start(ctx)
 }
 
-// UpdateVA updates the local cache with the latest state of a VA.
-// This is called by the Reconciler when a VA changes.
-func (e *Engine) UpdateVA(va *llmdVariantAutoscalingV1alpha1.VariantAutoscaling) {
-	e.activeVAsMux.Lock()
-	defer e.activeVAsMux.Unlock()
-	e.activeVAs[va.Namespace+"/"+va.Name] = va
-}
-
-// RemoveVA removes a VA from the local cache.
-// This is called by the Reconciler when a VA is deleted.
-func (e *Engine) RemoveVA(namespace, name string) {
-	e.activeVAsMux.Lock()
-	defer e.activeVAsMux.Unlock()
-	delete(e.activeVAs, namespace+"/"+name)
-}
-
 // optimize performs the optimization logic.
 func (e *Engine) optimize(ctx context.Context) error {
 	//TODO: move interval to manager.yaml
@@ -106,8 +87,14 @@ func (e *Engine) optimize(ctx context.Context) error {
 
 	interval := saturation.Config.GetOptimizationInterval()
 
+	// Update the executor interval if changed
+	// Note: simple polling executor might not support dynamic interval update easily without restart,
+	// but here we just check it. The original code used RequeueAfter.
+	// The PollingExecutor uses fixed interval.
+	// TODO: Support dynamic interval in Executor if needed. For now, we log and proceed.
 	if interval != "" {
 		if dur, err := time.ParseDuration(interval); err == nil {
+			// e.executor.SetInterval(dur) // If supported
 			_ = dur
 		}
 	}
@@ -116,16 +103,11 @@ func (e *Engine) optimize(ctx context.Context) error {
 		logger.Info("Scaling to zero is enabled")
 	}
 
-	e.activeVAsMux.RLock()
-	activeVAs := make([]llmdVariantAutoscalingV1alpha1.VariantAutoscaling, 0, len(e.activeVAs))
-	for _, va := range e.activeVAs {
-		activeVAs = append(activeVAs, *va)
+	activeVAs, err := utils.ActiveVariantAutoscaling(ctx, e.client)
+	if err != nil {
+		logger.Error(err, "Unable to get active variant autoscalings")
+		return err
 	}
-	e.activeVAsMux.RUnlock()
-
-	// TODO: The Engine's cache only has the VA object.
-	// However, `e.CollectMetricsForSaturationMode` and `RunSaturationAnalysis` fetch deployments/pods, so
-	// engine still fetches kube objects.
 
 	if len(activeVAs) == 0 {
 		logger.Info("No active VariantAutoscalings found, skipping optimization")
@@ -160,6 +142,9 @@ func (e *Engine) optimize(ctx context.Context) error {
 	allDecisions := make([]interfaces.VariantDecision, 0)
 	// Track error count for final reconciliation summary
 	errorCount := 0
+	// Create VA lookup map for applySaturationDecisions (used to access VA status and update decisions)
+	// Copy slice elements to local variable to ensure stable pointers
+	// Use deployment name (ScaleTargetName) as key since decision.VariantName uses deployment name
 	vaMap := make(map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling, len(activeVAs))
 	for i := range activeVAs {
 		va := activeVAs[i] // Copy to local variable to ensure stable pointer
@@ -214,6 +199,10 @@ func (e *Engine) optimize(ctx context.Context) error {
 		}
 	}
 
+	// STEP 3: Apply decisions and update VA status
+	// Always call applySaturationDecisions, even with empty decisions.
+	// This function also updates VA.Status.CurrentAlloc with collected metrics
+	// and emits HPA metrics, which must happen every reconciliation cycle.
 	if len(allDecisions) > 0 {
 		logger.Info("Applying scaling decisions",
 			"totalDecisions", len(allDecisions))
