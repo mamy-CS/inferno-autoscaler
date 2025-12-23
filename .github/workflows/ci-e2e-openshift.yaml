@@ -179,16 +179,7 @@ jobs:
             const isPrivileged = await hasWriteAccess(prAuthor);
             console.log(`PR #${prNumber} author ${prAuthor}: privileged=${isPrivileged}`);
 
-            if (isPrivileged) {
-              core.setOutput('should_run', 'true');
-              return;
-            }
-
-            // External contributor - post instructions and skip
-            console.log('External contributor PR - posting instructions');
-            core.setOutput('should_run', 'false');
-
-            // Check if we already posted instructions
+            // Check if we already posted a bot comment
             const comments = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -200,13 +191,53 @@ jobs:
               c.body.includes('ok-to-test')
             );
 
+            // Helper to safely post a comment (may fail on fork PRs due to permissions)
+            async function tryPostComment(body) {
+              try {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: prNumber,
+                  body: body
+                });
+                return true;
+              } catch (e) {
+                // Fork PRs can't post comments on pull_request event (GitHub security restriction)
+                console.log(`Could not post comment (expected for fork PRs): ${e.message}`);
+                return false;
+              }
+            }
+
+            if (isPrivileged) {
+              // For maintainer/admin fork PRs, we need to trigger via /ok-to-test
+              // because fork PRs don't have access to secrets on pull_request event
+              if (isFork) {
+                console.log(`Maintainer fork PR detected - auto-triggering /ok-to-test for ${prAuthor}`);
+                core.setOutput('should_run', 'false'); // Don't run on pull_request event
+
+                // Auto-post /ok-to-test to trigger issue_comment workflow
+                if (!botComment) {
+                  const posted = await tryPostComment(`/ok-to-test`);
+                  if (!posted) {
+                    console.log('Note: Maintainer will need to manually comment /ok-to-test');
+                  }
+                }
+                return;
+              }
+              // Non-fork PR from maintainer - run directly
+              core.setOutput('should_run', 'true');
+              return;
+            }
+
+            // External contributor - post instructions and skip
+            console.log('External contributor PR - posting instructions');
+            core.setOutput('should_run', 'false');
+
             if (!botComment) {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: prNumber,
-                body: `👋 Thanks for your contribution!\n\nThis PR is from a fork, so the e2e tests require maintainer approval to run (they use GPU resources).\n\n**For maintainers:** After reviewing the code, comment /ok-to-test to trigger the e2e tests.\n\n**Note:** Please review the PR changes carefully before approving, as the tests will run with access to cluster resources.`
-              });
+              const posted = await tryPostComment(`👋 Thanks for your contribution!\n\nThis PR is from a fork, so the e2e tests require approval to run (they use GPU resources).\n\n**For maintainers/admins:** Comment \`/ok-to-test\` to trigger the e2e tests after reviewing the code.\n\n**For contributors:** Please wait for a maintainer or admin to approve running the tests.`);
+              if (!posted) {
+                console.log('Note: Could not post instructions comment on fork PR');
+              }
             }
 
   # Build the WVA controller image on GitHub-hosted runner (has proper Docker setup)
