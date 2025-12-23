@@ -3,6 +3,8 @@ package interfaces
 import (
 	"context"
 	"time"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // ReplicaMetrics holds capacity-related metrics for a single replica
@@ -77,10 +79,11 @@ type VariantDecision struct {
 	TargetReplicas     int // Suggested replica count
 	DesiredReplicas    int // Desired replicas from optimizer (from CRD status)
 	Reason             string
-	SaturationBased    bool // True if decision is primarily saturation-driven
-	ModelBasedDecision bool // True if decision considers model-based optimizer
-	SafetyOverride     bool // True if saturation veto overrode model-based decision
-	SaturationOnly     bool // True if operating in saturation-only mode (no model-based analysis)
+	SaturationBased    bool        // True if decision is primarily saturation-driven
+	ModelBasedDecision bool        // True if decision considers model-based optimizer
+	SafetyOverride     bool        // True if saturation veto overrode model-based decision
+	LastRunTime        metav1.Time // Time when decision was made (for status updates)
+	SaturationOnly     bool        // True if operating in saturation-only mode (no model-based analysis)
 }
 
 // SaturationAction represents the scaling action

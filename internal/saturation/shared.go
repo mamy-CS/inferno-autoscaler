@@ -1,0 +1,53 @@
+package saturation
+
+import (
+	"sync"
+	"time"
+
+	interfaces "github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/event"
+)
+
+// InternalDecisionCache holds the latest saturation decisions for VAs.
+// This is used to pass decisions from the Engine to the Controller without API server interaction.
+type InternalDecisionCache struct {
+	sync.RWMutex
+	items map[string]interfaces.VariantDecision
+}
+
+// Key format: namespace/name
+func cacheKey(name, namespace string) string {
+	return namespace + "/" + name
+}
+
+func (c *InternalDecisionCache) Set(name, namespace string, d interfaces.VariantDecision) {
+	c.Lock()
+	defer c.Unlock()
+	key := cacheKey(name, namespace)
+	c.items[key] = d
+}
+
+func (c *InternalDecisionCache) Get(name, namespace string) (interfaces.VariantDecision, bool) {
+	c.RLock()
+	defer c.RUnlock()
+	key := cacheKey(name, namespace)
+	val, ok := c.items[key]
+	return val, ok
+}
+
+// Global cache instance
+var DecisionCache = &InternalDecisionCache{
+	items: make(map[string]interfaces.VariantDecision),
+}
+
+// DecisionTrigger is a channel to trigger reconciliation for VAs.
+// Buffered to prevent blocking the engine loop.
+var DecisionTrigger = make(chan event.GenericEvent, 1000)
+
+// Helper to convert VariantDecision to OptimizedAlloc status
+func DecisionToOptimizedAlloc(d interfaces.VariantDecision) (int, string, metav1.Time) {
+	// If LastRunTime is adding to VariantDecision, use it, else Now
+	// For now we assume the consumer sets LastRunTime or uses Now
+	return d.TargetReplicas, d.AcceleratorName, metav1.NewTime(time.Now())
+}
