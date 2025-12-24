@@ -19,14 +19,13 @@ package utils
 import (
 	"context"
 
-	"sync" // NEW
-
 	appsv1 "k8s.io/api/apps/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	wvav1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/saturation"
 )
 
 // VariantFilter is a function that determines if a VA should be included.
@@ -163,47 +162,11 @@ func filterVariantsByDeployment(ctx context.Context, client client.Client, filte
 	return filteredVAs, nil
 }
 
-// Global cache for VariantAutoscalings to avoid API server queries in Engine
-var (
-	vaCache     = make(map[client.ObjectKey]*wvav1alpha1.VariantAutoscaling)
-	vaCacheLock sync.RWMutex
-)
-
-// UpdateVACache updates the global cache with a VariantAutoscaling.
-func UpdateVACache(va *wvav1alpha1.VariantAutoscaling) {
-	vaCacheLock.Lock()
-	defer vaCacheLock.Unlock()
-	key := client.ObjectKey{Name: va.Name, Namespace: va.Namespace}
-	vaCache[key] = va.DeepCopy()
-}
-
-// RemoveVACache removes a VariantAutoscaling from the global cache.
-func RemoveVACache(key client.ObjectKey) {
-	vaCacheLock.Lock()
-	defer vaCacheLock.Unlock()
-	delete(vaCache, key)
-}
-
 // readyVariantAutoscalings retrieves all VariantAutoscaling resources that are ready for optimization
-// (condition TargetResolved is true).
-func readyVariantAutoscalings(ctx context.Context, client client.Client) ([]wvav1alpha1.VariantAutoscaling, error) {
-	// Read VAs from cache instead of API server
-	vaCacheLock.RLock()
-	defer vaCacheLock.RUnlock()
-
-	readyVAs := make([]wvav1alpha1.VariantAutoscaling, 0, len(vaCache))
-	for _, va := range vaCache {
-		// Skip deleted VAs
-		if !va.DeletionTimestamp.IsZero() {
-			continue
-		}
-
-		// TODO: Uncomment when TypeTargetResolved condition is added
-
-		// if wvav1alpha1.IsConditionTrue(&va, wvav1alpha1.TypeTargetResolved) { // TODO: add a Ready condition
-		readyVAs = append(readyVAs, *va) // Shallow copy
-		// }
-	}
+// (condition TargetResolved is true) using the shared cache.
+func readyVariantAutoscalings(ctx context.Context, _ client.Client) ([]wvav1alpha1.VariantAutoscaling, error) {
+	// Read VAs from shared cache instead of API server
+	readyVAs := saturation.GetReadyVAs()
 
 	ctrl.LoggerFrom(ctx).V(logging.DEBUG).Info("Found VariantAutoscaling resources ready for optimization", "count", len(readyVAs))
 	return readyVAs, nil

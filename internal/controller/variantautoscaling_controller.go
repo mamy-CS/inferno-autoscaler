@@ -130,7 +130,7 @@ func (r *VariantAutoscalingReconciler) Reconcile(ctx context.Context, req ctrl.R
 			logger.Info("VariantAutoscaling resource not found, may have been deleted",
 				"name", req.Name,
 				"namespace", req.Namespace)
-			utils.RemoveVACache(req.NamespacedName)
+			saturation.RemoveVACache(req.NamespacedName)
 			return ctrl.Result{}, nil
 		}
 		logger.Error(err, "Unable to fetch VariantAutoscaling",
@@ -147,7 +147,7 @@ func (r *VariantAutoscalingReconciler) Reconcile(ctx context.Context, req ctrl.R
 		logger.Info("VariantAutoscaling is being deleted, skipping reconciliation",
 			"name", va.Name,
 			"namespace", va.Namespace)
-		utils.RemoveVACache(req.NamespacedName)
+		saturation.RemoveVACache(req.NamespacedName)
 		return ctrl.Result{}, nil
 	}
 	logger.Info("Reconciling VariantAutoscaling",
@@ -213,7 +213,7 @@ func (r *VariantAutoscalingReconciler) Reconcile(ctx context.Context, req ctrl.R
 	// END: Per VA logic
 
 	// Push updated VA to Engine cache
-	utils.UpdateVACache(&va)
+	saturation.UpdateVACache(&va)
 
 	return ctrl.Result{}, nil
 }
