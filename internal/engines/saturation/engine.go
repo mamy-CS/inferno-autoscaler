@@ -36,6 +36,7 @@ import (
 	actuator "github.com/llm-d-incubation/workload-variant-autoscaler/internal/actuator"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/prometheus"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/common"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/executor"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
@@ -85,7 +86,7 @@ func (e *Engine) optimize(ctx context.Context) error {
 	//TODO: move interval to manager.yaml
 	logger := ctrl.LoggerFrom(ctx)
 
-	interval := saturation.Config.GetOptimizationInterval()
+	interval := common.Config.GetOptimizationInterval()
 
 	// Update the executor interval if changed
 	// Note: simple polling executor might not support dynamic interval update easily without restart,
@@ -126,7 +127,7 @@ func (e *Engine) optimize(ctx context.Context) error {
 		logger.Info("Collected cluster accelerator inventory (Limited Mode)", "inventory", inventory)
 	}
 
-	saturationConfigMap := saturation.Config.GetSaturationConfig()
+	saturationConfigMap := common.Config.GetSaturationConfig()
 	if len(saturationConfigMap) == 0 {
 		logger.Info("Saturation scaling config not loaded yet, skipping optimization")
 		return nil
@@ -715,7 +716,7 @@ func (e *Engine) applySaturationDecisions(
 		// This avoids any API server interaction from the Engine.
 
 		// 1. Update Cache
-		saturation.DecisionCache.Set(va.Name, va.Namespace, interfaces.VariantDecision{
+		common.DecisionCache.Set(va.Name, va.Namespace, interfaces.VariantDecision{
 			VariantName:     vaName,
 			Namespace:       va.Namespace,
 			TargetReplicas:  targetReplicas,
@@ -725,7 +726,7 @@ func (e *Engine) applySaturationDecisions(
 		})
 
 		// 2. Trigger Reconciler
-		saturation.DecisionTrigger <- event.GenericEvent{
+		common.DecisionTrigger <- event.GenericEvent{
 			Object: &updateVa,
 		}
 
