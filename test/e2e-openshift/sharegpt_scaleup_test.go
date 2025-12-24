@@ -274,8 +274,21 @@ var _ = Describe("ShareGPT Scale-Up Test", Ordered, func() {
 									Command: []string{"/bin/sh", "-c"},
 									Args: []string{fmt.Sprintf(`
 echo "Checking gateway readiness at %s:80..."
-curl -sf --max-time 10 http://%s:80/v1/models && echo "Gateway is ready!" && exit 0
-echo "Gateway not ready yet"
+RESPONSE=$(curl -sf --max-time 10 http://%s:80/v1/models 2>&1)
+CURL_EXIT=$?
+if [ $CURL_EXIT -ne 0 ]; then
+  echo "Gateway not responding (curl exit code: $CURL_EXIT)"
+  echo "Response: $RESPONSE"
+  exit 1
+fi
+# Verify response contains actual model data (not empty or 502 error)
+if echo "$RESPONSE" | grep -q '"id":'; then
+  echo "Gateway is ready with model data!"
+  echo "Response: $RESPONSE"
+  exit 0
+fi
+echo "Gateway responded but no model data found in response"
+echo "Response: $RESPONSE"
 exit 1`,
 										model.gatewayService, model.gatewayService)},
 								}},
@@ -347,6 +360,8 @@ exit 1`,
 				time.Sleep(30 * time.Second)
 
 				By("monitoring VariantAutoscaling and HPA for scale-up")
+				zeroArrivalCount := 0
+				loadGenLogsShown := false
 				Eventually(func(g Gomega) {
 					va := &v1alpha1.VariantAutoscaling{}
 					err := crClient.Get(ctx, client.ObjectKey{
@@ -359,6 +374,18 @@ exit 1`,
 					currentRateStr := va.Status.CurrentAlloc.Load.ArrivalRate
 					_, _ = fmt.Fprintf(GinkgoWriter, "VA optimized replicas: %d (initial: %d, minReplicas: %d), arrival rate: %s\n",
 						scaledOptimized, initialOptimized, hpaMinReplicas, currentRateStr)
+
+					// Log load gen job output if arrival rate stays at 0 for too long (debugging)
+					if currentRateStr == "0.00" || currentRateStr == "" {
+						zeroArrivalCount++
+						// After 6 iterations (60s) with zero arrival rate, log load gen jobs
+						if zeroArrivalCount >= 6 && !loadGenLogsShown {
+							loadGenLogsShown = true
+							logLoadGenJobLogs(ctx, jobBaseName, model.namespace, numLoadWorkers)
+						}
+					} else {
+						zeroArrivalCount = 0 // Reset counter when we see traffic
+					}
 
 					if !lowLoad {
 						// Scale-up means we should have MORE replicas than our initial stabilized state
@@ -592,4 +619,51 @@ func deleteParallelLoadJobs(ctx context.Context, baseName, namespace string, num
 			_, _ = fmt.Fprintf(GinkgoWriter, "Warning: failed to delete job %s: %v\n", jobName, err)
 		}
 	}
+}
+
+// logLoadGenJobLogs captures and logs output from load generation pods for debugging
+func logLoadGenJobLogs(ctx context.Context, baseName, namespace string, numWorkers int) {
+	_, _ = fmt.Fprintf(GinkgoWriter, "\n=== LOAD GENERATION JOB LOGS (debugging zero arrival rate) ===\n")
+
+	podList, err := k8sClient.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: fmt.Sprintf("experiment=%s", baseName),
+	})
+	if err != nil {
+		_, _ = fmt.Fprintf(GinkgoWriter, "Failed to list load gen pods: %v\n", err)
+		return
+	}
+
+	if len(podList.Items) == 0 {
+		_, _ = fmt.Fprintf(GinkgoWriter, "No load gen pods found with label experiment=%s\n", baseName)
+		return
+	}
+
+	// Log status and logs for first 3 pods (to avoid too much output)
+	maxPods := 3
+	if len(podList.Items) < maxPods {
+		maxPods = len(podList.Items)
+	}
+
+	for i := 0; i < maxPods; i++ {
+		pod := podList.Items[i]
+		_, _ = fmt.Fprintf(GinkgoWriter, "\n--- Pod: %s (Phase: %s) ---\n", pod.Name, pod.Status.Phase)
+
+		// Get pod logs
+		logOpts := &corev1.PodLogOptions{
+			TailLines: ptr(int64(50)), // Last 50 lines
+		}
+		logs, err := k8sClient.CoreV1().Pods(namespace).GetLogs(pod.Name, logOpts).DoRaw(ctx)
+		if err != nil {
+			_, _ = fmt.Fprintf(GinkgoWriter, "Failed to get logs: %v\n", err)
+			continue
+		}
+		_, _ = fmt.Fprintf(GinkgoWriter, "%s\n", string(logs))
+	}
+
+	_, _ = fmt.Fprintf(GinkgoWriter, "=== END LOAD GENERATION JOB LOGS ===\n\n")
+}
+
+// ptr returns a pointer to the given value (helper for int64)
+func ptr(i int64) *int64 {
+	return &i
 }

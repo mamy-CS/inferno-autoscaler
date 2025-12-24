@@ -650,6 +650,23 @@ jobs:
             echo ""
           done
 
+      - name: Restart gateways to ensure ext_proc config is applied
+        run: |
+          # After InferencePool and EPP are configured, the Istio gateway may not
+          # immediately pick up the correct ext_proc configuration. Restarting the
+          # gateway pods forces Istiod to push the correct config.
+          echo "Restarting Istio gateways to ensure ext_proc configuration is applied..."
+
+          for ns in "$LLMD_NAMESPACE" "$LLMD_NAMESPACE_B"; do
+            echo ""
+            echo "=== Restarting gateway in $ns ==="
+            kubectl rollout restart deployment/infra-inference-scheduling-inference-gateway-istio -n "$ns"
+            kubectl rollout status deployment/infra-inference-scheduling-inference-gateway-istio -n "$ns" --timeout=120s
+          done
+
+          echo ""
+          echo "All gateways restarted successfully"
+
       - name: Patch vLLM deployments for e2e testing
         run: |
           echo "Patching vLLM decode deployments to limit batch size for scaling test..."
