@@ -167,20 +167,39 @@ go test -cover ./...
 
 ### E2E Tests
 
-#### Kind E2E Tests
+WVA has multiple E2E test suites for different environments and scenarios:
+
+#### Saturation-Based E2E Tests (Kind)
+
+**Location**: `test/e2e-saturation-based/`
+
+Tests saturation-based scaling with emulated GPU infrastructure on Kind clusters. No physical GPUs required!
 
 ```bash
-# Run all E2E tests
+# Run all saturation-based E2E tests (default)
 make test-e2e
 
-# Run specific tests
-make test-e2e FOCUS="single VariantAutoscaling"
+# Run specific test suite
+make test-e2e FOCUS="Single VariantAutoscaling"
+make test-e2e FOCUS="Multiple VariantAutoscalings"
 
 # Skip specific tests
-make test-e2e SKIP="multiple VariantAutoscaling"
+make test-e2e SKIP="Multiple VariantAutoscalings"
 ```
 
+**Features tested:**
+- KV cache utilization saturation detection
+- Queue depth saturation detection
+- Multi-variant scaling with cost optimization
+- HPA integration with external metrics
+
+See [Saturation-Based E2E Tests README](../../test/e2e-saturation-based/README.md) for comprehensive documentation.
+
 #### OpenShift E2E Tests
+
+**Location**: `test/e2e-openshift/`
+
+Tests with real vLLM deployments on OpenShift clusters with GPU hardware.
 
 ```bash
 # Run E2E tests on OpenShift cluster
@@ -190,17 +209,17 @@ make test-e2e-openshift
 make test-e2e-openshift IMG=<your-registry>/wva-controller:tag
 
 # Run specific OpenShift tests
-make test-e2e-openshift FOCUS="HPA integration"
+make test-e2e-openshift FOCUS="ShareGPT Scale-Up Test"
 ```
 
 **Prerequisites for OpenShift E2E:**
-
 - Access to an OpenShift cluster (OCP 4.12+)
 - `oc` CLI tool configured and authenticated
 - Cluster admin permissions
 - Prometheus operator installed
+- GPU nodes available
 
-See [Testing Guide](testing.md) for more details.
+See [OpenShift E2E Tests README](../../test/e2e-openshift/README.md) for detailed setup and usage.
 
 ### Manual Testing
 
