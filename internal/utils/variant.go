@@ -25,6 +25,7 @@ import (
 
 	wvav1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/saturation"
 )
 
 // VariantFilter is a function that determines if a VA should be included.
@@ -162,29 +163,10 @@ func filterVariantsByDeployment(ctx context.Context, client client.Client, filte
 }
 
 // readyVariantAutoscalings retrieves all VariantAutoscaling resources that are ready for optimization
-// (condition TargetResolved is true).
-func readyVariantAutoscalings(ctx context.Context, client client.Client) ([]wvav1alpha1.VariantAutoscaling, error) {
-	// List all VariantAutoscaling resources
-	var variantAutoscalingList wvav1alpha1.VariantAutoscalingList
-	if err := client.List(ctx, &variantAutoscalingList); err != nil {
-		ctrl.LoggerFrom(ctx).Error(err, "unable to list variantAutoscaling resources")
-		return nil, err
-	}
-
-	// Filter VAs that are ready for optimization
-	readyVAs := make([]wvav1alpha1.VariantAutoscaling, 0, len(variantAutoscalingList.Items))
-	for _, va := range variantAutoscalingList.Items {
-		// Skip deleted VAs
-		if !va.DeletionTimestamp.IsZero() {
-			continue
-		}
-
-		// TODO: Uncomment when TypeTargetResolved condition is added
-
-		// if wvav1alpha1.IsConditionTrue(&va, wvav1alpha1.TypeTargetResolved) { // TODO: add a Ready condition
-		readyVAs = append(readyVAs, va) // Shallow copy
-		// }
-	}
+// (condition TargetResolved is true) using the shared cache.
+func readyVariantAutoscalings(ctx context.Context, _ client.Client) ([]wvav1alpha1.VariantAutoscaling, error) {
+	// Read VAs from shared cache instead of API server
+	readyVAs := saturation.GetReadyVAs()
 
 	ctrl.LoggerFrom(ctx).V(logging.DEBUG).Info("Found VariantAutoscaling resources ready for optimization", "count", len(readyVAs))
 	return readyVAs, nil

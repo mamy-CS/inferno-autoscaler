@@ -40,7 +40,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
-	interfaces "github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/saturation"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/utils"
@@ -130,6 +130,7 @@ func (r *VariantAutoscalingReconciler) Reconcile(ctx context.Context, req ctrl.R
 			logger.Info("VariantAutoscaling resource not found, may have been deleted",
 				"name", req.Name,
 				"namespace", req.Namespace)
+			saturation.RemoveVACache(req.NamespacedName)
 			return ctrl.Result{}, nil
 		}
 		logger.Error(err, "Unable to fetch VariantAutoscaling",
@@ -146,6 +147,7 @@ func (r *VariantAutoscalingReconciler) Reconcile(ctx context.Context, req ctrl.R
 		logger.Info("VariantAutoscaling is being deleted, skipping reconciliation",
 			"name", va.Name,
 			"namespace", va.Namespace)
+		saturation.RemoveVACache(req.NamespacedName)
 		return ctrl.Result{}, nil
 	}
 	logger.Info("Reconciling VariantAutoscaling",
@@ -209,6 +211,9 @@ func (r *VariantAutoscalingReconciler) Reconcile(ctx context.Context, req ctrl.R
 	}
 
 	// END: Per VA logic
+
+	// Push updated VA to Engine cache
+	saturation.UpdateVACache(&va)
 
 	return ctrl.Result{}, nil
 }

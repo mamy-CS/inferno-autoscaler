@@ -6,7 +6,10 @@ import (
 
 	interfaces "github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
+
+	wvav1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
 )
 
 // InternalDecisionCache holds the latest saturation decisions for VAs.
@@ -93,3 +96,41 @@ func (c *GlobalConfig) GetSaturationConfig() map[string]interfaces.SaturationSca
 // TransformationConfig is the global singleton for configuration.
 // (Using name TransformationConfig as a placeholder/legacy name if suitable, or just Config)
 var Config = &GlobalConfig{}
+
+// Global cache for VariantAutoscalings to avoid API server queries in Engine
+var (
+	vaCache     = make(map[client.ObjectKey]*wvav1alpha1.VariantAutoscaling)
+	vaCacheLock sync.RWMutex
+)
+
+// UpdateVACache updates the global cache with a VariantAutoscaling.
+func UpdateVACache(va *wvav1alpha1.VariantAutoscaling) {
+	vaCacheLock.Lock()
+	defer vaCacheLock.Unlock()
+	key := client.ObjectKey{Name: va.Name, Namespace: va.Namespace}
+	vaCache[key] = va.DeepCopy()
+}
+
+// RemoveVACache removes a VariantAutoscaling from the global cache.
+func RemoveVACache(key client.ObjectKey) {
+	vaCacheLock.Lock()
+	defer vaCacheLock.Unlock()
+	delete(vaCache, key)
+}
+
+// GetReadyVAs retrieves all VariantAutoscalings from the cache that are ready for optimization.
+// This replaces readyVariantAutoscalings in utils, but without logging context or client dependency.
+func GetReadyVAs() []wvav1alpha1.VariantAutoscaling {
+	vaCacheLock.RLock()
+	defer vaCacheLock.RUnlock()
+
+	readyVAs := make([]wvav1alpha1.VariantAutoscaling, 0, len(vaCache))
+	for _, va := range vaCache {
+		// Skip deleted VAs
+		if !va.DeletionTimestamp.IsZero() {
+			continue
+		}
+		readyVAs = append(readyVAs, *va)
+	}
+	return readyVAs
+}
