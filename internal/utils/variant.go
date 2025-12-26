@@ -24,8 +24,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	wvav1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/common"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
-	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/saturation"
 )
 
 // VariantFilter is a function that determines if a VA should be included.
@@ -166,7 +166,7 @@ func filterVariantsByDeployment(ctx context.Context, client client.Client, filte
 // (condition TargetResolved is true) using the shared cache.
 func readyVariantAutoscalings(ctx context.Context, _ client.Client) ([]wvav1alpha1.VariantAutoscaling, error) {
 	// Read VAs from shared cache instead of API server
-	readyVAs := saturation.GetReadyVAs()
+	readyVAs := common.GetReadyVAs()
 
 	ctrl.LoggerFrom(ctx).V(logging.DEBUG).Info("Found VariantAutoscaling resources ready for optimization", "count", len(readyVAs))
 	return readyVAs, nil

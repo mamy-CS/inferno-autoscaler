@@ -40,6 +40,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/common"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/saturation"
@@ -130,7 +131,7 @@ func (r *VariantAutoscalingReconciler) Reconcile(ctx context.Context, req ctrl.R
 			logger.Info("VariantAutoscaling resource not found, may have been deleted",
 				"name", req.Name,
 				"namespace", req.Namespace)
-			saturation.RemoveVACache(req.NamespacedName)
+			common.RemoveVACache(req.NamespacedName)
 			return ctrl.Result{}, nil
 		}
 		logger.Error(err, "Unable to fetch VariantAutoscaling",
@@ -147,7 +148,7 @@ func (r *VariantAutoscalingReconciler) Reconcile(ctx context.Context, req ctrl.R
 		logger.Info("VariantAutoscaling is being deleted, skipping reconciliation",
 			"name", va.Name,
 			"namespace", va.Namespace)
-		saturation.RemoveVACache(req.NamespacedName)
+		common.RemoveVACache(req.NamespacedName)
 		return ctrl.Result{}, nil
 	}
 	logger.Info("Reconciling VariantAutoscaling",
@@ -192,10 +193,10 @@ func (r *VariantAutoscalingReconciler) Reconcile(ctx context.Context, req ctrl.R
 
 	// Process Engine Decisions from Shared Cache
 	// This mechanism allows the Engine to trigger updates without touching the API server directly.
-	if decision, ok := saturation.DecisionCache.Get(va.Name, va.Namespace); ok {
+	if decision, ok := common.DecisionCache.Get(va.Name, va.Namespace); ok {
 		// Only apply if the decision is fresher than the last one applied or if we haven't applied it
 		// Note: We blindly apply for now, assuming the Engine acts as the source of truth for "Desired" state
-		numReplicas, accelerator, lastRunTime := saturation.DecisionToOptimizedAlloc(decision)
+		numReplicas, accelerator, lastRunTime := common.DecisionToOptimizedAlloc(decision)
 
 		va.Status.DesiredOptimizedAlloc.NumReplicas = numReplicas
 		va.Status.DesiredOptimizedAlloc.Accelerator = accelerator
@@ -213,7 +214,7 @@ func (r *VariantAutoscalingReconciler) Reconcile(ctx context.Context, req ctrl.R
 	// END: Per VA logic
 
 	// Push updated VA to Engine cache
-	saturation.UpdateVACache(&va)
+	common.UpdateVACache(&va)
 
 	return ctrl.Result{}, nil
 }
@@ -503,7 +504,7 @@ func (r *VariantAutoscalingReconciler) SetupWithManager(mgr ctrl.Manager) error 
 				if name == getConfigMapName() {
 					// Optimization Config (Global Interval)
 					if interval, ok := cm.Data["GLOBAL_OPT_INTERVAL"]; ok {
-						saturation.Config.UpdateOptimizationConfig(interval)
+						common.Config.UpdateOptimizationConfig(interval)
 						logger.Info("Updated global optimization config from ConfigMap", "interval", interval)
 					}
 					// Return empty request to trigger reconcile for all VAs if needed?
@@ -528,7 +529,7 @@ func (r *VariantAutoscalingReconciler) SetupWithManager(mgr ctrl.Manager) error 
 						configs[key] = config
 						count++
 					}
-					saturation.Config.UpdateSaturationConfig(configs)
+					common.Config.UpdateSaturationConfig(configs)
 					logger.Info("Updated global saturation config from ConfigMap", "entries", count)
 
 					// Return empty request (or requests for all VAs) to trigger reconciliation?
@@ -550,7 +551,7 @@ func (r *VariantAutoscalingReconciler) SetupWithManager(mgr ctrl.Manager) error 
 		// Watch DecisionTrigger channel for Engine decisions
 		// This enables the Engine to trigger reconciliation without updating the object in API server
 		WatchesRawSource(
-			source.Channel(saturation.DecisionTrigger, &handler.EnqueueRequestForObject{}),
+			source.Channel(common.DecisionTrigger, &handler.EnqueueRequestForObject{}),
 		).
 		Named("variantAutoscaling").
 		WithEventFilter(EventFilter()).

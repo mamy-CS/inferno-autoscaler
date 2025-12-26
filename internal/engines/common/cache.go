@@ -1,4 +1,4 @@
-package saturation
+package common
 
 import (
 	"sync"

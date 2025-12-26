@@ -33,9 +33,9 @@ import (
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
 	collector "github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/config"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/common"
 	interfaces "github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
-	saturationPkg "github.com/llm-d-incubation/workload-variant-autoscaler/internal/saturation"
 	utils "github.com/llm-d-incubation/workload-variant-autoscaler/internal/utils"
 	testutils "github.com/llm-d-incubation/workload-variant-autoscaler/test/utils"
 )
@@ -404,7 +404,7 @@ data:
 			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, metricsCollector)
 
 			// Populate global config
-			saturationPkg.Config.UpdateSaturationConfig(map[string]interfaces.SaturationScalingConfig{
+			common.Config.UpdateSaturationConfig(map[string]interfaces.SaturationScalingConfig{
 				"default": {}, // Empty config is valid enough to proceed? Validate() might fail if not checked.
 			})
 
