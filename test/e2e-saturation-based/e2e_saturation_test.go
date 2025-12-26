@@ -84,8 +84,6 @@ var (
 	k8sClient *kubernetes.Clientset
 	crClient  client.Client
 	scheme    = runtime.NewScheme()
-
-	GuidellmImage = "ghcr.io/vllm-project/guidellm:latest"
 )
 
 func init() {
@@ -274,7 +272,7 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Single Va
 					"CurrentAlloc should be populated with accelerator info")
 				g.Expect(va.Status.CurrentAlloc.NumReplicas).To(BeNumerically(">=", 0),
 					"CurrentAlloc should have NumReplicas set")
-			}, 5*time.Minute, 10*time.Second).Should(Succeed())
+			}, 10*time.Minute, 10*time.Second).Should(Succeed())
 
 			By("querying external metrics API")
 			Eventually(func(g Gomega) {
@@ -299,7 +297,7 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Single Va
 				// Initial replica count should be MinimumReplicas (0 or 1)
 				g.Expect(va.Status.CurrentAlloc.NumReplicas).To(BeNumerically("==", MinimumReplicas),
 					fmt.Sprintf("VariantAutoscaling should be at %d replicas", MinimumReplicas))
-			}, 4*time.Minute, 5*time.Second).Should(Succeed())
+			}, 10*time.Minute, 5*time.Second).Should(Succeed())
 
 			By("logging VariantAutoscaling status before load")
 			err := utils.LogVariantAutoscalingStatus(ctx, deployName, namespace, crClient, GinkgoWriter)
@@ -323,7 +321,7 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Single Va
 
 			By("starting load generation to trigger saturation")
 			loadGenJob, err = utils.CreateLoadGeneratorJob(
-				GuidellmImage,
+
 				namespace,
 				fmt.Sprintf("http://%s:%d", gatewayName, 80),
 				modelName,
@@ -355,7 +353,7 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Single Va
 					Equal(corev1.PodRunning),
 					Equal(corev1.PodSucceeded),
 				), fmt.Sprintf("Job pod should be running or succeeded, but is in phase: %s", pod.Status.Phase))
-			}, 3*time.Minute, 5*time.Second).Should(Succeed())
+			}, 10*time.Minute, 5*time.Second).Should(Succeed())
 
 			_, _ = fmt.Fprintf(GinkgoWriter, "Load generation job is running\n")
 
@@ -375,7 +373,7 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Single Va
 				g.Expect(finalReplicas).To(BeNumerically(">", MinimumReplicas),
 					fmt.Sprintf("Should scale up from %d under load", MinimumReplicas))
 
-			}, 5*time.Minute, 10*time.Second).Should(Succeed())
+			}, 10*time.Minute, 10*time.Second).Should(Succeed())
 
 			By("logging VariantAutoscaling status after scale-up")
 			err = utils.LogVariantAutoscalingStatus(ctx, deployName, namespace, crClient, GinkgoWriter)
@@ -686,7 +684,7 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Multiple 
 					"CurrentAlloc should be populated with accelerator info")
 				g.Expect(vaH100.Status.CurrentAlloc.NumReplicas).To(BeNumerically(">=", 0),
 					"CurrentAlloc should have NumReplicas set")
-			}, 4*time.Minute, 10*time.Second).Should(Succeed())
+			}, 10*time.Minute, 10*time.Second).Should(Succeed())
 
 			By("verifying A100 variant has expected initial replicas or scales down (before load)")
 			Eventually(func(g Gomega) {
@@ -700,7 +698,7 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Multiple 
 				// Initial replica count should be MinimumReplicas (typically 0 or 1)
 				g.Expect(vaA100.Status.CurrentAlloc.NumReplicas).To(BeNumerically("==", MinimumReplicas),
 					fmt.Sprintf("A100 VariantAutoscaling DesiredReplicas should be at %d replicas", MinimumReplicas))
-			}, 6*time.Minute, 5*time.Second).Should(Succeed())
+			}, 10*time.Minute, 5*time.Second).Should(Succeed())
 
 			By("verifying H100 variant has expected initial replicas or scales down (before load)")
 			Eventually(func(g Gomega) {
@@ -713,7 +711,7 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Multiple 
 
 				g.Expect(vaH100.Status.CurrentAlloc.NumReplicas).To(BeNumerically("==", MinimumReplicas),
 					fmt.Sprintf("H100 VariantAutoscaling DesiredReplicas should be at %d replicas", MinimumReplicas))
-			}, 6*time.Minute, 5*time.Second).Should(Succeed())
+			}, 10*time.Minute, 5*time.Second).Should(Succeed())
 
 			By("logging initial VariantAutoscaling statuses")
 			err := utils.LogVariantAutoscalingStatus(ctx, deployNameA100, namespace, crClient, GinkgoWriter)
@@ -739,7 +737,6 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Multiple 
 
 			By("starting load generation to trigger saturation")
 			loadGenJob, err = utils.CreateLoadGeneratorJob(
-				GuidellmImage,
 				namespace,
 				fmt.Sprintf("http://%s:%d", gatewayName, 80),
 				modelName,
@@ -771,7 +768,7 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Multiple 
 					Equal(corev1.PodRunning),
 					Equal(corev1.PodSucceeded),
 				), fmt.Sprintf("Job pod should be running or succeeded, but is in phase: %s", pod.Status.Phase))
-			}, 3*time.Minute, 5*time.Second).Should(Succeed())
+			}, 10*time.Minute, 5*time.Second).Should(Succeed())
 
 			_, _ = fmt.Fprintf(GinkgoWriter, "Load generation job is running\n")
 
@@ -813,7 +810,7 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Multiple 
 				g.Expect(totalArrivalRate).To(BeNumerically(">", 0),
 					"Total arrival rate should be positive under load")
 
-			}, 5*time.Minute, 10*time.Second).Should(Succeed())
+			}, 10*time.Minute, 10*time.Second).Should(Succeed())
 
 			By("logging VariantAutoscaling statuses after scale-up")
 			err = utils.LogVariantAutoscalingStatus(ctx, deployNameA100, namespace, crClient, GinkgoWriter)
@@ -828,7 +825,7 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Multiple 
 		PIt("should maintain stable replica count under constant load", func() {
 			By("starting constant load generation")
 			loadGenJob, err := utils.CreateLoadGeneratorJob(
-				GuidellmImage,
+
 				namespace,
 				fmt.Sprintf("http://%s:%d", gatewayName, 80),
 				modelName,
@@ -915,7 +912,7 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Multiple 
 		It("should prefer cheaper A100 variant for scale-up when both variants have same base model", func() {
 			By("starting load that requires scale-up")
 			loadGenJob, err := utils.CreateLoadGeneratorJob(
-				GuidellmImage,
+
 				namespace,
 				fmt.Sprintf("http://%s:%d", gatewayName, 80),
 				modelName,

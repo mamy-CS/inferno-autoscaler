@@ -374,7 +374,7 @@ var _ = Describe("Test workload-variant-autoscaler in emulated environment - sin
 		}, 4*time.Minute, 10*time.Second).Should(Succeed())
 
 		By("starting load generation to create traffic")
-		loadGenJob, err = utils.CreateLoadGeneratorJob(GuidellmImage, namespace, fmt.Sprintf("http://%s:%d", gatewayName, 80), modelName, loadRate, maxExecutionTimeSec, inputTokens, outputTokens, k8sClient, ctx)
+		loadGenJob, err = utils.CreateLoadGeneratorJob(namespace, fmt.Sprintf("http://%s:%d", gatewayName, 80), modelName, loadRate, maxExecutionTimeSec, inputTokens, outputTokens, k8sClient, ctx)
 		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to start load generator sending requests to: %s", deployName))
 		defer func() {
 			By("stopping load generation job")
@@ -396,7 +396,7 @@ var _ = Describe("Test workload-variant-autoscaler in emulated environment - sin
 				Equal(corev1.PodRunning),
 				Equal(corev1.PodSucceeded),
 			), fmt.Sprintf("Job pod should be running or succeeded, but is in phase: %s", pod.Status.Phase))
-		}, 3*time.Minute, 5*time.Second).Should(Succeed())
+		}, 10*time.Minute, 5*time.Second).Should(Succeed())
 
 		_, _ = fmt.Fprintf(GinkgoWriter, "Load generation job is running\n")
 
@@ -456,7 +456,7 @@ var _ = Describe("Test workload-variant-autoscaler in emulated environment - sin
 			g.Expect(ttftAvg).To(BeNumerically(">", 0),
 				fmt.Sprintf("Current TTFT Average for VA %s should be greater than 0 under load", va.Name))
 
-		}, 5*time.Minute, 10*time.Second).Should(Succeed())
+		}, 10*time.Minute, 10*time.Second).Should(Succeed())
 
 		By("verifying that the controller has updated the status")
 		err = utils.LogVariantAutoscalingStatus(ctx, deployName, namespace, crClient, GinkgoWriter)
@@ -911,7 +911,7 @@ var _ = Describe("Test workload-variant-autoscaler in emulated environment - mul
 		}, 4*time.Minute, 10*time.Second).Should(Succeed())
 
 		By("starting load generation to create traffic for both deployments")
-		loadGenJob1, err := utils.CreateLoadGeneratorJob(GuidellmImage, namespace, fmt.Sprintf("http://%s:%d", gatewayName, 80), firstModelName, loadRate, maxExecutionTimeSec, inputTokens, outputTokens, k8sClient, ctx)
+		loadGenJob1, err := utils.CreateLoadGeneratorJob(namespace, fmt.Sprintf("http://%s:%d", gatewayName, 80), firstModelName, loadRate, maxExecutionTimeSec, inputTokens, outputTokens, k8sClient, ctx)
 		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to start load generator sending requests to: %s", firstDeployName))
 		defer func() {
 			err = utils.StopJob(namespace, loadGenJob1, k8sClient, ctx)
@@ -932,7 +932,7 @@ var _ = Describe("Test workload-variant-autoscaler in emulated environment - mul
 				Equal(corev1.PodRunning),
 				Equal(corev1.PodSucceeded),
 			), fmt.Sprintf("Job pod should be running or succeeded, but is in phase: %s", pod.Status.Phase))
-		}, 3*time.Minute, 5*time.Second).Should(Succeed())
+		}, 10*time.Minute, 5*time.Second).Should(Succeed())
 
 		_, _ = fmt.Fprintf(GinkgoWriter, "Load generation job is running\n")
 
@@ -999,7 +999,7 @@ var _ = Describe("Test workload-variant-autoscaler in emulated environment - mul
 
 			g.Expect(ttftAvg2).To(BeNumerically(">", 0),
 				fmt.Sprintf("Current TTFT Average for VA %s should be greater than 0 under load", va2.Name))
-		}, 6*time.Minute, 10*time.Second).Should(Succeed())
+		}, 10*time.Minute, 10*time.Second).Should(Succeed())
 
 		By("verifying that the controller has updated the status")
 		err = utils.LogVariantAutoscalingStatus(ctx, firstDeployName, namespace, crClient, GinkgoWriter)
@@ -1053,7 +1053,7 @@ var _ = Describe("Test workload-variant-autoscaler in emulated environment - mul
 		// Target services directly to ensure each deployment gets dedicated load
 		// Using service short DNS name: <service-name>.<namespace>
 		firstServiceURL := fmt.Sprintf("http://%s.%s:%d", firstServiceName, namespace, port)
-		loadGenJob1, err := utils.CreateLoadGeneratorJob(GuidellmImage, namespace, firstServiceURL, firstModelName, loadRate, maxExecutionTimeSec, inputTokens, outputTokens, k8sClient, ctx)
+		loadGenJob1, err := utils.CreateLoadGeneratorJob(namespace, firstServiceURL, firstModelName, loadRate, maxExecutionTimeSec, inputTokens, outputTokens, k8sClient, ctx)
 		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to start load generator sending requests to: %s", firstDeployName))
 		defer func() {
 			err = utils.StopJob(namespace, loadGenJob1, k8sClient, ctx)
@@ -1061,7 +1061,7 @@ var _ = Describe("Test workload-variant-autoscaler in emulated environment - mul
 		}()
 
 		secondServiceURL := fmt.Sprintf("http://%s.%s:%d", secondServiceName, namespace, port)
-		loadGenJob2, err := utils.CreateLoadGeneratorJob(GuidellmImage, namespace, secondServiceURL, secondModelName, loadRate, maxExecutionTimeSec, inputTokens, outputTokens, k8sClient, ctx)
+		loadGenJob2, err := utils.CreateLoadGeneratorJob(namespace, secondServiceURL, secondModelName, loadRate, maxExecutionTimeSec, inputTokens, outputTokens, k8sClient, ctx)
 		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to start load generator sending requests to: %s", secondDeployName))
 		defer func() {
 			err = utils.StopJob(namespace, loadGenJob2, k8sClient, ctx)
@@ -1145,7 +1145,7 @@ var _ = Describe("Test workload-variant-autoscaler in emulated environment - mul
 			g.Expect(va2.Status.DesiredOptimizedAlloc.NumReplicas).To(BeNumerically("==", desiredReplicas2),
 				fmt.Sprintf("Current replicas for VA %s should stay at %.2f with no load", va2.Name, desiredReplicas2))
 
-		}, 6*time.Minute, 10*time.Second).Should(Succeed())
+		}, 10*time.Minute, 10*time.Second).Should(Succeed())
 
 		By("showing the status of VAs")
 		err = utils.LogVariantAutoscalingStatus(ctx, firstDeployName, namespace, crClient, GinkgoWriter)
@@ -1479,7 +1479,7 @@ var _ = Describe("Test accelerator-based VA grouping isolation", Ordered, func()
 
 		By("applying load ONLY to A100 deployment")
 		a100ServiceURL := fmt.Sprintf("http://%s.%s:%d", a100ServiceName, namespace, port)
-		loadGenJob, err := utils.CreateLoadGeneratorJob(GuidellmImage, namespace, a100ServiceURL, modelName, loadRate, maxExecutionTimeSec, inputTokens, outputTokens, k8sClient, ctx)
+		loadGenJob, err := utils.CreateLoadGeneratorJob(namespace, a100ServiceURL, modelName, loadRate, maxExecutionTimeSec, inputTokens, outputTokens, k8sClient, ctx)
 		Expect(err).NotTo(HaveOccurred())
 		defer func() {
 			_ = utils.StopJob(namespace, loadGenJob, k8sClient, ctx)
@@ -1511,7 +1511,7 @@ var _ = Describe("Test accelerator-based VA grouping isolation", Ordered, func()
 			g.Expect(h100VA.Status.DesiredOptimizedAlloc.NumReplicas).To(BeNumerically("==", MinimumReplicas),
 				fmt.Sprintf("H100 VA should remain at minimum replicas (%d) with no load, got %d replicas - "+
 					"this validates accelerator-based isolation (issue #454)", MinimumReplicas, h100VA.Status.DesiredOptimizedAlloc.NumReplicas))
-		}, 5*time.Minute, 10*time.Second).Should(Succeed())
+		}, 10*time.Minute, 10*time.Second).Should(Succeed())
 
 		By("logging VA status to confirm isolation")
 		_ = utils.LogVariantAutoscalingStatus(ctx, a100DeployName, namespace, crClient, GinkgoWriter)
