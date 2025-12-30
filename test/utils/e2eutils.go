@@ -88,23 +88,6 @@ func Run(cmd *exec.Cmd) (string, error) {
 	return string(output), nil
 }
 
-// DetectArchitecture checks the host architecture
-func DetectArchitecture() (string, error) {
-	var arch string
-	out, err := exec.Command("uname", "-m").CombinedOutput()
-	if err != nil {
-		// fallback to GOARCH env if uname fails
-		if goarch := os.Getenv("GOARCH"); goarch != "" {
-			arch = goarch
-			return arch, nil
-		}
-		return "", fmt.Errorf("failed to detect architecture: %v", err)
-	}
-
-	arch = strings.TrimSpace(string(out))
-	return arch, nil
-}
-
 // InstallPrometheusOperator installs the prometheus Operator to be used to export the enabled metrics.
 // Includes TLS certificate generation and configuration for HTTPS support.
 func InstallPrometheusOperator() error {
@@ -510,21 +493,14 @@ func startPortForwarding(service *corev1.Service, namespace string, localPort, s
 }
 
 // CreateLoadGeneratorJob creates and launches a Kubernetes Job for load generation using GuideLLM with the specified parameters
-func CreateLoadGeneratorJob(image, namespace, targetURL, modelName string, rate, maxSeconds, inputTokens, outputTokens int, k8sClient *kubernetes.Clientset, ctx context.Context) (*batchv1.Job, error) {
+func CreateLoadGeneratorJob(namespace, targetURL, modelName string, rate, maxSeconds, inputTokens, outputTokens int, k8sClient *kubernetes.Clientset, ctx context.Context) (*batchv1.Job, error) {
 
-	// Detect host architecture and override image for arm64 hosts
-	// TODO: Change to always use the upstream GuideLLM image once they support multiple architectures
-	arch, err := DetectArchitecture()
+	// Always use a standard python image and install guidellm at runtime
+	// using python:3.10 and installing cpu-only torch (~200MB) to be lightweight and fast
+	image := "python:3.10"
 
-	if err != nil {
-		return nil, fmt.Errorf("error when detecting architecture for loadgen job creation: %v", err)
-	}
-
-	// If running on an arm64 architecture, use the arm64-compatible image
-	if arch == "aarch64" || arch == "arm64" {
-		image = "quay.io/tomsgre/guidellm:latest"
-		_, _ = fmt.Fprintf(gink.GinkgoWriter, "Using arm64 guidellm image: %s (detected arch: %s)\n", image, arch)
-	}
+	cmd := fmt.Sprintf("echo 'Starting installation...' && pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu && pip install --no-cache-dir guidellm && echo 'Installation complete, starting benchmark...' && guidellm benchmark --target %s --rate-type constant --rate %d --max-seconds %d --model %s --data prompt_tokens=%d,output_tokens=%d --output-path /tmp/benchmarks.json",
+		targetURL, rate, maxSeconds, modelName, inputTokens, outputTokens)
 
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -545,17 +521,8 @@ func CreateLoadGeneratorJob(image, namespace, targetURL, modelName string, rate,
 									Value: "/tmp",
 								},
 							},
-							Command: []string{"guidellm"},
-							Args: []string{
-								"benchmark",
-								"--target", targetURL,
-								"--rate-type", "constant",
-								"--rate", fmt.Sprintf("%d", rate),
-								"--max-seconds", fmt.Sprintf("%d", maxSeconds),
-								"--model", modelName,
-								"--data", fmt.Sprintf("prompt_tokens=%d,output_tokens=%d", inputTokens, outputTokens),
-								"--output-path", "/tmp/benchmarks.json",
-							},
+							Command: []string{"/bin/sh", "-c"},
+							Args:    []string{cmd},
 						},
 					},
 					RestartPolicy: corev1.RestartPolicyNever,
@@ -566,7 +533,7 @@ func CreateLoadGeneratorJob(image, namespace, targetURL, modelName string, rate,
 	}
 
 	// Create the Job
-	_, err = k8sClient.BatchV1().Jobs(namespace).Create(ctx, job, metav1.CreateOptions{})
+	_, err := k8sClient.BatchV1().Jobs(namespace).Create(ctx, job, metav1.CreateOptions{})
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to create load generator Job: %v", err)
