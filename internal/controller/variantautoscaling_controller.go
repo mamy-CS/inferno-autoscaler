@@ -225,24 +225,14 @@ func BuildVariantStates(
 	vas []llmdVariantAutoscalingV1alpha1.VariantAutoscaling,
 	k8sClient client.Client,
 ) ([]interfaces.VariantReplicaState, error) {
-	logger := ctrl.LoggerFrom(ctx)
+
 	states := make([]interfaces.VariantReplicaState, 0, len(vas))
 
 	for _, va := range vas {
 		// Get current replicas from deployment using ScaleTargetRef
 		var deploy appsv1.Deployment
 		if err := utils.GetDeploymentWithBackoff(ctx, k8sClient, va.GetScaleTargetName(), va.Namespace, &deploy); err != nil {
-			logger.Info("Failed to get deployment for VA, using status",
-				"name", va.Name,
-				"deployment", va.GetScaleTargetName(),
-				"error", err)
-			// Fallback to status if deployment fetch fails
-			states = append(states, interfaces.VariantReplicaState{
-				VariantName:     va.GetScaleTargetName(),
-				CurrentReplicas: va.Status.CurrentAlloc.NumReplicas,
-				DesiredReplicas: va.Status.DesiredOptimizedAlloc.NumReplicas,
-			})
-			continue
+			return nil, fmt.Errorf("failed to get deployment for VA %s: %w", va.Name, err)
 		}
 
 		currentReplicas := int(deploy.Status.Replicas)
