@@ -35,12 +35,12 @@ func (a *Analyzer) AnalyzeModelSaturation(
 
 	if len(replicaMetrics) == 0 {
 		return &interfaces.ModelSaturationAnalysis{
-			ModelID:         modelID,
-			Namespace:       namespace,
-			AnalyzedAt:      time.Now(),
-			TotalReplicas:   0,
-			ShouldScaleUp:   false,
-			ShouldScaleDown: false,
+			ModelID:       modelID,
+			Namespace:     namespace,
+			AnalyzedAt:    time.Now(),
+			TotalReplicas: 0,
+			ShouldScaleUp: false,
+
 			ScaleDownSafe:   false,
 			VariantAnalyses: []interfaces.VariantSaturationAnalysis{},
 		}, nil
@@ -115,7 +115,7 @@ func (a *Analyzer) AnalyzeModelSaturation(
 	)
 
 	// Step 4: Determine if scale-down is safe
-	analysis.ShouldScaleDown, analysis.ScaleDownSafe = a.isScaleDownSafe(
+	analysis.ScaleDownSafe = a.isScaleDownSafe(
 		ctx,
 		replicaMetrics,
 		config,
@@ -229,8 +229,7 @@ func (a *Analyzer) shouldScaleUp(
 }
 
 // isScaleDownSafe simulates realistic load redistribution after removing one replica.
-// Returns (shouldScaleDown, isSafe) where:
-// - shouldScaleDown: always false (saturation analyzer only approves, doesn't initiate scale-down)
+// Returns isSafe where:
 // - isSafe: true if removing one replica would leave adequate headroom
 //
 // Algorithm: Calculates total current load across non-saturated replicas, then simulates
@@ -239,7 +238,7 @@ func (a *Analyzer) isScaleDownSafe(
 	ctx context.Context,
 	replicaMetrics []interfaces.ReplicaMetrics,
 	config interfaces.SaturationScalingConfig,
-) (bool, bool) {
+) bool {
 
 	// Collect non-saturated replicas
 	var nonSaturatedMetrics []interfaces.ReplicaMetrics
@@ -258,7 +257,7 @@ func (a *Analyzer) isScaleDownSafe(
 	if nonSaturatedCount < MinNonSaturatedReplicasForScaleDown {
 		ctrl.LoggerFrom(ctx).V(logging.DEBUG).Info("Scale-down unsafe: insufficient non-saturated replicas",
 			"nonSaturated", nonSaturatedCount, "required", MinNonSaturatedReplicasForScaleDown)
-		return false, false
+		return false
 	}
 
 	// Calculate total load across all non-saturated replicas
@@ -291,7 +290,7 @@ func (a *Analyzer) isScaleDownSafe(
 	}
 
 	// Saturation analyzer never initiates scale-down, only approves/denies
-	return false, isSafe
+	return isSafe
 }
 
 // CalculateSaturationTargets determines target replicas per variant based on saturation analysis.

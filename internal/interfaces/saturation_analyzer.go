@@ -44,10 +44,10 @@ type ModelSaturationAnalysis struct {
 	AvgSpareQueueLength float64
 
 	// Scale decision recommendations
-	ShouldScaleUp   bool
-	ShouldScaleDown bool // Only true if safe to scale down
-	ScaleUpReason   string
-	ScaleDownSafe   bool // Indicates if scale-down simulation passed
+	ShouldScaleUp bool
+
+	ScaleUpReason string
+	ScaleDownSafe bool // Indicates if scale-down simulation passed
 
 	// Detailed variant breakdown
 	VariantAnalyses []VariantSaturationAnalysis
