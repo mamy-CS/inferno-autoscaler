@@ -141,8 +141,7 @@ func (e *Engine) optimize(ctx context.Context) error {
 
 	// Process each model independently
 	allDecisions := make([]interfaces.VariantDecision, 0)
-	// Track error count for final reconciliation summary
-	errorCount := 0
+
 	// Create VA lookup map for applySaturationDecisions (used to access VA status and update decisions)
 	// Copy slice elements to local variable to ensure stable pointers
 	// Use deployment name (ScaleTargetName) as key since decision.VariantName uses deployment name
@@ -180,7 +179,7 @@ func (e *Engine) optimize(ctx context.Context) error {
 		if err != nil {
 			logger.Error(err, "Saturation analysis failed",
 				"modelID", modelID)
-			errorCount++
+
 			// Activate safety net to ensure HPA doesn't scale to zero on partial failure
 			e.emitSafetyNetMetrics(ctx, modelVAs)
 			continue
@@ -215,18 +214,10 @@ func (e *Engine) optimize(ctx context.Context) error {
 		return err
 	}
 
-	if errorCount > 0 {
-		logger.Info("Optimization completed with errors",
-			"mode", "saturation-only",
-			"modelsProcessed", len(modelGroups),
-			"modelsFailed", errorCount,
-			"decisionsApplied", len(allDecisions))
-	} else {
-		logger.Info("Optimization completed successfully",
-			"mode", "saturation-only",
-			"modelsProcessed", len(modelGroups),
-			"decisionsApplied", len(allDecisions))
-	}
+	logger.Info("Optimization completed successfully",
+		"mode", "saturation-only",
+		"modelsProcessed", len(modelGroups),
+		"decisionsApplied", len(allDecisions))
 
 	return nil
 }
