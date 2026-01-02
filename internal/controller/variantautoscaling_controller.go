@@ -51,10 +51,7 @@ import (
 type VariantAutoscalingReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
-	// Recorder emits Kubernetes events for observability. We keep it to follow Kubernetes
-	// controller best practices and provide visibility into critical issues (e.g., ServiceMonitor
-	// deletion) that may not be immediately apparent from logs alone. Events are accessible via
-	// `kubectl get events` and can be monitored by cluster operators and external tooling.
+
 	Recorder record.EventRecorder
 
 	PromAPI promv1.API
@@ -62,8 +59,6 @@ type VariantAutoscalingReconciler struct {
 	// MetricsCollector is the interface for collecting metrics from various backends
 	// Defaults to Prometheus collector, but can be swapped for other backends (e.g., EPP)
 	MetricsCollector interfaces.MetricsCollector
-
-	// Saturation scaling config cache (thread-safe, updated on ConfigMap changes)
 }
 
 // +kubebuilder:rbac:groups=llmd.ai,resources=variantautoscalings,verbs=get;list;watch;create;update;patch;delete
@@ -497,10 +492,9 @@ func (r *VariantAutoscalingReconciler) SetupWithManager(mgr ctrl.Manager) error 
 						common.Config.UpdateOptimizationConfig(interval)
 						logger.Info("Updated global optimization config from ConfigMap", "interval", interval)
 					}
-					// Return empty request to trigger reconcile for all VAs if needed?
-					// Changing global interval affects Engine loop, but not necessarily individual VAs immediately.
-					// Engine loop reads new interval on next tick.
-					return []reconcile.Request{{}}
+					// Global config update is handled by the Engine loop which reads the new configuration.
+					// No need to trigger immediate reconciliation for individual VAs.
+					return nil
 				} else if name == getSaturationConfigMapName() {
 					// Saturation Scaling Config
 					configs := make(map[string]interfaces.SaturationScalingConfig)
@@ -522,9 +516,9 @@ func (r *VariantAutoscalingReconciler) SetupWithManager(mgr ctrl.Manager) error 
 					common.Config.UpdateSaturationConfig(configs)
 					logger.Info("Updated global saturation config from ConfigMap", "entries", count)
 
-					// Return empty request (or requests for all VAs) to trigger reconciliation?
-					// Like optimization interval, the Engine picks this up.
-					return []reconcile.Request{{}}
+					// Global saturation config update is handled by the Engine loop.
+					// No need to trigger immediate reconciliation for individual VAs.
+					return nil
 				}
 
 				return nil
