@@ -236,14 +236,17 @@ func (e *Engine) BuildVariantStates(
 	ctx context.Context,
 	vas []llmdVariantAutoscalingV1alpha1.VariantAutoscaling,
 	k8sClient client.Client,
-) ([]interfaces.VariantReplicaState, error) {
+) []interfaces.VariantReplicaState {
 	states := make([]interfaces.VariantReplicaState, 0, len(vas))
 
 	for _, va := range vas {
 		// Get current replicas from deployment using ScaleTargetRef
 		var deploy appsv1.Deployment
 		if err := utils.GetDeploymentWithBackoff(ctx, k8sClient, va.GetScaleTargetName(), va.Namespace, &deploy); err != nil {
-			return nil, fmt.Errorf("failed to get deployment for VA %s: %w", va.Name, err)
+			ctrl.LoggerFrom(ctx).V(logging.DEBUG).Info("Could not get deployment for VA, skipping",
+				"variant", va.Name,
+				"error", err)
+			continue
 		}
 
 		currentReplicas := int(deploy.Status.Replicas)
@@ -258,7 +261,7 @@ func (e *Engine) BuildVariantStates(
 		})
 	}
 
-	return states, nil
+	return states
 }
 
 // convertSaturationTargetsToDecisions converts saturation-only targets to VariantDecisions.
@@ -412,10 +415,7 @@ func (e *Engine) RunSaturationAnalysis(
 		"scaleDownSafe", saturationAnalysis.ScaleDownSafe)
 
 	// Build variant states (current and desired replicas)
-	variantStates, err := e.BuildVariantStates(ctx, modelVAs, k8sClient)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to build variant states for model %s: %w", modelID, err)
-	}
+	variantStates := e.BuildVariantStates(ctx, modelVAs, k8sClient)
 
 	// Calculate saturation-based targets
 	saturationTargets := saturationAnalyzer.CalculateSaturationTargets(ctx, saturationAnalysis, variantStates)
