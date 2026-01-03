@@ -767,7 +767,7 @@ func (e *Engine) emitSafetyNetMetrics(
 		// Get current replicas for metric emission
 		currentReplicas, err := act.GetCurrentDeploymentReplicas(ctx, &va)
 		if err != nil {
-			logger.Error(err, "Safety net: failed to get current replicas for metrics",
+			logger.Error(err, "Safety net: failed to get current replicas from Deployment for metrics", "using VariantAutoscaling status",
 				"variant", va.Name)
 			currentReplicas = int32(va.Status.CurrentAlloc.NumReplicas)
 		}
@@ -782,6 +782,8 @@ func (e *Engine) emitSafetyNetMetrics(
 		}
 
 		// Determine accelerator - try status first, then labels, skip if unavailable
+		// TODO: remove this checks when we will move to a new version of the CRD
+		// with required accelerator field
 		accelerator := va.Status.DesiredOptimizedAlloc.Accelerator
 		if accelerator == "" {
 			accelerator = va.Status.CurrentAlloc.Accelerator
