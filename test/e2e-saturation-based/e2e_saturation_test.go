@@ -78,6 +78,8 @@ const (
 	// Second variant with different accelerator (for cost-based testing)
 	h100Cost = 50.0
 	a100Cost = 30.0
+
+	prometheusLocalPort = 19090
 )
 
 var (
@@ -309,14 +311,14 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Single Va
 		It("should scale up when saturation is detected", func() {
 			// Set up port-forwarding for Prometheus
 			By("setting up port-forward to Prometheus service")
-			prometheusPortForwardCmd := utils.SetUpPortForward(k8sClient, ctx, "kube-prometheus-stack-prometheus", controllerMonitoringNamespace, 9090, 9090)
+			prometheusPortForwardCmd := utils.SetUpPortForward(k8sClient, ctx, "kube-prometheus-stack-prometheus", controllerMonitoringNamespace, prometheusLocalPort, 9090)
 			defer func() {
 				err := utils.StopCmd(prometheusPortForwardCmd)
 				Expect(err).NotTo(HaveOccurred(), "Should be able to stop Prometheus port-forwarding")
 			}()
 
 			By("waiting for Prometheus port-forward to be ready")
-			err := utils.VerifyPortForwardReadiness(ctx, 9090, fmt.Sprintf("https://localhost:%d/api/v1/query?query=up", 9090))
+			err := utils.VerifyPortForwardReadiness(ctx, prometheusLocalPort, fmt.Sprintf("https://localhost:%d/api/v1/query?query=up", prometheusLocalPort))
 			Expect(err).NotTo(HaveOccurred(), "Prometheus port-forward should be ready within timeout")
 
 			By("starting load generation to trigger saturation")
@@ -725,14 +727,14 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Multiple 
 		It("should scale up when saturation is detected", func() {
 			// Set up port-forwarding for Prometheus
 			By("setting up port-forward to Prometheus service")
-			prometheusPortForwardCmd := utils.SetUpPortForward(k8sClient, ctx, "kube-prometheus-stack-prometheus", controllerMonitoringNamespace, 9090, 9090)
+			prometheusPortForwardCmd := utils.SetUpPortForward(k8sClient, ctx, "kube-prometheus-stack-prometheus", controllerMonitoringNamespace, prometheusLocalPort, 9090)
 			defer func() {
 				err := utils.StopCmd(prometheusPortForwardCmd)
 				Expect(err).NotTo(HaveOccurred(), "Should be able to stop Prometheus port-forwarding")
 			}()
 
 			By("waiting for Prometheus port-forward to be ready")
-			err := utils.VerifyPortForwardReadiness(ctx, 9090, fmt.Sprintf("https://localhost:%d/api/v1/query?query=up", 9090))
+			err := utils.VerifyPortForwardReadiness(ctx, prometheusLocalPort, fmt.Sprintf("https://localhost:%d/api/v1/query?query=up", prometheusLocalPort))
 			Expect(err).NotTo(HaveOccurred(), "Prometheus port-forward should be ready within timeout")
 
 			By("starting load generation to trigger saturation")
@@ -822,7 +824,7 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Multiple 
 
 	Context("Replica stability under constant load", func() {
 		//TODO: Flaky - re-enable when controller is stable
-		PIt("should maintain stable replica count under constant load", func() {
+		It("should maintain stable replica count under constant load", func() {
 			By("starting constant load generation")
 			loadGenJob, err := utils.CreateLoadGeneratorJob(
 
