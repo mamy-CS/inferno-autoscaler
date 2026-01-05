@@ -163,10 +163,10 @@ func filterVariantsByDeployment(ctx context.Context, client client.Client, filte
 
 // readyVariantAutoscalings retrieves all VariantAutoscaling resources that are ready for optimization
 // using the informer cache.
-func readyVariantAutoscalings(ctx context.Context, k8sClient client.Client) ([]wvav1alpha1.VariantAutoscaling, error) {
+func readyVariantAutoscalings(ctx context.Context, client client.Client) ([]wvav1alpha1.VariantAutoscaling, error) {
 	// List all VAs using the informer cache
 	var vaList wvav1alpha1.VariantAutoscalingList
-	if err := k8sClient.List(ctx, &vaList); err != nil {
+	if err := client.List(ctx, &vaList); err != nil {
 		return nil, err
 	}
 
