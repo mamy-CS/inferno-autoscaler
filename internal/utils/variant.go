@@ -24,7 +24,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	wvav1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
-	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/common"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
 )
 
@@ -163,10 +162,23 @@ func filterVariantsByDeployment(ctx context.Context, client client.Client, filte
 }
 
 // readyVariantAutoscalings retrieves all VariantAutoscaling resources that are ready for optimization
-// (condition TargetResolved is true) using the shared cache.
-func readyVariantAutoscalings(ctx context.Context, _ client.Client) ([]wvav1alpha1.VariantAutoscaling, error) {
-	// Read VAs from shared cache instead of API server
-	readyVAs := common.GetReadyVAs()
+// using the informer cache.
+func readyVariantAutoscalings(ctx context.Context, client client.Client) ([]wvav1alpha1.VariantAutoscaling, error) {
+	// List all VAs using the informer cache
+	var vaList wvav1alpha1.VariantAutoscalingList
+	if err := client.List(ctx, &vaList); err != nil {
+		return nil, err
+	}
+
+	// Filter out VAs being deleted
+	readyVAs := make([]wvav1alpha1.VariantAutoscaling, 0, len(vaList.Items))
+	for _, va := range vaList.Items {
+		// Skip deleted VAs
+		if !va.DeletionTimestamp.IsZero() {
+			continue
+		}
+		readyVAs = append(readyVAs, va)
+	}
 
 	ctrl.LoggerFrom(ctx).V(logging.DEBUG).Info("Found VariantAutoscaling resources ready for optimization", "count", len(readyVAs))
 	return readyVAs, nil
