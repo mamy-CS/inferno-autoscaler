@@ -740,74 +740,61 @@ func (e *Engine) emitSafetyNetMetrics(
 	act := actuator.NewActuator(e.client)
 
 	for _, va := range modelVAs {
-		// Get latest version from API server
-		var updateVa llmdVariantAutoscalingV1alpha1.VariantAutoscaling
-		if err := utils.GetVariantAutoscalingWithBackoff(ctx, e.client, va.Name, va.Namespace, &updateVa); err != nil {
-			logger.Error(err, "Safety net: failed to get latest VA from API server",
-				"name", va.Name)
-			continue
-		}
-
-		// Determine fallback desired replicas
+		// Determine desired replicas
 		var desiredReplicas int32
 		var fallbackSource string
 
+		// Get current replicas for metric emission
+		currentReplicas, err := act.GetCurrentDeploymentReplicas(ctx, &va)
+		if err != nil {
+			logger.Error(err, "Safety net: failed to get current replicas from Deployment for metrics", "using VariantAutoscaling status",
+				"variant", va.Name)
+			currentReplicas = int32(va.Status.CurrentAlloc.NumReplicas)
+		}
+
 		// Strategy 1: Use previous desired replicas if available
-		if updateVa.Status.DesiredOptimizedAlloc.NumReplicas > 0 {
-			desiredReplicas = int32(updateVa.Status.DesiredOptimizedAlloc.NumReplicas)
+		if va.Status.DesiredOptimizedAlloc.NumReplicas > 0 {
+			desiredReplicas = int32(va.Status.DesiredOptimizedAlloc.NumReplicas)
 			fallbackSource = "previous-desired"
 		} else {
-			// Strategy 2: Use current replicas from deployment (safe no-op)
-			currentReplicas, err := act.GetCurrentDeploymentReplicas(ctx, &updateVa)
-			if err != nil {
-				logger.Error(err, "Safety net: failed to get current replicas, using VA status",
-					"variant", updateVa.Name)
-				currentReplicas = int32(updateVa.Status.CurrentAlloc.NumReplicas)
-			}
 			desiredReplicas = currentReplicas
 			fallbackSource = "current-replicas"
 		}
 
-		// Get current replicas for metric emission
-		currentReplicas, err := act.GetCurrentDeploymentReplicas(ctx, &updateVa)
-		if err != nil {
-			logger.Error(err, "Safety net: failed to get current replicas for metrics",
-				"variant", updateVa.Name)
-			currentReplicas = int32(updateVa.Status.CurrentAlloc.NumReplicas)
-		}
-
 		// Determine accelerator - try status first, then labels, skip if unavailable
-		accelerator := updateVa.Status.DesiredOptimizedAlloc.Accelerator
+		// TODO: remove this checks when we will move to a new version of the CRD
+		// with required accelerator field
+		accelerator := va.Status.DesiredOptimizedAlloc.Accelerator
 		if accelerator == "" {
-			accelerator = updateVa.Status.CurrentAlloc.Accelerator
+			accelerator = va.Status.CurrentAlloc.Accelerator
 		}
 		if accelerator == "" {
 			// Try to get from VA labels as last resort
-			if val, ok := updateVa.Labels["inference.optimization/acceleratorName"]; ok && val != "" {
+			if val, ok := va.Labels["inference.optimization/acceleratorName"]; ok && val != "" {
 				accelerator = val
 			}
 		}
 		if accelerator == "" {
 			logger.Info("Safety net: skipping metric emission - no accelerator name available",
-				"variant", updateVa.Name)
+				"variant", va.Name)
 			continue
 		}
 
 		// Emit safety net metrics
 		if err := act.MetricsEmitter.EmitReplicaMetrics(
 			ctx,
-			&updateVa,
+			&va,
 			currentReplicas,
 			desiredReplicas,
 			accelerator,
 		); err != nil {
 			logger.Error(err, "Safety net: failed to emit metrics",
-				"variant", updateVa.Name)
+				"variant", va.Name)
 			continue
 		}
 
 		logger.Info("Safety net activated: emitted fallback metrics",
-			"variant", updateVa.Name,
+			"variant", va.Name,
 			"currentReplicas", currentReplicas,
 			"desiredReplicas", desiredReplicas,
 			"accelerator", accelerator,
