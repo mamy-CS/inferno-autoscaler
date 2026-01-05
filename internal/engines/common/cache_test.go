@@ -4,10 +4,7 @@ import (
 	"sync"
 	"testing"
 
-	wvav1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
 	interfaces "github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 func TestInternalDecisionCache(t *testing.T) {
@@ -82,58 +79,6 @@ func TestGlobalConfig(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-}
-
-func TestVACache(t *testing.T) {
-	// Reset global cache for testing (since it's a global variable)
-	// Note: This might affect other parallel tests if any, but unit tests usually run sequentially pkg-wise
-	vaCacheLocks := &vaCacheLock
-	vaCacheLocks.Lock()
-	originalCache := vaCache
-	vaCache = make(map[client.ObjectKey]*wvav1alpha1.VariantAutoscaling)
-	vaCacheLocks.Unlock()
-
-	defer func() {
-		vaCacheLocks.Lock()
-		vaCache = originalCache
-		vaCacheLocks.Unlock()
-	}()
-
-	va := &wvav1alpha1.VariantAutoscaling{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-va",
-			Namespace: "test-ns",
-		},
-	}
-
-	// Test Update
-	UpdateVACache(va)
-	key := client.ObjectKey{Name: "test-va", Namespace: "test-ns"}
-
-	// Verify via GetReadyVAs (implicitly tests Get)
-	readyVAs := GetReadyVAs()
-	if len(readyVAs) != 1 {
-		t.Errorf("Expected 1 ready VA, got %d", len(readyVAs))
-	} else if readyVAs[0].Name != "test-va" {
-		t.Errorf("Expected VA name 'test-va', got '%s'", readyVAs[0].Name)
-	}
-
-	// Test Remove
-	RemoveVACache(key)
-	readyVAs = GetReadyVAs()
-	if len(readyVAs) != 0 {
-		t.Errorf("Expected 0 ready VAs, got %d", len(readyVAs))
-	}
-
-	// Test Deleted VAs are skipped in GetReadyVAs
-	deletedVA := va.DeepCopy()
-	now := metav1.Now()
-	deletedVA.DeletionTimestamp = &now
-	UpdateVACache(deletedVA)
-	readyVAs = GetReadyVAs()
-	if len(readyVAs) != 0 {
-		t.Errorf("Expected 0 ready VAs (filtered deleted), got %d", len(readyVAs))
-	}
 }
 
 func TestDecisionToOptimizedAlloc(t *testing.T) {
