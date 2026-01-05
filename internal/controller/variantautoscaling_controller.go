@@ -156,10 +156,11 @@ func (r *VariantAutoscalingReconciler) Reconcile(ctx context.Context, req ctrl.R
 	var deployment appsv1.Deployment
 	if err := utils.GetDeploymentWithBackoff(ctx, r.Client, scaleTargetName, va.Namespace, &deployment); err != nil {
 		if apierrors.IsNotFound(err) {
-			logger.Info("Scale target Deployment not found",
+			logger.Info("Scale target Deployment not found, waiting for deployment watch",
 				"name", scaleTargetName,
 				"namespace", va.Namespace)
-			// Don't requeue if deployment is missing, wait for it to be created
+			// Don't requeue - the deployment watch will trigger reconciliation
+			// when the target deployment is created
 			return ctrl.Result{}, nil
 		}
 		logger.Error(err, "Failed to get scale target Deployment",
@@ -458,6 +459,44 @@ func CollectMetricsForSaturationMode(
 	return nil
 }
 
+// handleDeploymentEvent maps Deployment events to VA reconcile requests.
+// When a Deployment is created, this finds any VAs that reference it and triggers reconciliation.
+// This handles the race condition where VA is created before its target deployment.
+func (r *VariantAutoscalingReconciler) handleDeploymentEvent(ctx context.Context, obj client.Object) []reconcile.Request {
+	deploy, ok := obj.(*appsv1.Deployment)
+	if !ok {
+		return nil
+	}
+
+	logger := ctrl.LoggerFrom(ctx)
+
+	// List all VAs in the same namespace
+	var vaList llmdVariantAutoscalingV1alpha1.VariantAutoscalingList
+	if err := r.List(ctx, &vaList, client.InNamespace(deploy.Namespace)); err != nil {
+		logger.Error(err, "Failed to list VAs for deployment event")
+		return nil
+	}
+
+	// Find VAs that reference this deployment
+	var requests []reconcile.Request
+	for _, va := range vaList.Items {
+		if va.GetScaleTargetName() == deploy.Name {
+			logger.V(logging.DEBUG).Info("Deployment created, triggering VA reconciliation",
+				"deployment", deploy.Name,
+				"va", va.Name,
+				"namespace", deploy.Namespace)
+			requests = append(requests, reconcile.Request{
+				NamespacedName: client.ObjectKey{
+					Namespace: va.Namespace,
+					Name:      va.Name,
+				},
+			})
+		}
+	}
+
+	return requests
+}
+
 // SetupWithManager sets up the controller with the Manager.
 func (r *VariantAutoscalingReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
@@ -526,6 +565,13 @@ func (r *VariantAutoscalingReconciler) SetupWithManager(mgr ctrl.Manager) error 
 			&promoperator.ServiceMonitor{},
 			handler.EnqueueRequestsFromMapFunc(r.handleServiceMonitorEvent),
 			builder.WithPredicates(ServiceMonitorPredicate()),
+		).
+		// Watch Deployments to trigger VA reconciliation when target deployment is created
+		// This handles the race condition where VA is created before its target deployment
+		Watches(
+			&appsv1.Deployment{},
+			handler.EnqueueRequestsFromMapFunc(r.handleDeploymentEvent),
+			builder.WithPredicates(DeploymentPredicate()),
 		).
 		// Watch DecisionTrigger channel for Engine decisions
 		// This enables the Engine to trigger reconciliation without updating the object in API server

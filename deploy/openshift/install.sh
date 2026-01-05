@@ -63,21 +63,43 @@ check_specific_prerequisites() {
 #### REQUIRED FUNCTION used by deploy/install.sh ####
 create_namespaces() {
     log_info "Creating namespaces..."
-    
+
     for ns in $WVA_NS $MONITORING_NAMESPACE $LLMD_NS; do
+        local ns_exists=false
+        local ns_terminating=false
+
+        # Check namespace state
         if kubectl get namespace $ns &> /dev/null; then
-            log_info "Namespace $ns already exists"
-        else
-            # Create namespace with OpenShift-specific labels for monitoring
-            if [ "$ns" = "$WVA_NS" ]; then
-                kubectl create namespace $ns --dry-run=client -o yaml | \
-                    kubectl label --local -f - openshift.io/user-monitoring=true -o yaml | \
-                    kubectl apply -f -
-            else
-                kubectl create namespace $ns
+            ns_exists=true
+            local ns_status=$(kubectl get namespace $ns -o jsonpath='{.status.phase}' 2>/dev/null)
+            if [ "$ns_status" = "Terminating" ]; then
+                ns_terminating=true
             fi
-            log_success "Namespace $ns created"
         fi
+
+        # Handle each case explicitly
+        if [ "$ns_exists" = true ] && [ "$ns_terminating" = false ]; then
+            # Namespace exists and is active - skip
+            log_info "Namespace $ns already exists"
+            continue
+        elif [ "$ns_terminating" = true ]; then
+            # Namespace is terminating - force delete and recreate
+            log_info "Namespace $ns is terminating, forcing deletion..."
+            kubectl get namespace $ns -o json | \
+                jq '.spec.finalizers = []' | \
+                kubectl replace --raw "/api/v1/namespaces/$ns/finalize" -f - 2>/dev/null || true
+            kubectl wait --for=delete namespace/$ns --timeout=120s 2>/dev/null || true
+        fi
+        # At this point: namespace doesn't exist OR was terminating and is now deleted
+        # Create namespace with OpenShift-specific labels for monitoring
+        if [ "$ns" = "$WVA_NS" ]; then
+            kubectl create namespace $ns --dry-run=client -o yaml | \
+                kubectl label --local -f - openshift.io/user-monitoring=true -o yaml | \
+                kubectl apply -f -
+        else
+            kubectl create namespace $ns
+        fi
+        log_success "Namespace $ns created"
     done
 }
 
