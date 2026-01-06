@@ -85,19 +85,22 @@ func EventFilter() predicate.Funcs {
 }
 
 // DeploymentPredicate returns a predicate that filters Deployment events.
-// It allows Create events for all Deployments (to trigger VA reconciliation when target is created).
-// This handles the race condition where VA is created before its target deployment.
+// It allows Create and Delete events for all Deployments to trigger VA reconciliation:
+// - Create: handles the race condition where VA is created before its target deployment
+// - Delete: allows VA to update status and clear metrics when target deployment is removed
 func DeploymentPredicate() predicate.Predicate {
 	return predicate.Funcs{
 		CreateFunc: func(e event.CreateEvent) bool {
-			// Controller-runtime guarantees e.Object is a Deployment since we watch that type
+			// Allow all Deployment create events to trigger reconciliation
 			return true
 		},
 		UpdateFunc: func(e event.UpdateEvent) bool {
 			return false
 		},
 		DeleteFunc: func(e event.DeleteEvent) bool {
-			return false
+			// Allow all Deployment delete events to trigger reconciliation
+			// so VAs can update their status when target deployment is removed
+			return true
 		},
 		GenericFunc: func(e event.GenericEvent) bool {
 			return false
