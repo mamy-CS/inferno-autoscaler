@@ -10,6 +10,9 @@ metadata:
   labels:
     {{- include "workload-variant-autoscaler.labels" . | nindent 4 }}
     inference.optimization/acceleratorName: {{ .Values.va.accelerator }}
+    {{- if .Values.wva.controllerInstance }}
+    wva.llmd.ai/controller-instance: {{ .Values.wva.controllerInstance | quote }}
+    {{- end }}
 # This is essentially static input to the optimizer
 spec:
   # ScaleTargetRef references the target resource to scale (similar to HPA)

@@ -370,7 +370,10 @@ func (r *VariantAutoscalingReconciler) handleDeploymentEvent(ctx context.Context
 // SetupWithManager sets up the controller with the Manager.
 func (r *VariantAutoscalingReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&llmdVariantAutoscalingV1alpha1.VariantAutoscaling{}).
+		For(&llmdVariantAutoscalingV1alpha1.VariantAutoscaling{},
+			// Filter VAs by controller-instance label for multi-controller isolation
+			builder.WithPredicates(VariantAutoscalingPredicate()),
+		).
 		// Watch the specific ConfigMap to trigger global reconcile and update shared config
 		Watches(
 			&corev1.ConfigMap{},
