@@ -14,7 +14,7 @@ import (
 func ConfigMapPredicate() predicate.Predicate {
 	return predicate.NewPredicateFuncs(func(obj client.Object) bool {
 		name := obj.GetName()
-		return (name == getConfigMapName() || name == getSaturationConfigMapName()) && obj.GetNamespace() == configMapNamespace
+		return (name == getConfigMapName() || name == getSaturationConfigMapName() || name == getScaleToZeroConfigMapName()) && obj.GetNamespace() == configMapNamespace
 	})
 }
 
