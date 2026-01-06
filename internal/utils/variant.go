@@ -24,7 +24,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	wvav1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/constants"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/metrics"
 )
 
 // VariantFilter is a function that determines if a VA should be included.
@@ -162,11 +164,26 @@ func filterVariantsByDeployment(ctx context.Context, client client.Client, filte
 }
 
 // readyVariantAutoscalings retrieves all VariantAutoscaling resources that are ready for optimization
-// using the informer cache.
-func readyVariantAutoscalings(ctx context.Context, client client.Client) ([]wvav1alpha1.VariantAutoscaling, error) {
-	// List all VAs using the informer cache
+// using the informer cache. When CONTROLLER_INSTANCE is configured, only VAs with matching
+// controller-instance labels are returned to enable multi-controller isolation.
+func readyVariantAutoscalings(ctx context.Context, k8sClient client.Client) ([]wvav1alpha1.VariantAutoscaling, error) {
+	logger := ctrl.LoggerFrom(ctx)
+
+	// Build list options based on controller instance configuration
+	listOpts := []client.ListOption{}
+	controllerInstance := metrics.GetControllerInstance()
+	if controllerInstance != "" {
+		// Filter by controller-instance label for multi-controller isolation
+		listOpts = append(listOpts, client.MatchingLabels{
+			constants.ControllerInstanceLabelKey: controllerInstance,
+		})
+		logger.V(logging.DEBUG).Info("Filtering VAs by controller instance",
+			"controllerInstance", controllerInstance)
+	}
+
+	// List VAs using the informer cache with optional label selector
 	var vaList wvav1alpha1.VariantAutoscalingList
-	if err := client.List(ctx, &vaList); err != nil {
+	if err := k8sClient.List(ctx, &vaList, listOpts...); err != nil {
 		return nil, err
 	}
 
@@ -180,7 +197,9 @@ func readyVariantAutoscalings(ctx context.Context, client client.Client) ([]wvav
 		readyVAs = append(readyVAs, va)
 	}
 
-	ctrl.LoggerFrom(ctx).V(logging.DEBUG).Info("Found VariantAutoscaling resources ready for optimization", "count", len(readyVAs))
+	logger.V(logging.DEBUG).Info("Found VariantAutoscaling resources ready for optimization",
+		"count", len(readyVAs),
+		"controllerInstance", controllerInstance)
 	return readyVAs, nil
 }
 

@@ -86,3 +86,11 @@ const (
 	LabelAcceleratorType    = "accelerator_type"
 	LabelControllerInstance = "controller_instance"
 )
+
+// Kubernetes Label Keys
+// Label keys used on Kubernetes resources for filtering and identification.
+const (
+	// ControllerInstanceLabelKey is the label key used to associate VAs with specific controller instances.
+	// Used for multi-controller isolation where each controller only manages VAs with matching labels.
+	ControllerInstanceLabelKey = "wva.llmd.ai/controller-instance"
+)

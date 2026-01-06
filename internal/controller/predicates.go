@@ -1,14 +1,12 @@
 package controller
 
 import (
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/constants"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/metrics"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 )
-
-// controllerInstanceLabelKey is the label key used to associate VAs with specific controller instances
-const controllerInstanceLabelKey = "wva.llmd.ai/controller-instance"
 
 // ConfigMapPredicate returns a predicate that filters ConfigMap events to only the target ConfigMaps.
 // It matches the enqueue function logic - allows either configmap name if namespace matches.
@@ -137,7 +135,7 @@ func VariantAutoscalingPredicate() predicate.Predicate {
 			return false
 		}
 
-		vaInstance, hasLabel := labels[controllerInstanceLabelKey]
+		vaInstance, hasLabel := labels[constants.ControllerInstanceLabelKey]
 		return hasLabel && vaInstance == controllerInstance
 	})
 }
