@@ -697,11 +697,12 @@ func (e *Engine) applySaturationDecisions(
 
 		// 1. Update Cache
 		common.DecisionCache.Set(va.Name, va.Namespace, interfaces.VariantDecision{
-			VariantName:     vaName,
-			Namespace:       va.Namespace,
-			TargetReplicas:  targetReplicas,
-			AcceleratorName: acceleratorName,
-			LastRunTime:     metav1.Now(),
+			VariantName:       vaName,
+			Namespace:         va.Namespace,
+			TargetReplicas:    targetReplicas,
+			AcceleratorName:   acceleratorName,
+			LastRunTime:       metav1.Now(),
+			CurrentAllocation: &updateVa.Status.CurrentAlloc,
 			// Pass other fields if needed, but these are crucial for Status
 		})
 

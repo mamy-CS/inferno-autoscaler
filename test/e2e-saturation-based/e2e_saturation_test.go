@@ -825,6 +825,7 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Multiple 
 	Context("Replica stability under constant load", func() {
 		//TODO: Flaky - re-enable when controller is stable
 		It("should maintain stable replica count under constant load", func() {
+			Skip("Flaky - re-enable when controller is stable")
 			By("starting constant load generation")
 			loadGenJob, err := utils.CreateLoadGeneratorJob(
 

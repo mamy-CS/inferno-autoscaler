@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strconv"
 
 	promoperator "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
@@ -28,7 +27,6 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/tools/record"
@@ -172,18 +170,6 @@ func (r *VariantAutoscalingReconciler) Reconcile(ctx context.Context, req ctrl.R
 		fmt.Sprintf("Scale target Deployment found: name=%s, namespace=%s", scaleTargetName, va.Namespace),
 	)
 
-	// Collect Metrics for this VA to populate Status.CurrentAlloc
-	// We reuse CollectMetricsForSaturationMode which expects a map and list
-	vaMap := make(map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling)
-	if err := CollectMetricsForSaturationMode(ctx, []llmdVariantAutoscalingV1alpha1.VariantAutoscaling{va}, vaMap, r.Client, r.MetricsCollector); err != nil {
-		logger.Error(err, "Failed to collect metrics", "variant", va.Name)
-		// We continue to ensure decisions are applied even if metrics fail (though decision might depend on metrics)
-	}
-	// If the VA was updated during collection (it fetches fresh copy), update our local reference
-	if updatedVA, ok := vaMap[va.Name]; ok {
-		va = *updatedVA
-	}
-
 	// Process Engine Decisions from Shared Cache
 	// This mechanism allows the Engine to trigger updates without touching the API server directly.
 	if decision, ok := common.DecisionCache.Get(va.Name, va.Namespace); ok {
@@ -194,6 +180,13 @@ func (r *VariantAutoscalingReconciler) Reconcile(ctx context.Context, req ctrl.R
 		va.Status.DesiredOptimizedAlloc.NumReplicas = numReplicas
 		va.Status.DesiredOptimizedAlloc.Accelerator = accelerator
 		va.Status.DesiredOptimizedAlloc.LastRunTime = lastRunTime
+
+		// Update CurrentAlloc if provided by the Engine (avoids duplicate collection)
+		if decision.CurrentAllocation != nil {
+			va.Status.CurrentAlloc = *decision.CurrentAllocation
+		}
+	} else {
+		logger.V(logging.DEBUG).Info("No decision found in cache for VA", "variant", va.Name)
 	}
 
 	// Update Status if we have changes (Conditions or OptimizedAlloc)
@@ -207,126 +200,6 @@ func (r *VariantAutoscalingReconciler) Reconcile(ctx context.Context, req ctrl.R
 	// END: Per VA logic
 
 	return ctrl.Result{}, nil
-}
-
-// CollectMetricsForSaturationMode collects metrics and populates CurrentAlloc for VAs in saturation-only mode.
-func CollectMetricsForSaturationMode(
-	ctx context.Context,
-	modelVAs []llmdVariantAutoscalingV1alpha1.VariantAutoscaling,
-	vaMap map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling,
-	k8sClient client.Client,
-	metricsCollector interfaces.MetricsCollector,
-) error {
-
-	logger := ctrl.LoggerFrom(ctx)
-
-	for i := range modelVAs {
-		va := &modelVAs[i]
-		modelName := va.Spec.ModelID
-
-		// Get accelerator name from VA labels - required field
-		accName := va.Labels["inference.optimization/acceleratorName"]
-		if accName == "" {
-			logger.V(logging.DEBUG).Info("Missing accelerator name label for VA, skipping",
-				"variant", va.Name)
-			continue
-		}
-
-		// Extract accelerator cost from VA.Spec.VariantCost - required field
-		if va.Spec.VariantCost == "" {
-			logger.V(logging.DEBUG).Info("Missing variant cost for VA, skipping",
-				"variant", va.Name)
-			continue
-		}
-		cost, err := strconv.ParseFloat(va.Spec.VariantCost, 64)
-		if err != nil {
-			logger.V(logging.DEBUG).Info("Invalid variant cost for VA, skipping",
-				"variant", va.Name,
-				"cost", va.Spec.VariantCost,
-				"error", err)
-			continue
-		}
-
-		// Get Deployment using ScaleTargetRef
-		var deploy appsv1.Deployment
-		err = utils.GetDeploymentWithBackoff(ctx, k8sClient, va.GetScaleTargetName(), va.Namespace, &deploy)
-		if err != nil {
-			logger.V(logging.DEBUG).Info("Could not get deployment for VA, skipping",
-				"variant", va.Name,
-				"deployment", va.GetScaleTargetName(),
-				"error", err)
-			continue // Skip VAs without deployments
-		}
-
-		// Fetch latest VA from API server (use VA name, not deployment name - they are now decoupled)
-		var updateVA llmdVariantAutoscalingV1alpha1.VariantAutoscaling
-		err = utils.GetVariantAutoscalingWithBackoff(ctx, k8sClient, va.Name, va.Namespace, &updateVA)
-		if err != nil {
-			logger.V(logging.DEBUG).Info("Unable to get VA",
-				"variant", va.Name,
-				"error", err)
-			continue
-		}
-
-		// Validate metrics availability before collecting
-		metricsValidation := metricsCollector.ValidateMetricsAvailability(ctx, modelName, deploy.Namespace)
-
-		// Update MetricsAvailable condition based on validation result
-		if metricsValidation.Available {
-			llmdVariantAutoscalingV1alpha1.SetCondition(&updateVA,
-				llmdVariantAutoscalingV1alpha1.TypeMetricsAvailable,
-				metav1.ConditionTrue,
-				metricsValidation.Reason,
-				metricsValidation.Message)
-		} else {
-			// Metrics unavailable - set condition and skip
-			llmdVariantAutoscalingV1alpha1.SetCondition(&updateVA,
-				llmdVariantAutoscalingV1alpha1.TypeMetricsAvailable,
-				metav1.ConditionFalse,
-				metricsValidation.Reason,
-				metricsValidation.Message)
-
-			logger.V(logging.DEBUG).Info("Metrics unavailable for VA, skipping",
-				"variant", updateVA.Name,
-				"reason", metricsValidation.Reason,
-				"troubleshooting", metricsValidation.Message)
-			continue
-		}
-
-		// Collect raw metrics from collector
-		metrics, err := metricsCollector.AddMetricsToOptStatus(ctx, &updateVA, deploy, cost)
-		if err != nil {
-			logger.V(logging.DEBUG).Info("Unable to fetch metrics for VA",
-				"variant", updateVA.Name,
-				"error", err)
-			continue
-		}
-
-		// Assemble Allocation struct from raw metrics
-		currentAllocation, err := BuildAllocationFromMetrics(metrics, &updateVA, deploy, cost)
-		if err != nil {
-			logger.V(logging.DEBUG).Info("Unable to build allocation for VA",
-				"variant", updateVA.Name,
-				"error", err)
-			continue
-		}
-
-		// Update the VA in vaMap with populated CurrentAlloc
-		updateVA.Status.CurrentAlloc = currentAllocation
-
-		// Update vaMap with the VA that has CurrentAlloc populated
-		vaMap[updateVA.Name] = &updateVA
-
-		logger.V(logging.DEBUG).Info("Metrics collected for VA",
-			"variant", updateVA.Name,
-			"replicas", currentAllocation.NumReplicas,
-			"accelerator", currentAllocation.Accelerator,
-			"ttft", currentAllocation.TTFTAverage,
-			"itl", currentAllocation.ITLAverage,
-			"cost", currentAllocation.VariantCost)
-	}
-
-	return nil
 }
 
 // handleDeploymentEvent maps Deployment events to VA reconcile requests.
