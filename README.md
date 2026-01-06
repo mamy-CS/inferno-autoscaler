@@ -125,6 +125,9 @@ For detailed architecture information, see the [design documentation](docs/desig
 <!-- 
 - Create the VariantAutoscaling CR **only after** your deployment is warmed up to avoid immediate scale-down
 -->
+- WVA handles the creation order gracefully - you can create the VA before or after the deployment
+- If a deployment is deleted, the VA status is immediately updated to reflect the missing deployment
+- When the deployment is recreated, the VA automatically resumes operation
 - Configure HPA stabilization window (recommend 120s+) for gradual scaling behavior
 - WVA updates the VA status with current and desired allocations every reconciliation cycle
 

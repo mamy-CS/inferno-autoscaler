@@ -11,6 +11,89 @@ This guide explains how to configure Workload-Variant-Autoscaler for your worklo
 > 
 > Please read the [Architecture Limitations documentation](../design/architecture-limitations.md) to understand how these models may behave differently and what additional considerations are needed.
 
+## Deployment Lifecycle Management
+
+### Creating VariantAutoscaling Resources
+
+WVA automatically handles the relationship between VariantAutoscaling (VA) resources and their target Deployments:
+
+**Recommended Order:**
+```bash
+# 1. Create and verify the deployment is ready
+kubectl apply -f deployment.yaml
+kubectl wait --for=condition=available deployment/llama-8b --timeout=300s
+
+# 2. Create the VariantAutoscaling resource
+kubectl apply -f variantautoscaling.yaml
+```
+
+**Race Condition Protection:**
+
+WVA handles the race condition where a VA is created before its target deployment exists. If you create a VA before its deployment:
+
+1. VA is created with status indicating the deployment is not found
+2. When the deployment is created, WVA automatically detects it
+3. VA immediately begins monitoring and autoscaling (no wait for periodic reconciliation)
+
+```yaml
+# VA created first - will automatically detect deployment when it appears
+apiVersion: llmd.ai/v1alpha1
+kind: VariantAutoscaling
+metadata:
+  name: llama-8b-autoscaler
+spec:
+  scaleTargetRef:
+    name: llama-8b  # Deployment doesn't exist yet
+  # ... other config
+```
+
+### Deployment Deletion Handling
+
+When a target deployment is deleted, WVA immediately:
+
+1. **Updates VA Status**: Marks the VA as not ready with reason `DeploymentNotFound`
+2. **Clears Metrics**: Removes stale metrics to prevent incorrect autoscaling decisions
+3. **Maintains VA Resource**: The VA itself is not deleted and will resume operation when deployment is recreated
+
+**Example Status After Deployment Deletion:**
+
+```yaml
+status:
+  conditions:
+  - type: Ready
+    status: "False"
+    reason: "DeploymentNotFound"
+    message: "Target deployment 'llama-8b' no longer exists"
+  currentAllocation:
+    numReplicas: 0  # Cleared to reflect no deployment
+```
+
+**Recovery Process:**
+
+When the deployment is recreated, WVA automatically:
+1. Detects the new deployment immediately (via Create event)
+2. Updates VA status to Ready
+3. Resumes monitoring and autoscaling
+
+No manual intervention required!
+
+### Best Practices
+
+1. **Always specify scaleTargetRef explicitly** when the deployment name differs from the model ID:
+   ```yaml
+   spec:
+     scaleTargetRef:
+       name: my-custom-deployment-name
+     modelId: "meta-llama/Llama-3.1-8B"
+   ```
+
+2. **Monitor VA status** to detect deployment issues:
+   ```bash
+   kubectl get va llama-8b-autoscaler -o jsonpath='{.status.conditions[?(@.type=="Ready")]}'
+   ```
+
+3. **Use consistent naming** - naming your deployment and VA with related names helps with operational clarity.
+
 ## VariantAutoscaling Resource
 
 The `VariantAutoscaling` CR is the primary configuration interface for WVA.
