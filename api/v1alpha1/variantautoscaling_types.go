@@ -221,6 +221,11 @@ const (
 	ReasonInvalidConfiguration = "InvalidConfiguration"
 	// ReasonSkippedProcessing indicates VA was skipped during processing
 	ReasonSkippedProcessing = "SkippedProcessing"
+
+	// ReasonTargetFound indicates the scale target was successfully resolved
+	ReasonTargetFound = "TargetFound"
+	// ReasonTargetNotFound indicates the scale target could not be found
+	ReasonTargetNotFound = "TargetNotFound"
 )
 
 // GetScaleTargetAPI returns the API of the scale target resource.
