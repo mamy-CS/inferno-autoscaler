@@ -85,7 +85,7 @@ test: manifests generate fmt vet setup-envtest ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
 # Creates a multi-node Kind cluster
-# Adds emulated GPU labels and capacities per node 
+# Adds emulated GPU labels and capacities per node
 .PHONY: create-kind-cluster
 create-kind-cluster:
 	export KIND=$(KIND) KUBECTL=$(KUBECTL) && \
@@ -152,6 +152,7 @@ test-e2e: manifests generate fmt vet ## Run the e2e tests. Expected an isolated 
 	$(eval FOCUS_ARGS := $(if $(FOCUS),-ginkgo.focus="$(FOCUS)",-ginkgo.focus="Saturation Mode"))
 	$(eval SKIP_ARGS := $(if $(SKIP),-ginkgo.skip="$(SKIP)",))
 	export KUBECONFIG=$(KUBECONFIG) K8S_EXPECTED_VERSION=$(K8S_VERSION) && go test ./test/e2e-saturation-based/ -timeout 30m -v -ginkgo.v $(FOCUS_ARGS) $(SKIP_ARGS)
+	export COLLECTOR_V2=1 KUBECONFIG=$(KUBECONFIG) K8S_EXPECTED_VERSION=$(K8S_VERSION) && go test ./test/e2e-saturation-based/ -timeout 30m -v -ginkgo.v $(FOCUS_ARGS) $(SKIP_ARGS)
 
 # E2E tests on OpenShift cluster
 # Supports KUBECONFIG or in-cluster authentication (for self-hosted runners).
@@ -210,7 +211,7 @@ docker-push: ## Push docker image with the manager.
 # - have enabled BuildKit. More info: https://docs.docker.com/develop/develop-images/build_enhancements/
 # - be able to push the image to your registry (i.e. if you do not set a valid value via IMG=<myregistry/image:<tag>> then the export will fail)
 # To adequately provide solutions that are compatible with multiple platforms, you should consider using this option.
-PLATFORMS ?= linux/arm64,linux/amd64 
+PLATFORMS ?= linux/arm64,linux/amd64
 BUILDER_NAME ?= workload-variant-autoscaler-builder
 
 .PHONY: docker-buildx

@@ -19,7 +19,9 @@ package saturation
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -32,8 +34,10 @@ import (
 
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
 	collector "github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector"
+	collectorv2 "github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/v2"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/config"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/common"
+	saturationmetrics "github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/saturation/metrics"
 	interfaces "github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
 	utils "github.com/llm-d-incubation/workload-variant-autoscaler/internal/utils"
@@ -44,6 +48,38 @@ var _ = Describe("Saturation Engine", func() {
 
 	var getNamespace = func() string {
 		return "workload-variant-autoscaler-system"
+	}
+
+	// CreateServiceClassConfigMap creates a service class ConfigMap for testing
+	var CreateServiceClassConfigMap = func(controllerNamespace string, models ...string) *v1.ConfigMap {
+		data := map[string]string{}
+
+		// Build premium.yaml with all models
+		premiumModels := ""
+		freemiumModels := ""
+
+		for _, model := range models {
+			premiumModels += fmt.Sprintf("  - model: %s\n    slo-tpot: 24\n    slo-ttft: 500\n", model)
+			freemiumModels += fmt.Sprintf("  - model: %s\n    slo-tpot: 200\n    slo-ttft: 2000\n", model)
+		}
+
+		data["premium.yaml"] = fmt.Sprintf(`name: Premium
+priority: 1
+data:
+%s`, premiumModels)
+
+		data["freemium.yaml"] = fmt.Sprintf(`name: Freemium
+priority: 10
+data:
+%s`, freemiumModels)
+
+		return &v1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "service-classes-config",
+				Namespace: controllerNamespace,
+			},
+			Data: data,
+		}
 	}
 
 	Context("When validating configurations", func() {
@@ -214,37 +250,6 @@ var _ = Describe("Saturation Engine", func() {
 		const totalVAs = 3
 		const configMapName = "workload-variant-autoscaler-variantautoscaling-config"
 		var configMapNamespace = getNamespace()
-
-		var CreateServiceClassConfigMap = func(controllerNamespace string, models ...string) *v1.ConfigMap {
-			data := map[string]string{}
-
-			// Build premium.yaml with all models
-			premiumModels := ""
-			freemiumModels := ""
-
-			for _, model := range models {
-				premiumModels += fmt.Sprintf("  - model: %s\n    slo-tpot: 24\n    slo-ttft: 500\n", model)
-				freemiumModels += fmt.Sprintf("  - model: %s\n    slo-tpot: 200\n    slo-ttft: 2000\n", model)
-			}
-
-			data["premium.yaml"] = fmt.Sprintf(`name: Premium
-priority: 1
-data:
-%s`, premiumModels)
-
-			data["freemium.yaml"] = fmt.Sprintf(`name: Freemium
-priority: 10
-data:
-%s`, freemiumModels)
-
-			return &v1.ConfigMap{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "service-classes-config",
-					Namespace: controllerNamespace,
-				},
-				Data: data,
-			}
-		}
 
 		BeforeEach(func() {
 			logging.NewTestLogger()
@@ -475,6 +480,358 @@ data:
 			Expect(decisionMap["variant-a"].Action).To(Equal(interfaces.ActionNoChange))
 			Expect(decisionMap["variant-b"].Action).To(Equal(interfaces.ActionScaleUp))
 			Expect(decisionMap["variant-c"].Action).To(Equal(interfaces.ActionNoChange))
+		})
+	})
+
+	Context("Collector V2 Integration", func() {
+		BeforeEach(func() {
+			logging.NewTestLogger()
+		})
+
+		It("should return false when UseCollectorV2 is called without env variable set", func() {
+			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, nil)
+			Expect(engine.UseCollectorV2()).To(BeFalse())
+		})
+
+		It("should return false when UseCollectorV2 is called with env variable but no collector set", func() {
+			os.Setenv("COLLECTOR_V2", "true")
+			defer os.Unsetenv("COLLECTOR_V2")
+
+			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, nil)
+			Expect(engine.UseCollectorV2()).To(BeFalse())
+		})
+
+		It("should return true when UseCollectorV2 is called with env variable and collector set", func() {
+			os.Setenv("COLLECTOR_V2", "true")
+			defer os.Unsetenv("COLLECTOR_V2")
+
+			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, nil)
+
+			// Create a mock v2 collector using testutils.MockPromAPI
+			mockAPI := &testutils.MockPromAPI{
+				QueryResults: map[string]model.Value{},
+			}
+			config := collectorv2.DefaultPrometheusSourceConfig()
+			source := collectorv2.NewPrometheusSource(mockAPI, config)
+			collectorv2.RegisterStandardQueries(source)
+			v2Collector := saturationmetrics.NewReplicaMetricsCollector(source, k8sClient)
+
+			engine.SetReplicaMetricsCollectorV2(v2Collector)
+			Expect(engine.UseCollectorV2()).To(BeTrue())
+		})
+
+		It("should accept SetReplicaMetricsCollectorV2 and store the collector", func() {
+			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, nil)
+
+			mockAPI := &testutils.MockPromAPI{
+				QueryResults: map[string]model.Value{},
+			}
+			config := collectorv2.DefaultPrometheusSourceConfig()
+			source := collectorv2.NewPrometheusSource(mockAPI, config)
+			collectorv2.RegisterStandardQueries(source)
+			v2Collector := saturationmetrics.NewReplicaMetricsCollector(source, k8sClient)
+
+			engine.SetReplicaMetricsCollectorV2(v2Collector)
+			Expect(engine.ReplicaMetricsCollectorV2).ToNot(BeNil())
+			Expect(engine.ReplicaMetricsCollectorV2).To(Equal(v2Collector))
+		})
+
+		It("should use custom staleness threshold when creating v2 collector", func() {
+			mockAPI := &testutils.MockPromAPI{
+				QueryResults: map[string]model.Value{},
+			}
+			config := collectorv2.DefaultPrometheusSourceConfig()
+			source := collectorv2.NewPrometheusSource(mockAPI, config)
+			collectorv2.RegisterStandardQueries(source)
+			customThreshold := 5 * time.Minute
+			v2Collector := saturationmetrics.NewReplicaMetricsCollectorWithThreshold(source, k8sClient, customThreshold)
+
+			Expect(v2Collector).ToNot(BeNil())
+		})
+
+		It("should handle COLLECTOR_V2 env variable case insensitively", func() {
+			testCases := []struct {
+				envValue string
+				expected bool
+			}{
+				{"true", true},
+				{"TRUE", true},
+				{"True", true},
+				{"false", false},
+				{"FALSE", false},
+				{"", false},
+				{"invalid", false},
+			}
+
+			for _, tc := range testCases {
+				os.Setenv("COLLECTOR_V2", tc.envValue)
+
+				engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, nil)
+				mockAPI := &testutils.MockPromAPI{
+					QueryResults: map[string]model.Value{},
+				}
+				config := collectorv2.DefaultPrometheusSourceConfig()
+				source := collectorv2.NewPrometheusSource(mockAPI, config)
+				collectorv2.RegisterStandardQueries(source)
+				v2Collector := saturationmetrics.NewReplicaMetricsCollector(source, k8sClient)
+				engine.SetReplicaMetricsCollectorV2(v2Collector)
+
+				result := engine.UseCollectorV2()
+				Expect(result).To(Equal(tc.expected), fmt.Sprintf("Expected %v for env value '%s'", tc.expected, tc.envValue))
+
+				os.Unsetenv("COLLECTOR_V2")
+			}
+		})
+	})
+
+	Context("Collector V2 Optimization Tests", func() {
+		const totalVAs = 3
+		const configMapName = "workload-variant-autoscaler-variantautoscaling-config"
+		var configMapNamespace = getNamespace()
+
+		BeforeEach(func() {
+			logging.NewTestLogger()
+
+			ns := &v1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: configMapNamespace,
+				},
+			}
+			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, ns))).NotTo(HaveOccurred())
+
+			By("creating the required configmaps")
+			// Use custom configmap creation function
+			var modelNames []string
+			for i := range totalVAs {
+				modelNames = append(modelNames, fmt.Sprintf("v2-model-%d-model-%d", i, i))
+			}
+			configMap := CreateServiceClassConfigMap(ns.Name, modelNames...)
+			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
+
+			configMap = testutils.CreateAcceleratorUnitCostConfigMap(ns.Name)
+			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
+
+			configMap = testutils.CreateVariantAutoscalingConfigMap(configMapName, ns.Name)
+			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
+
+			By("Creating VariantAutoscaling resources and Deployments for v2 collector tests")
+			for i := range totalVAs {
+				modelID := fmt.Sprintf("v2-model-%d-model-%d", i, i)
+				name := fmt.Sprintf("v2-test-resource-%d", i)
+
+				d := &appsv1.Deployment{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      name,
+						Namespace: "default",
+					},
+					Spec: appsv1.DeploymentSpec{
+						Replicas: utils.Ptr(int32(1)),
+						Selector: &metav1.LabelSelector{
+							MatchLabels: map[string]string{"app": name},
+						},
+						Template: v1.PodTemplateSpec{
+							ObjectMeta: metav1.ObjectMeta{
+								Labels: map[string]string{"app": name},
+							},
+							Spec: v1.PodSpec{
+								Containers: []v1.Container{
+									{
+										Name:  "test-container",
+										Image: "quay.io/infernoautoscaler/vllme:0.2.1-multi-arch",
+										Ports: []v1.ContainerPort{{ContainerPort: 80}},
+									},
+								},
+							},
+						},
+					},
+				}
+				Expect(k8sClient.Create(ctx, d)).To(Succeed())
+
+				r := &llmdVariantAutoscalingV1alpha1.VariantAutoscaling{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      name,
+						Namespace: "default",
+						Labels: map[string]string{
+							"inference.optimization/acceleratorName": "A100",
+						},
+					},
+					Spec: llmdVariantAutoscalingV1alpha1.VariantAutoscalingSpec{
+						ScaleTargetRef: autoscalingv1.CrossVersionObjectReference{
+							Kind: "Deployment",
+							Name: name,
+						},
+						ModelID: modelID,
+						ModelProfile: llmdVariantAutoscalingV1alpha1.ModelProfile{
+							Accelerators: []llmdVariantAutoscalingV1alpha1.AcceleratorProfile{
+								{
+									Acc:          "A100",
+									AccCount:     1,
+									MaxBatchSize: 4,
+								},
+							},
+						},
+					},
+				}
+				Expect(k8sClient.Create(ctx, r)).To(Succeed())
+			}
+		})
+
+		AfterEach(func() {
+			By("Deleting the configmap resources")
+			configMap := &v1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "service-classes-config",
+					Namespace: configMapNamespace,
+				},
+			}
+			err := k8sClient.Delete(ctx, configMap)
+			Expect(client.IgnoreNotFound(err)).NotTo(HaveOccurred())
+
+			configMap = &v1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "accelerator-unit-costs",
+					Namespace: configMapNamespace,
+				},
+			}
+			err = k8sClient.Delete(ctx, configMap)
+			Expect(client.IgnoreNotFound(err)).NotTo(HaveOccurred())
+
+			configMap = &v1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      configMapName,
+					Namespace: configMapNamespace,
+				},
+			}
+			err = k8sClient.Delete(ctx, configMap)
+			Expect(client.IgnoreNotFound(err)).NotTo(HaveOccurred())
+
+			var variantAutoscalingList llmdVariantAutoscalingV1alpha1.VariantAutoscalingList
+			err = k8sClient.List(ctx, &variantAutoscalingList)
+			Expect(err).NotTo(HaveOccurred(), "Failed to list VariantAutoscaling resources")
+
+			var deploymentList appsv1.DeploymentList
+			err = k8sClient.List(ctx, &deploymentList, client.InNamespace("default"))
+			Expect(err).NotTo(HaveOccurred(), "Failed to list deployments")
+
+			// Clean up all deployments created by v2 tests
+			for i := range deploymentList.Items {
+				deployment := &deploymentList.Items[i]
+				if strings.HasPrefix(deployment.Spec.Template.Labels["app"], "v2-test-resource") {
+					err = k8sClient.Delete(ctx, deployment)
+					Expect(client.IgnoreNotFound(err)).NotTo(HaveOccurred(), "Failed to delete deployment")
+				}
+			}
+
+			// Clean up all VariantAutoscaling resources created by v2 tests
+			for i := range variantAutoscalingList.Items {
+				va := &variantAutoscalingList.Items[i]
+				if strings.HasPrefix(va.Name, "v2-test-resource") {
+					err = k8sClient.Delete(ctx, va)
+					Expect(client.IgnoreNotFound(err)).NotTo(HaveOccurred(), "Failed to delete VariantAutoscaling resource")
+				}
+			}
+
+			// Unset COLLECTOR_V2 environment variable
+			os.Unsetenv("COLLECTOR_V2")
+		})
+
+		It("should successfully run optimization with v2 collector", func() {
+			os.Setenv("COLLECTOR_V2", "true")
+
+			By("Setting up v2 collector with mock Prometheus API")
+			mockPromAPI := &testutils.MockPromAPI{
+				QueryResults: map[string]model.Value{
+					// Add default responses for common queries
+				},
+				QueryErrors: map[string]error{},
+			}
+
+			// Create v2 collector infrastructure
+			config := collectorv2.DefaultPrometheusSourceConfig()
+			source := collectorv2.NewPrometheusSource(mockPromAPI, config)
+			collectorv2.RegisterStandardQueries(source)
+			v2Collector := saturationmetrics.NewReplicaMetricsCollector(source, k8sClient)
+
+			// Initialize legacy MetricsCollector for non-saturation metrics
+			metricsCollector := collector.NewPrometheusCollector(mockPromAPI)
+			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, metricsCollector)
+			engine.SetReplicaMetricsCollectorV2(v2Collector)
+
+			// Verify v2 collector is active
+			Expect(engine.UseCollectorV2()).To(BeTrue())
+
+			// Populate global config
+			common.Config.UpdateSaturationConfig(map[string]interfaces.SaturationScalingConfig{
+				"default": {},
+			})
+
+			By("Performing optimization loop with v2 collector")
+			err := engine.optimize(ctx)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying optimization completed successfully")
+			var variantAutoscalingList llmdVariantAutoscalingV1alpha1.VariantAutoscalingList
+			err = k8sClient.List(ctx, &variantAutoscalingList)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify VAs were processed
+			v2VAs := 0
+			for _, va := range variantAutoscalingList.Items {
+				if strings.HasPrefix(va.Name, "v2-test-resource") && va.DeletionTimestamp.IsZero() {
+					v2VAs++
+				}
+			}
+			Expect(v2VAs).To(Equal(totalVAs), "Expected all v2 test VAs to be present")
+		})
+
+		It("should fall back to legacy collector when v2 is not configured", func() {
+			// Do NOT set COLLECTOR_V2 env variable
+
+			By("Setting up only legacy collector")
+			mockPromAPI := &testutils.MockPromAPI{
+				QueryResults: map[string]model.Value{},
+				QueryErrors:  map[string]error{},
+			}
+
+			metricsCollector := collector.NewPrometheusCollector(mockPromAPI)
+			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, metricsCollector)
+
+			// Verify v2 collector is NOT active
+			Expect(engine.UseCollectorV2()).To(BeFalse())
+
+			// Populate global config
+			common.Config.UpdateSaturationConfig(map[string]interfaces.SaturationScalingConfig{
+				"default": {},
+			})
+
+			By("Performing optimization loop with legacy collector")
+			err := engine.optimize(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should use v2 collector for saturation metrics when enabled", func() {
+			os.Setenv("COLLECTOR_V2", "true")
+
+			By("Creating engine with both collectors")
+			mockPromAPI := &testutils.MockPromAPI{
+				QueryResults: map[string]model.Value{},
+				QueryErrors:  map[string]error{},
+			}
+
+			config := collectorv2.DefaultPrometheusSourceConfig()
+			source := collectorv2.NewPrometheusSource(mockPromAPI, config)
+			collectorv2.RegisterStandardQueries(source)
+			v2Collector := saturationmetrics.NewReplicaMetricsCollector(source, k8sClient)
+
+			metricsCollector := collector.NewPrometheusCollector(mockPromAPI)
+			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, metricsCollector)
+			engine.SetReplicaMetricsCollectorV2(v2Collector)
+
+			Expect(engine.UseCollectorV2()).To(BeTrue())
+
+			By("Verifying v2 collector is properly configured")
+			Expect(engine.ReplicaMetricsCollectorV2).ToNot(BeNil())
+			Expect(engine.MetricsCollector).ToNot(BeNil())
 		})
 	})
 

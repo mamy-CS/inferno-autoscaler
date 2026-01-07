@@ -38,6 +38,7 @@ import (
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/prometheus"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/common"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/executor"
+	saturationmetrics "github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/saturation/metrics"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/saturation"
@@ -51,6 +52,10 @@ type Engine struct {
 
 	Recorder         record.EventRecorder
 	MetricsCollector interfaces.MetricsCollector
+
+	// ReplicaMetricsCollectorV2 is the v2 collector for replica metrics (optional).
+	// Set via SetReplicaMetricsCollectorV2 when COLLECTOR_V2 env is enabled.
+	ReplicaMetricsCollectorV2 *saturationmetrics.ReplicaMetricsCollector
 
 	// Saturation scaling config cache (thread-safe, updated on ConfigMap changes)
 }
@@ -73,6 +78,18 @@ func NewEngine(client client.Client, scheme *runtime.Scheme, recorder record.Eve
 	})
 
 	return &engine
+}
+
+// SetReplicaMetricsCollectorV2 sets the v2 replica metrics collector.
+// This should be called during engine initialization when COLLECTOR_V2 env is set.
+func (e *Engine) SetReplicaMetricsCollectorV2(collector *saturationmetrics.ReplicaMetricsCollector) {
+	e.ReplicaMetricsCollectorV2 = collector
+}
+
+// UseCollectorV2 returns true if the v2 collector should be used.
+// This checks the COLLECTOR_V2 environment variable and whether the v2 collector is configured.
+func (e *Engine) UseCollectorV2() bool {
+	return strings.EqualFold(os.Getenv("COLLECTOR_V2"), "true") && e.ReplicaMetricsCollectorV2 != nil
 }
 
 // StartOptimizeLoop starts the optimization loop for the saturation engine.
@@ -371,8 +388,18 @@ func (e *Engine) RunSaturationAnalysis(
 		variantCosts[deploy.Name] = cost
 	}
 
-	// Collect Saturation metrics using the configured collector
-	replicaMetrics, err := metricsCollector.CollectReplicaMetrics(ctx, modelID, namespace, deployments, variantAutoscalings, variantCosts)
+	// Collect Saturation metrics using v2 collector if enabled, otherwise use legacy collector
+	var replicaMetrics []interfaces.ReplicaMetrics
+	var err error
+
+	if e.UseCollectorV2() {
+		logger.V(logging.DEBUG).Info("Using v2 collector for replica metrics",
+			"modelID", modelID,
+			"namespace", namespace)
+		replicaMetrics, err = e.ReplicaMetricsCollectorV2.CollectReplicaMetrics(ctx, modelID, namespace, deployments, variantAutoscalings, variantCosts)
+	} else {
+		replicaMetrics, err = metricsCollector.CollectReplicaMetrics(ctx, modelID, namespace, deployments, variantAutoscalings, variantCosts)
+	}
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to collect Saturation metrics for model %s: %w", modelID, err)
 	}
