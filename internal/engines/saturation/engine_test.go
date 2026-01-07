@@ -494,16 +494,16 @@ data:
 		})
 
 		It("should return false when UseCollectorV2 is called with env variable but no collector set", func() {
-			os.Setenv("COLLECTOR_V2", "true")
-			defer os.Unsetenv("COLLECTOR_V2")
+			os.Setenv("COLLECTOR_V2", "true") // nolint:errcheck
+			defer os.Unsetenv("COLLECTOR_V2") // nolint:errcheck
 
 			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, nil)
 			Expect(engine.UseCollectorV2()).To(BeFalse())
 		})
 
 		It("should return true when UseCollectorV2 is called with env variable and collector set", func() {
-			os.Setenv("COLLECTOR_V2", "true")
-			defer os.Unsetenv("COLLECTOR_V2")
+			os.Setenv("COLLECTOR_V2", "true") // nolint:errcheck
+			defer os.Unsetenv("COLLECTOR_V2") // nolint:errcheck
 
 			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, nil)
 
@@ -564,7 +564,7 @@ data:
 			}
 
 			for _, tc := range testCases {
-				os.Setenv("COLLECTOR_V2", tc.envValue)
+				os.Setenv("COLLECTOR_V2", tc.envValue) // nolint:errcheck
 
 				engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, nil)
 				mockAPI := &testutils.MockPromAPI{
@@ -579,7 +579,7 @@ data:
 				result := engine.UseCollectorV2()
 				Expect(result).To(Equal(tc.expected), fmt.Sprintf("Expected %v for env value '%s'", tc.expected, tc.envValue))
 
-				os.Unsetenv("COLLECTOR_V2")
+				os.Unsetenv("COLLECTOR_V2") // nolint:errcheck
 			}
 		})
 	})
@@ -732,11 +732,11 @@ data:
 			}
 
 			// Unset COLLECTOR_V2 environment variable
-			os.Unsetenv("COLLECTOR_V2")
+			os.Unsetenv("COLLECTOR_V2") // nolint:errcheck
 		})
 
 		It("should successfully run optimization with v2 collector", func() {
-			os.Setenv("COLLECTOR_V2", "true")
+			os.Setenv("COLLECTOR_V2", "true") // nolint:errcheck
 
 			By("Setting up v2 collector with mock Prometheus API")
 			mockPromAPI := &testutils.MockPromAPI{
@@ -810,7 +810,7 @@ data:
 		})
 
 		It("should use v2 collector for saturation metrics when enabled", func() {
-			os.Setenv("COLLECTOR_V2", "true")
+			os.Setenv("COLLECTOR_V2", "true") // nolint:errcheck
 
 			By("Creating engine with both collectors")
 			mockPromAPI := &testutils.MockPromAPI{

@@ -248,16 +248,18 @@ var _ = Describe("PrometheusSource", func() {
 			source = NewPrometheusSource(mockAPI, DefaultPrometheusSourceConfig())
 			registry = source.QueryRegistry()
 
-			registry.Register(QueryTemplate{
+			err := registry.Register(QueryTemplate{
 				Name:     "query1",
 				Type:     QueryTypePromQL,
 				Template: `metric1`,
 			})
-			registry.Register(QueryTemplate{
+			Expect(err).ToNot(HaveOccurred())
+			err = registry.Register(QueryTemplate{
 				Name:     "query2",
 				Type:     QueryTypePromQL,
 				Template: `metric2`,
 			})
+			Expect(err).ToNot(HaveOccurred())
 		})
 
 		Context("when invalidating a specific query", func() {
