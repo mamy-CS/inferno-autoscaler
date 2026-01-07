@@ -167,6 +167,7 @@ func (r *VariantAutoscalingReconciler) Reconcile(ctx context.Context, req ctrl.R
 
 			if err := r.Status().Patch(ctx, &va, client.MergeFrom(originalVA)); err != nil {
 				logger.Error(err, "Failed to update VariantAutoscaling status")
+				return ctrl.Result{}, err
 			}
 
 			// Don't requeue - the deployment watch will trigger reconciliation
