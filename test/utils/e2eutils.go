@@ -496,8 +496,8 @@ func startPortForwarding(service *corev1.Service, namespace string, localPort, s
 func CreateLoadGeneratorJob(namespace, targetURL, modelName string, rate, maxSeconds, inputTokens, outputTokens int, k8sClient *kubernetes.Clientset, ctx context.Context) (*batchv1.Job, error) {
 
 	// Always use a standard python image and install guidellm at runtime
-	// using python:3.10 and installing cpu-only torch (~200MB) to be lightweight and fast
-	image := "python:3.10"
+	// using python:3.11 and installing cpu-only torch (~200MB) to be lightweight and fast
+	image := "registry.access.redhat.com/ubi9/python-311:9.7"
 
 	cmd := fmt.Sprintf("echo 'Starting installation...' && pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu && pip install --no-cache-dir guidellm && echo 'Installation complete, starting benchmark...' && guidellm benchmark --target %s --rate-type constant --rate %d --max-seconds %d --model %s --data prompt_tokens=%d,output_tokens=%d --output-path /tmp/benchmarks.json",
 		targetURL, rate, maxSeconds, modelName, inputTokens, outputTokens)
