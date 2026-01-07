@@ -223,7 +223,24 @@ oc get jobs -n llm-d-inference-scheduler-pr-<PR_NUMBER>-b
 The CI workflow handles cleanup as follows:
 - **Before tests**: All PR-specific namespaces are cleaned up to ensure a fresh start
 - **After successful tests**: Resources are cleaned up automatically
-- **After failed tests**: Resources are left in place for debugging
+- **After failed tests**: GPU workloads are automatically scaled down to free GPUs for other PRs, while all other resources (VariantAutoscaling, HPA, controller logs, events) are preserved for debugging
+
+#### Failure Handling: Smart Resource Management
+
+When E2E tests fail, the CI workflow automatically:
+1. **Scales down GPU workloads** (decode deployments) to 0 replicas
+2. **Preserves debugging resources**:
+   - VariantAutoscaling CRs and their status
+   - HPA configuration and events
+   - Controller pods and logs
+   - Gateway services
+   - Prometheus metrics (if still available)
+
+This approach ensures:
+- ✅ GPUs are immediately available for other PRs
+- ✅ Full debugging capability via VA status, HPA events, and controller logs
+- ✅ No manual intervention needed to free cluster resources
+- ✅ Failed test namespaces can be investigated without blocking others
 
 To manually trigger a run with cleanup disabled after success, use `SKIP_CLEANUP=true`.
 
