@@ -83,6 +83,8 @@ DEPLOY_HPA=${DEPLOY_HPA:-true}
 HPA_STABILIZATION_SECONDS=${HPA_STABILIZATION_SECONDS:-240}
 SKIP_CHECKS=${SKIP_CHECKS:-false}
 E2E_TESTS_ENABLED=${E2E_TESTS_ENABLED:-false}
+# vLLM max-num-seqs (max concurrent sequences per replica, lower = easier to saturate for testing)
+VLLM_MAX_NUM_SEQS=${VLLM_MAX_NUM_SEQS:-""}
 
 # Environment-related variables
 SCRIPT_DIR=$(cd $(dirname "${BASH_SOURCE[0]}") && pwd)
@@ -522,6 +524,12 @@ deploy_llm_d_infrastructure() {
                  -i "$LLM_D_MODELSERVICE_VALUES"
     else
       log_info "Skipping llm-d-inference-simulator deployment (DEPLOY_LLM_D_INFERENCE_SIM=false)"
+    fi
+
+    # Configure vLLM max-num-seqs if set (useful for e2e testing to force saturation)
+    if [ -n "$VLLM_MAX_NUM_SEQS" ]; then
+      log_info "Setting vLLM max-num-seqs to $VLLM_MAX_NUM_SEQS for decode containers"
+      yq eval ".decode.containers[0].args += [\"--max-num-seqs=$VLLM_MAX_NUM_SEQS\"]" -i "$LLM_D_MODELSERVICE_VALUES"
     fi
 
     # Deploy llm-d core components

@@ -469,6 +469,8 @@ jobs:
           WVA_NS: ${{ env.WVA_NAMESPACE }}
           # Controller instance label for multi-controller isolation in parallel e2e tests
           CONTROLLER_INSTANCE: ${{ env.WVA_NAMESPACE }}
+          # vLLM max-num-seqs for e2e testing (lower = easier to saturate)
+          VLLM_MAX_NUM_SEQS: ${{ env.MAX_NUM_SEQS }}
         run: |
           echo "Deploying WVA and llm-d infrastructure..."
           echo "  MODEL_ID: $MODEL_ID"
@@ -478,6 +480,7 @@ jobs:
           echo "  WVA_RELEASE_NAME: $WVA_RELEASE_NAME"
           echo "  WVA_IMAGE_TAG: $WVA_IMAGE_TAG"
           echo "  CONTROLLER_INSTANCE: $CONTROLLER_INSTANCE"
+          echo "  VLLM_MAX_NUM_SEQS: $VLLM_MAX_NUM_SEQS"
           echo "  HF token configuration: ✓"
           ./deploy/install.sh --model "$MODEL_ID" --accelerator "$ACCELERATOR_TYPE" --release-name "$WVA_RELEASE_NAME" --environment openshift
 
@@ -519,10 +522,13 @@ jobs:
           DEPLOY_PROMETHEUS_ADAPTER: "false"
           DEPLOY_VA: "false"
           DEPLOY_HPA: "false"
+          # vLLM max-num-seqs for e2e testing (lower = easier to saturate)
+          VLLM_MAX_NUM_SEQS: ${{ env.MAX_NUM_SEQS }}
         run: |
           echo "Deploying Model B infrastructure in $LLMD_NAMESPACE_B..."
           echo "  MODEL_ID: $MODEL_ID"
           echo "  ACCELERATOR_TYPE: $ACCELERATOR_TYPE"
+          echo "  VLLM_MAX_NUM_SEQS: $VLLM_MAX_NUM_SEQS"
 
           # Deploy llm-d infrastructure only (no WVA controller, no VA/HPA)
           ./deploy/install.sh --model "$MODEL_ID" --accelerator "$ACCELERATOR_TYPE" --environment openshift
@@ -699,47 +705,6 @@ jobs:
 
           echo ""
           echo "All gateways restarted successfully"
-
-      - name: Patch vLLM deployments for e2e testing
-        run: |
-          echo "Patching vLLM decode deployments to limit batch size for scaling test..."
-          echo "  MAX_NUM_SEQS: $MAX_NUM_SEQS"
-
-          # Function to patch a deployment with --max-num-seqs
-          patch_deployment() {
-            local deployment_name=$1
-            local namespace=$2
-            echo ""
-            echo "Patching deployment $deployment_name in $namespace..."
-
-            # Find the vllm container index
-            CONTAINER_INDEX="$(
-              kubectl get deployment "$deployment_name" -n "$namespace" \
-                -o jsonpath='{range .spec.template.spec.containers[*]}{.name}{"\n"}{end}' \
-              | awk '$1 == "vllm" {print NR-1; exit}'
-            )"
-            if [ -z "$CONTAINER_INDEX" ]; then
-              echo "  Container 'vllm' not found, using index 0"
-              CONTAINER_INDEX=0
-            fi
-            echo "  Using container index: $CONTAINER_INDEX"
-
-            # Add --max-num-seqs to force scaling under load
-            kubectl patch deployment "$deployment_name" -n "$namespace" --type=json -p="[
-              {\"op\": \"add\", \"path\": \"/spec/template/spec/containers/$CONTAINER_INDEX/args/-\", \"value\": \"--max-num-seqs=$MAX_NUM_SEQS\"}
-            ]"
-            echo "  Waiting for patched deployment to roll out..."
-            kubectl rollout status deployment/"$deployment_name" -n "$namespace" --timeout=300s
-          }
-
-          # Patch Model A1 deployment
-          patch_deployment "ms-inference-scheduling-llm-d-modelservice-decode" "$LLMD_NAMESPACE"
-
-          # Patch Model B deployment
-          patch_deployment "ms-inference-scheduling-llm-d-modelservice-decode" "$LLMD_NAMESPACE_B"
-
-          echo ""
-          echo "All vLLM deployments patched successfully"
 
       - name: Install Go dependencies
         run: go mod download
