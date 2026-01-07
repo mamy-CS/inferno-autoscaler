@@ -166,6 +166,8 @@ make test-e2e FOCUS="should scale up when saturation is detected"
 - 8GB+ RAM, 4+ CPU cores recommended
 - **No GPU hardware required** - uses emulation
 
+**Note:** For running multiple test suites in parallel, use the [multi-controller isolation feature](../user-guide/multi-controller-isolation.md) to prevent metric conflicts.
+
 #### Test Environment
 
 The test suite automatically creates:
@@ -195,6 +197,26 @@ a100Cost = 30.0  // A100: $30/hr
 ```
 
 See the [Saturation-Based E2E Tests README](../../test/e2e-saturation-based/README.md) for comprehensive documentation.
+
+#### Parallel Test Execution
+
+Run multiple E2E test suites simultaneously using controller instance isolation:
+
+```bash
+# Terminal 1: Run test suite A
+CONTROLLER_INSTANCE=test-a make test-e2e
+
+# Terminal 2: Run test suite B (in parallel)
+CONTROLLER_INSTANCE=test-b make test-e2e
+```
+
+Each test suite:
+- Deploys its own WVA controller with unique instance ID
+- Creates VAs labeled with matching `controller_instance`
+- HPA reads metrics filtered by `controller_instance` label
+- No interference between test suites
+
+See [Multi-Controller Isolation](../user-guide/multi-controller-isolation.md) for details.
 
 ### OpenShift E2E Tests
 

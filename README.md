@@ -62,6 +62,7 @@ See the [Installation Guide](docs/user-guide/installation.md) for detailed instr
 - [Installation Guide](docs/user-guide/installation.md)
 - [Configuration](docs/user-guide/configuration.md)
 - [CRD Reference](docs/user-guide/crd-reference.md)
+- [Multi-Controller Isolation](docs/user-guide/multi-controller-isolation.md)
 
 <!-- 
 

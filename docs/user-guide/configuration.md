@@ -351,6 +351,30 @@ More configuration examples in:
 - [config/samples/](../../config/samples/)
 - [Tutorials](../tutorials/)
 
+## Multi-Controller Environments
+
+When running multiple WVA controller instances in the same cluster (e.g., for parallel testing, multi-tenant setups, or canary deployments), use the **controller instance isolation** feature to prevent metric conflicts and ensure proper VA resource management.
+
+### Quick Example
+
+```yaml
+# Helm values for controller instance A
+wva:
+  controllerInstance: "instance-a"
+
+---
+# Helm values for controller instance B
+wva:
+  controllerInstance: "instance-b"
+```
+
+Each controller will:
+- Only manage VAs with matching `wva.llmd.ai/controller-instance` label
+- Emit metrics with `controller_instance` label
+- Have HPAs that filter metrics by `controller_instance`
+
+For complete documentation, see [Multi-Controller Isolation Guide](multi-controller-isolation.md).
+
 ## Troubleshooting Configuration
 
 ### Common Issues

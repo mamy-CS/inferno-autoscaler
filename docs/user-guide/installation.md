@@ -93,6 +93,13 @@ prometheus:
   enabled: true
   servicemonitor:
     enabled: true
+
+# Optional: Multi-controller isolation
+# Set a unique identifier for this controller instance
+# Useful for parallel testing or multi-tenant environments
+# See docs/user-guide/multi-controller-isolation.md
+wva:
+  controllerInstance: ""  # Leave empty for single controller
 ```
 
 ### ConfigMaps
