@@ -58,8 +58,8 @@ const (
 	numLoadWorkers     = 10    // Number of parallel load generation workers
 	requestsPerWorker  = 500   // Requests each worker sends
 	batchSize          = 50    // Concurrent requests per batch
-	curlTimeoutSeconds = 120   // Timeout for each curl request
-	maxTokens          = 150   // Max tokens for completion requests
+	curlTimeoutSeconds = 180   // Timeout for each curl request (increased for longer outputs)
+	maxTokens          = 400   // Max tokens for completion requests (increased to sustain GPU load)
 	batchSleepDuration = "0.1" // Sleep duration between batches to control rate
 )
 
