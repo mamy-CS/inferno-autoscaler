@@ -91,6 +91,22 @@ hpa:
   enabled: true
   maxReplicas: 10
   targetAverageValue: "1"
+  # HPA scaling behavior configuration
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 240
+      selectPolicy: Max
+      policies:
+        - type: Pods
+          value: 10
+          periodSeconds: 150
+    scaleDown:
+      stabilizationWindowSeconds: 240
+      selectPolicy: Max
+      policies:
+        - type: Pods
+          value: 10
+          periodSeconds: 150
 
 vllmService:
   enabled: true

@@ -80,6 +80,7 @@ DEPLOY_LLM_D=${DEPLOY_LLM_D:-true}
 DEPLOY_PROMETHEUS_ADAPTER=${DEPLOY_PROMETHEUS_ADAPTER:-true}
 DEPLOY_VA=${DEPLOY_VA:-true}
 DEPLOY_HPA=${DEPLOY_HPA:-true}
+HPA_STABILIZATION_SECONDS=${HPA_STABILIZATION_SECONDS:-240}
 SKIP_CHECKS=${SKIP_CHECKS:-false}
 E2E_TESTS_ENABLED=${E2E_TESTS_ENABLED:-false}
 
@@ -141,6 +142,7 @@ Environment Variables:
   DEPLOY_PROMETHEUS_ADAPTER    Deploy Prometheus Adapter (default: true)
   DEPLOY_VA                    Deploy VariantAutoscaling (default: true)
   DEPLOY_HPA                   Deploy HPA (default: true)
+  HPA_STABILIZATION_SECONDS    HPA stabilization window in seconds (default: 240)
   UNDEPLOY                     Undeploy mode (default: false)
   DELETE_NAMESPACES            Delete namespaces after undeploy (default: false)
   CONTROLLER_INSTANCE          Controller instance label for multi-controller isolation (optional)
@@ -423,6 +425,8 @@ deploy_wva_controller() {
         --set va.sloTpot=$SLO_TPOT \
         --set va.sloTtft=$SLO_TTFT \
         --set hpa.enabled=$DEPLOY_HPA \
+        --set hpa.behavior.scaleUp.stabilizationWindowSeconds=$HPA_STABILIZATION_SECONDS \
+        --set hpa.behavior.scaleDown.stabilizationWindowSeconds=$HPA_STABILIZATION_SECONDS \
         --set llmd.namespace=$LLMD_NS \
         --set wva.prometheus.baseURL=$PROMETHEUS_URL \
         --set wva.prometheus.monitoringNamespace=$MONITORING_NAMESPACE \

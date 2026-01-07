@@ -8,8 +8,27 @@ permissions:
   statuses: write  # For reporting status on fork PR commits
 
 # Cancel previous runs on the same PR to avoid resource conflicts
+# Only group by PR number for legitimate triggers (pull_request, workflow_dispatch, /ok-to-test, or /retest comments)
+# Regular comments get a unique group (run_id) so they don't cancel in-progress test runs
+#
+# Logic:
+# - Regular comments (not /ok-to-test or /retest): unique group prevents cancellation of real tests
+# - Valid triggers: group 'e2e-openshift-{pr_number}' (can cancel previous runs for same PR)
+# - Fallback chain for ID: pull_request.number -> issue.number -> run_id
+#
+# NOTE: Valid command list (/ok-to-test, /retest) must stay in sync with gate job validation (line ~125)
 concurrency:
-  group: e2e-openshift-${{ github.event.pull_request.number || github.event.issue.number || github.run_id }}
+  group: >-
+    ${{
+      github.event_name == 'issue_comment' &&
+      !contains(github.event.comment.body, '/ok-to-test') &&
+      !contains(github.event.comment.body, '/retest')
+      && format('comment-isolated-{0}', github.run_id)
+      || format('e2e-openshift-{0}',
+           github.event.pull_request.number
+           || github.event.issue.number
+           || github.run_id)
+    }}
   cancel-in-progress: true
 
 on:
@@ -93,20 +112,22 @@ jobs:
               return;
             }
 
-            // Handle issue_comment event (/ok-to-test)
+            // Handle issue_comment event (/ok-to-test or /retest)
             if (context.eventName === 'issue_comment') {
               const comment = context.payload.comment.body.trim();
               const issue = context.payload.issue;
 
-              // Only process /ok-to-test comments on PRs
+              // Only process /ok-to-test or /retest comments on PRs
               if (!issue.pull_request) {
                 console.log('Comment is not on a PR, skipping');
                 core.setOutput('should_run', 'false');
                 return;
               }
 
-              if (comment !== '/ok-to-test') {
-                console.log(`Comment "${comment}" is not /ok-to-test, skipping`);
+              // NOTE: This list must stay in sync with concurrency group logic (lines 23-25)
+              const validCommands = ['/ok-to-test', '/retest'];
+              if (!validCommands.includes(comment)) {
+                console.log(`Comment "${comment}" is not a valid trigger command, skipping`);
                 core.setOutput('should_run', 'false');
                 return;
               }
@@ -115,7 +136,7 @@ jobs:
               const commenter = context.payload.comment.user.login;
               const hasAccess = await hasWriteAccess(commenter);
               if (!hasAccess) {
-                console.log(`User ${commenter} does not have write access, ignoring /ok-to-test`);
+                console.log(`User ${commenter} does not have write access, ignoring ${comment}`);
                 core.setOutput('should_run', 'false');
                 return;
               }
@@ -132,7 +153,7 @@ jobs:
               const headRepo = pr.head.repo ? pr.head.repo.full_name : baseRepo;
               const isFork = headRepo !== baseRepo;
 
-              console.log(`/ok-to-test approved by ${commenter} for PR #${issue.number}`);
+              console.log(`${comment} approved by ${commenter} for PR #${issue.number}`);
               console.log(`PR head SHA: ${pr.head.sha}`);
               console.log(`Is fork PR: ${isFork} (head: ${headRepo}, base: ${baseRepo})`);
               core.setOutput('should_run', 'true');
@@ -154,7 +175,7 @@ jobs:
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: issue.number,
-                body: `🚀 **E2E tests triggered by /ok-to-test**\n\n[View the OpenShift E2E workflow run](${runUrl})`
+                body: `🚀 **E2E tests triggered by ${comment}**\n\n[View the OpenShift E2E workflow run](${runUrl})`
               });
               return;
             }
@@ -529,6 +550,8 @@ jobs:
             --set controller.enabled=false \
             --set va.enabled=true \
             --set hpa.enabled=true \
+            --set hpa.behavior.scaleUp.stabilizationWindowSeconds="$HPA_STABILIZATION_SECONDS" \
+            --set hpa.behavior.scaleDown.stabilizationWindowSeconds="$HPA_STABILIZATION_SECONDS" \
             --set llmd.namespace="$LLMD_NAMESPACE_B" \
             --set llmd.modelName="ms-inference-scheduling-llm-d-modelservice" \
             --set llmd.modelID="$MODEL_ID" \
@@ -718,34 +741,6 @@ jobs:
           echo ""
           echo "All vLLM deployments patched successfully"
 
-      - name: Patch HPAs for faster e2e testing
-        run: |
-          echo "Patching HPA stabilization windows for e2e testing..."
-          echo "  HPA_STABILIZATION_SECONDS: $HPA_STABILIZATION_SECONDS"
-
-          # Function to patch HPAs in a namespace
-          patch_hpas_in_namespace() {
-            local namespace=$1
-            echo ""
-            echo "Patching HPAs in namespace $namespace..."
-            for HPA_NAME in $(kubectl get hpa -n "$namespace" -l app.kubernetes.io/name=workload-variant-autoscaler -o jsonpath='{.items[*].metadata.name}'); do
-              echo "  Patching HPA: $HPA_NAME"
-              kubectl patch hpa "$HPA_NAME" -n "$namespace" --type=json -p='[
-                {"op": "replace", "path": "/spec/behavior/scaleUp/stabilizationWindowSeconds", "value": '"$HPA_STABILIZATION_SECONDS"'},
-                {"op": "replace", "path": "/spec/behavior/scaleDown/stabilizationWindowSeconds", "value": '"$HPA_STABILIZATION_SECONDS"'}
-              ]' || true
-            done
-          }
-
-          # Patch HPAs in both namespaces
-          patch_hpas_in_namespace "$LLMD_NAMESPACE"
-          patch_hpas_in_namespace "$LLMD_NAMESPACE_B"
-
-          echo ""
-          echo "All HPAs:"
-          kubectl get hpa -n "$LLMD_NAMESPACE"
-          kubectl get hpa -n "$LLMD_NAMESPACE_B"
-
       - name: Install Go dependencies
         run: go mod download
 
@@ -774,9 +769,9 @@ jobs:
           make test-e2e-openshift
 
       - name: Cleanup infrastructure
-        # Only cleanup on success - leave resources for debugging on failure
+        # Cleanup on success or cancellation, but NOT on failure (preserve for debugging)
         # Use SKIP_CLEANUP=true to keep resources after successful runs
-        if: success() && env.SKIP_CLEANUP != 'true'
+        if: (success() || cancelled()) && env.SKIP_CLEANUP != 'true'
         run: |
           echo "Cleaning up ALL test infrastructure..."
           echo "  LLMD_NAMESPACE: $LLMD_NAMESPACE"
@@ -813,9 +808,10 @@ jobs:
           echo "Deleting WVA namespace $WVA_NAMESPACE..."
           kubectl delete namespace "$WVA_NAMESPACE" --ignore-not-found --timeout=120s || true
 
-          # Clean up cluster-scoped WVA resources
-          echo "Removing cluster-scoped WVA resources..."
-          kubectl delete clusterrole,clusterrolebinding -l app.kubernetes.io/name=workload-variant-autoscaler --ignore-not-found || true
+          # Clean up cluster-scoped WVA resources for THIS release only
+          # Use both name and instance labels to avoid deleting resources from other PRs
+          echo "Removing cluster-scoped WVA resources for release $WVA_RELEASE_NAME..."
+          kubectl delete clusterrole,clusterrolebinding -l app.kubernetes.io/name=workload-variant-autoscaler,app.kubernetes.io/instance="$WVA_RELEASE_NAME" --ignore-not-found || true
 
           echo "Cleanup complete"
 
@@ -894,7 +890,7 @@ jobs:
               state: state,
               target_url: `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
               description: description,
-              context: '${{ github.workflow }} / e2e (/ok-to-test)'
+              context: '${{ github.workflow }} / e2e (comment trigger)'
             });
 
             console.log('Status reported successfully');

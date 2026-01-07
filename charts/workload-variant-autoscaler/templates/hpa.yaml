@@ -15,19 +15,23 @@ spec:
   maxReplicas: {{ .Values.hpa.maxReplicas }}
   behavior:
     scaleUp:
-      stabilizationWindowSeconds: 240
-      selectPolicy: Max      
+      stabilizationWindowSeconds: {{ .Values.hpa.behavior.scaleUp.stabilizationWindowSeconds }}
+      selectPolicy: {{ .Values.hpa.behavior.scaleUp.selectPolicy }}
       policies:
-      - type: Pods
-        value: 10
-        periodSeconds: 150
+      {{- range .Values.hpa.behavior.scaleUp.policies }}
+      - type: {{ .type }}
+        value: {{ .value }}
+        periodSeconds: {{ .periodSeconds }}
+      {{- end }}
     scaleDown:
-      stabilizationWindowSeconds: 240
-      selectPolicy: Max
+      stabilizationWindowSeconds: {{ .Values.hpa.behavior.scaleDown.stabilizationWindowSeconds }}
+      selectPolicy: {{ .Values.hpa.behavior.scaleDown.selectPolicy }}
       policies:
-      - type: Pods
-        value: 10
-        periodSeconds: 150
+      {{- range .Values.hpa.behavior.scaleDown.policies }}
+      - type: {{ .type }}
+        value: {{ .value }}
+        periodSeconds: {{ .periodSeconds }}
+      {{- end }}
   metrics:
   - type: External
     external:
