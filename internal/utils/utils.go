@@ -205,32 +205,16 @@ func AddModelAcceleratorProfileToSystemData(
 	modelAcceleratorProfile *llmdVariantAutoscalingV1alpha1.AcceleratorProfile) (err error) {
 
 	// extract decode model (itl) parameters
-	decodeParms := modelAcceleratorProfile.PerfParms.DecodeParms
-	if len(decodeParms) < 2 {
-		return fmt.Errorf("length of decodeParms should be 2")
-	}
-
-	var alpha, beta float64
-	if alpha, err = strconv.ParseFloat(decodeParms["alpha"], 32); err != nil {
-		return err
-	}
-	if beta, err = strconv.ParseFloat(decodeParms["beta"], 32); err != nil {
-		return err
-	}
+	// TODO: These parameters are currently hardcoded for testing purposes as we transition
+	// away from storing them in the CRD.
+	// In the future, these should be retrieved from a config map or another source.
+	alpha := 20.28
+	beta := 0.72
 
 	// extract prefill model (ttft) parameters
-	prefillParms := modelAcceleratorProfile.PerfParms.PrefillParms
-	if len(prefillParms) < 2 {
-		return fmt.Errorf("length of prefillParms should be 2")
-	}
-
-	var gamma, delta float64
-	if gamma, err = strconv.ParseFloat(prefillParms["gamma"], 32); err != nil {
-		return err
-	}
-	if delta, err = strconv.ParseFloat(prefillParms["delta"], 32); err != nil {
-		return err
-	}
+	// TODO: These parameters are currently hardcoded for testing purposes.
+	gamma := 0.0
+	delta := 0.0
 
 	sd.Spec.Models.PerfData = append(sd.Spec.Models.PerfData,
 		infernoConfig.ModelAcceleratorPerfData{

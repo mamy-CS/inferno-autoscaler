@@ -37,10 +37,7 @@ func makeValidVA() *VariantAutoscaling {
 					{
 						Acc:      "nvidia.com/mig-1g.5gb",
 						AccCount: 1,
-						PerfParms: PerfParms{
-							DecodeParms:  map[string]string{"alpha": "0.8", "beta": "0.2"},
-							PrefillParms: map[string]string{"gamma": "0.8", "delta": "0.2"},
-						},
+
 						MaxBatchSize: 8,
 					},
 				},
@@ -173,7 +170,7 @@ func TestStatusOmitEmpty(t *testing.T) {
 			ModelID: "m",
 			ModelProfile: ModelProfile{
 				Accelerators: []AcceleratorProfile{
-					{Acc: "gpu", AccCount: 1, PerfParms: PerfParms{DecodeParms: map[string]string{"alpha": "1", "beta": "1"}, PrefillParms: map[string]string{"gamma": "1", "delta": "1"}}, MaxBatchSize: 1},
+					{Acc: "gpu", AccCount: 1, MaxBatchSize: 1},
 				},
 			},
 		},

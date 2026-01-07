@@ -96,10 +96,7 @@ var _ = Describe("VariantAutoscalings Controller", func() {
 								{
 									Acc:      "A100",
 									AccCount: 1,
-									PerfParms: llmdVariantAutoscalingV1alpha1.PerfParms{
-										DecodeParms:  map[string]string{"alpha": "20.28", "beta": "0.72"},
-										PrefillParms: map[string]string{"gamma": "0", "delta": "0"},
-									},
+
 									MaxBatchSize: 4,
 								},
 							},
@@ -242,10 +239,7 @@ var _ = Describe("VariantAutoscalings Controller", func() {
 							{
 								Acc:      "INVALID_GPU",
 								AccCount: -1, // Invalid count
-								PerfParms: llmdVariantAutoscalingV1alpha1.PerfParms{
-									DecodeParms:  map[string]string{"alpha": "invalid", "beta": "invalid"},
-									PrefillParms: map[string]string{"gamma": "invalid", "delta": "invalid"},
-								},
+
 								MaxBatchSize: -1, // Invalid batch size
 							},
 						},
@@ -275,10 +269,7 @@ var _ = Describe("VariantAutoscalings Controller", func() {
 							{
 								Acc:      "A100",
 								AccCount: 1,
-								PerfParms: llmdVariantAutoscalingV1alpha1.PerfParms{
-									DecodeParms:  map[string]string{"alpha": "0.28", "beta": "0.72"},
-									PrefillParms: map[string]string{"gamma": "0", "delta": "0"},
-								},
+
 								MaxBatchSize: 4,
 							},
 						},

@@ -323,10 +323,7 @@ data:
 								{
 									Acc:      "A100",
 									AccCount: 1,
-									PerfParms: llmdVariantAutoscalingV1alpha1.PerfParms{
-										DecodeParms:  map[string]string{"alpha": "0.28", "beta": "0.72"},
-										PrefillParms: map[string]string{"gamma": "0", "delta": "0"},
-									},
+
 									MaxBatchSize: 4,
 								},
 							},

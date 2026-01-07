@@ -219,16 +219,7 @@ var _ = Describe("Actuator", func() {
 							{
 								Acc:      "A100",
 								AccCount: 1,
-								PerfParms: llmdVariantAutoscalingV1alpha1.PerfParms{
-									DecodeParms: map[string]string{
-										"alpha": "20.58",
-										"beta":  "0.41",
-									},
-									PrefillParms: map[string]string{
-										"gamma": "200.58",
-										"delta": "0.041",
-									},
-								},
+
 								MaxBatchSize: 32,
 							},
 						},
@@ -367,16 +358,7 @@ var _ = Describe("Actuator", func() {
 							{
 								Acc:      "A100",
 								AccCount: 1,
-								PerfParms: llmdVariantAutoscalingV1alpha1.PerfParms{
-									DecodeParms: map[string]string{
-										"alpha": "20.58",
-										"beta":  "0.41",
-									},
-									PrefillParms: map[string]string{
-										"gamma": "200.58",
-										"delta": "0.041",
-									},
-								},
+
 								MaxBatchSize: 32,
 							},
 						},
@@ -457,16 +439,7 @@ var _ = Describe("Actuator", func() {
 							{
 								Acc:      "A100",
 								AccCount: 1,
-								PerfParms: llmdVariantAutoscalingV1alpha1.PerfParms{
-									DecodeParms: map[string]string{
-										"alpha": "20.58",
-										"beta":  "0.41",
-									},
-									PrefillParms: map[string]string{
-										"gamma": "200.58",
-										"delta": "0.041",
-									},
-								},
+
 								MaxBatchSize: 32,
 							},
 						},
@@ -545,16 +518,7 @@ var _ = Describe("Actuator", func() {
 							{
 								Acc:      "A100",
 								AccCount: 1,
-								PerfParms: llmdVariantAutoscalingV1alpha1.PerfParms{
-									DecodeParms: map[string]string{
-										"alpha": "20.58",
-										"beta":  "0.41",
-									},
-									PrefillParms: map[string]string{
-										"gamma": "200.58",
-										"delta": "0.041",
-									},
-								},
+
 								MaxBatchSize: 32,
 							},
 						},

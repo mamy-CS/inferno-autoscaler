@@ -35,17 +35,6 @@ type ModelProfile struct {
 	Accelerators []AcceleratorProfile `json:"accelerators"`
 }
 
-type PerfParms struct {
-	// DecodeParms contains parameters for the decode phase (ITL calculation)
-	// Expected keys: "alpha", "beta" for equation: itl = alpha + beta * maxBatchSize
-	// +kubebuilder:validation:MinProperties=1
-	DecodeParms map[string]string `json:"decodeParms"`
-	// PrefillParms contains parameters for the prefill phase (TTFT calculation)
-	// Expected keys: "gamma", "delta" for equation: ttft = gamma + delta * tokens * maxBatchSize
-	// +kubebuilder:validation:MinProperties=1
-	PrefillParms map[string]string `json:"prefillParms"`
-}
-
 // AcceleratorProfile defines the configuration for an accelerator used in autoscaling.
 // It specifies the type and count of accelerator, as well as parameters for scaling behavior.
 type AcceleratorProfile struct {
@@ -56,10 +45,6 @@ type AcceleratorProfile struct {
 	// AccCount specifies the number of accelerator units to be used.
 	// +kubebuilder:validation:Minimum=1
 	AccCount int `json:"accCount"`
-
-	// PerParms specifies the prefill and decode parameters for ttft and itl models
-	// +kubebuilder:validation:Optional
-	PerfParms PerfParms `json:"perfParms,omitempty"`
 
 	// MaxBatchSize is the maximum batch size supported by the accelerator.
 	// +kubebuilder:validation:Minimum=1
