@@ -1041,3 +1041,85 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Multiple 
 		_, _ = fmt.Fprintf(GinkgoWriter, "Cleanup completed for multiple VAs Saturation-based E2E tests\n")
 	})
 })
+
+var _ = Describe("VariantAutoscaling Target Condition", Ordered, func() {
+	var (
+		namespace   string
+		validCtx    context.Context
+		invalidCtx  context.Context
+		modelName   string
+		variantCost float64
+	)
+
+	BeforeAll(func() {
+		if os.Getenv("KUBECONFIG") == "" {
+			Skip("KUBECONFIG is not set; skipping e2e test")
+		}
+
+		initializeK8sClient()
+
+		namespace = "default" // Use default namespace for simplicity
+		modelName = "target-condition-model"
+		variantCost = 10.0
+		validCtx = context.Background()
+		invalidCtx = context.Background()
+	})
+
+	It("should set TargetResolved=True when target deployment exists", func() {
+		name := "valid-target-va"
+		deployName := name
+		appLabel := name
+		port := 8000
+
+		By("creating deployment")
+		deployment := utils.CreateLlmdSimDeployment(namespace, deployName, modelName, appLabel, fmt.Sprintf("%d", port), 200, 20, 1)
+		_, err := k8sClient.AppsV1().Deployments(namespace).Create(validCtx, deployment, metav1.CreateOptions{})
+		Expect(err).NotTo(HaveOccurred())
+
+		By("creating VariantAutoscaling")
+		va := utils.CreateVariantAutoscalingResource(namespace, deployName, modelName, "A100", variantCost)
+		err = crClient.Create(validCtx, va)
+		Expect(err).NotTo(HaveOccurred())
+
+		By("waiting for TargetResolved=True")
+		Eventually(func() {
+			fetchedVA := &v1alpha1.VariantAutoscaling{}
+			err := crClient.Get(validCtx, client.ObjectKey{Namespace: namespace, Name: deployName}, fetchedVA)
+			Expect(err).NotTo(HaveOccurred())
+
+			condition := v1alpha1.GetCondition(fetchedVA, v1alpha1.TypeTargetResolved)
+			Expect(condition).NotTo(BeNil())
+			Expect(condition.Status).To(Equal(metav1.ConditionTrue))
+			Expect(condition.Reason).To(Equal(v1alpha1.ReasonTargetFound))
+		}, 1*time.Minute, 1*time.Second).Should(Succeed())
+
+		// Cleanup
+		_ = crClient.Delete(validCtx, va)
+		_ = k8sClient.AppsV1().Deployments(namespace).Delete(validCtx, deployName, metav1.DeleteOptions{})
+	})
+
+	It("should set TargetResolved=False when target deployment does not exist", func() {
+		name := "invalid-target-va"
+		// No deployment created
+
+		By("creating VariantAutoscaling")
+		va := utils.CreateVariantAutoscalingResource(namespace, name, modelName, "A100", variantCost)
+		err := crClient.Create(invalidCtx, va)
+		Expect(err).NotTo(HaveOccurred())
+
+		By("waiting for TargetResolved=False")
+		Eventually(func() {
+			fetchedVA := &v1alpha1.VariantAutoscaling{}
+			err := crClient.Get(invalidCtx, client.ObjectKey{Namespace: namespace, Name: name}, fetchedVA)
+			Expect(err).NotTo(HaveOccurred())
+
+			condition := v1alpha1.GetCondition(fetchedVA, v1alpha1.TypeTargetResolved)
+			Expect(condition).NotTo(BeNil())
+			Expect(condition.Status).To(Equal(metav1.ConditionFalse))
+			Expect(condition.Reason).To(Equal(v1alpha1.ReasonTargetNotFound))
+		}, 1*time.Minute, 1*time.Second).Should(Succeed())
+
+		// Cleanup
+		_ = crClient.Delete(invalidCtx, va)
+	})
+})

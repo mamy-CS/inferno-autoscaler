@@ -397,4 +397,96 @@ var _ = Describe("VariantAutoscalings Controller", func() {
 		})
 	})
 
+	Context("Target Condition", func() {
+		const resourceName = "target-condition-test"
+
+		BeforeEach(func() {
+			logging.NewTestLogger()
+			ns := &v1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "workload-variant-autoscaler-system",
+				},
+			}
+			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, ns))).NotTo(HaveOccurred())
+		})
+
+		It("should set TargetResolved condition based on deployment existence", func() {
+			By("Creating VariantAutoscaling without target deployment")
+			resource := &llmdVariantAutoscalingV1alpha1.VariantAutoscaling{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: "default",
+				},
+				Spec: llmdVariantAutoscalingV1alpha1.VariantAutoscalingSpec{
+					ScaleTargetRef: autoscalingv1.CrossVersionObjectReference{
+						Kind: "Deployment",
+						Name: resourceName,
+					},
+					ModelID: "default-default",
+					ModelProfile: llmdVariantAutoscalingV1alpha1.ModelProfile{
+						Accelerators: []llmdVariantAutoscalingV1alpha1.AcceleratorProfile{
+							{
+								Acc:          "A100",
+								AccCount:     1,
+								MaxBatchSize: 4,
+								PerfParms: llmdVariantAutoscalingV1alpha1.PerfParms{
+									DecodeParms:  map[string]string{"alpha": "0.28", "beta": "0.72"},
+									PrefillParms: map[string]string{"gamma": "0", "delta": "0"},
+								},
+							},
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+
+			// Mock controller components
+			mockPromAPI := &testutils.MockPromAPI{}
+			metricsCollector := collector.NewPrometheusCollector(mockPromAPI)
+			controllerReconciler := &VariantAutoscalingReconciler{
+				Client:           k8sClient,
+				Scheme:           k8sClient.Scheme(),
+				PromAPI:          mockPromAPI,
+				MetricsCollector: metricsCollector,
+			}
+
+			By("Reconciling - expect TargetNotFound")
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: resourceName, Namespace: "default"},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify condition
+			fetchedResource := &llmdVariantAutoscalingV1alpha1.VariantAutoscaling{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: resourceName, Namespace: "default"}, fetchedResource)).To(Succeed())
+
+			condition := llmdVariantAutoscalingV1alpha1.GetCondition(fetchedResource, llmdVariantAutoscalingV1alpha1.TypeTargetResolved)
+			Expect(condition).NotTo(BeNil())
+			Expect(condition.Status).To(Equal(metav1.ConditionFalse))
+			Expect(condition.Reason).To(Equal(llmdVariantAutoscalingV1alpha1.ReasonTargetNotFound))
+
+			By("Creating target deployment")
+			deployment := testutils.CreateLlmdSimDeployment("default", resourceName, "default-default", "default", "8000", 0, 0, 1)
+			Expect(k8sClient.Create(ctx, deployment)).To(Succeed())
+
+			By("Reconciling - expect TargetFound")
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: resourceName, Namespace: "default"},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify condition
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: resourceName, Namespace: "default"}, fetchedResource)).To(Succeed())
+
+			condition = llmdVariantAutoscalingV1alpha1.GetCondition(fetchedResource, llmdVariantAutoscalingV1alpha1.TypeTargetResolved)
+			Expect(condition).NotTo(BeNil())
+			Expect(condition.Status).To(Equal(metav1.ConditionTrue))
+			Expect(condition.Reason).To(Equal(llmdVariantAutoscalingV1alpha1.ReasonTargetFound))
+
+			// Cleanup
+			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, deployment)).To(Succeed())
+		})
+	})
+
 })

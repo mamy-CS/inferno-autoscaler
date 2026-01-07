@@ -27,6 +27,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/tools/record"
@@ -156,6 +157,19 @@ func (r *VariantAutoscalingReconciler) Reconcile(ctx context.Context, req ctrl.R
 			logger.Info("Scale target Deployment not found, waiting for deployment watch",
 				"name", scaleTargetName,
 				"namespace", va.Namespace)
+
+			// Update status to reflect target not found
+			llmdVariantAutoscalingV1alpha1.SetCondition(&va,
+				llmdVariantAutoscalingV1alpha1.TypeTargetResolved,
+				metav1.ConditionFalse,
+				llmdVariantAutoscalingV1alpha1.ReasonTargetNotFound,
+				fmt.Sprintf("Scale target Deployment %s not found", scaleTargetName))
+
+			if err := r.Status().Patch(ctx, &va, client.MergeFrom(originalVA)); err != nil {
+				logger.Error(err, "Failed to update VariantAutoscaling status")
+				return ctrl.Result{}, err
+			}
+
 			// Don't requeue - the deployment watch will trigger reconciliation
 			// when the target deployment is created
 			return ctrl.Result{}, nil
@@ -165,6 +179,13 @@ func (r *VariantAutoscalingReconciler) Reconcile(ctx context.Context, req ctrl.R
 			"namespace", va.Namespace)
 		return ctrl.Result{}, err
 	}
+
+	// Target found
+	llmdVariantAutoscalingV1alpha1.SetCondition(&va,
+		llmdVariantAutoscalingV1alpha1.TypeTargetResolved,
+		metav1.ConditionTrue,
+		llmdVariantAutoscalingV1alpha1.ReasonTargetFound,
+		fmt.Sprintf("Scale target Deployment %s found", scaleTargetName))
 
 	logger.V(logging.DEBUG).Info(
 		fmt.Sprintf("Scale target Deployment found: name=%s, namespace=%s", scaleTargetName, va.Namespace),
