@@ -98,30 +98,6 @@ spec:
                             by the accelerator.
                           minimum: 1
                           type: integer
-                        perfParms:
-                          description: PerParms specifies the prefill and decode parameters
-                            for ttft and itl models
-                          properties:
-                            decodeParms:
-                              additionalProperties:
-                                type: string
-                              description: |-
-                                DecodeParms contains parameters for the decode phase (ITL calculation)
-                                Expected keys: "alpha", "beta" for equation: itl = alpha + beta * maxBatchSize
-                              minProperties: 1
-                              type: object
-                            prefillParms:
-                              additionalProperties:
-                                type: string
-                              description: |-
-                                PrefillParms contains parameters for the prefill phase (TTFT calculation)
-                                Expected keys: "gamma", "delta" for equation: ttft = gamma + delta * tokens * maxBatchSize
-                              minProperties: 1
-                              type: object
-                          required:
-                          - decodeParms
-                          - prefillParms
-                          type: object
                       required:
                       - acc
                       - accCount
