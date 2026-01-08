@@ -130,7 +130,7 @@ var _ = Describe("ShareGPT Scale-Up Test", Ordered, func() {
 				vaName               string
 				scaledReplicas       int32
 				scaledOptimized      int32
-				scaledLoadWorkers    int    // Load workers scaled to initial replicas
+				scaledLoadWorkers    int // Load workers scaled to initial replicas
 				jobCompletionTimeout = 10 * time.Minute
 			)
 
