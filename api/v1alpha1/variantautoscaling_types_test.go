@@ -32,16 +32,6 @@ func makeValidVA() *VariantAutoscaling {
 				Name: "va-sample-deployment",
 			},
 			ModelID: "model-123",
-			ModelProfile: ModelProfile{
-				Accelerators: []AcceleratorProfile{
-					{
-						Acc:      "nvidia.com/mig-1g.5gb",
-						AccCount: 1,
-
-						MaxBatchSize: 8,
-					},
-				},
-			},
 		},
 		Status: VariantAutoscalingStatus{
 			CurrentAlloc: Allocation{
@@ -96,15 +86,12 @@ func TestDeepCopyIndependence(t *testing.T) {
 	cp := orig.DeepCopy()
 
 	cp.Spec.ModelID = "model-456"
-	cp.Spec.ModelProfile.Accelerators[0].Acc = "nvidia.com/mig-3g.20gb"
 	cp.Status.CurrentAlloc.Load.ArrivalRate = "20 rps"
 
 	if orig.Spec.ModelID == cp.Spec.ModelID {
 		t.Errorf("DeepCopy did not create independent copy for Spec.ModelID")
 	}
-	if orig.Spec.ModelProfile.Accelerators[0].Acc == cp.Spec.ModelProfile.Accelerators[0].Acc {
-		t.Errorf("DeepCopy did not create independent copy for nested Accelerators slice")
-	}
+
 	if orig.Status.CurrentAlloc.Load.ArrivalRate == cp.Status.CurrentAlloc.Load.ArrivalRate {
 		t.Errorf("DeepCopy did not create independent copy for nested Status.Load")
 	}
@@ -168,11 +155,6 @@ func TestStatusOmitEmpty(t *testing.T) {
 				Name: "va-empty-status-deployment",
 			},
 			ModelID: "m",
-			ModelProfile: ModelProfile{
-				Accelerators: []AcceleratorProfile{
-					{Acc: "gpu", AccCount: 1, MaxBatchSize: 1},
-				},
-			},
 		},
 	}
 

@@ -71,43 +71,6 @@ spec:
                   to be autoscaled.
                 minLength: 1
                 type: string
-              modelProfile:
-                description: ModelProfile provides resource and performance characteristics
-                  for the model variant.
-                properties:
-                  accelerators:
-                    description: Accelerators is a list of accelerator profiles for
-                      the model variant.
-                    items:
-                      description: |-
-                        AcceleratorProfile defines the configuration for an accelerator used in autoscaling.
-                        It specifies the type and count of accelerator, as well as parameters for scaling behavior.
-                      properties:
-                        acc:
-                          description: Acc specifies the type or name of the accelerator
-                            (e.g., GPU type).
-                          minLength: 1
-                          type: string
-                        accCount:
-                          description: AccCount specifies the number of accelerator
-                            units to be used.
-                          minimum: 1
-                          type: integer
-                        maxBatchSize:
-                          description: MaxBatchSize is the maximum batch size supported
-                            by the accelerator.
-                          minimum: 1
-                          type: integer
-                      required:
-                      - acc
-                      - accCount
-                      - maxBatchSize
-                      type: object
-                    minItems: 1
-                    type: array
-                required:
-                - accelerators
-                type: object
               scaleTargetRef:
                 description: |-
                   ScaleTargetRef references the scalable resource to manage.
@@ -286,7 +249,7 @@ spec:
                   numReplicas:
                     description: NumReplicas is the number of replicas for the optimized
                       allocation.
-                    minimum: 0
+                    minimum: 1
                     type: integer
                 required:
                 - accelerator

@@ -214,16 +214,6 @@ var _ = Describe("Actuator", func() {
 						Name: contextResourceName,
 					},
 					ModelID: "test-model/variant-1",
-					ModelProfile: llmdVariantAutoscalingV1alpha1.ModelProfile{
-						Accelerators: []llmdVariantAutoscalingV1alpha1.AcceleratorProfile{
-							{
-								Acc:      "A100",
-								AccCount: 1,
-
-								MaxBatchSize: 32,
-							},
-						},
-					},
 				},
 				Status: llmdVariantAutoscalingV1alpha1.VariantAutoscalingStatus{
 					CurrentAlloc: llmdVariantAutoscalingV1alpha1.Allocation{
@@ -353,16 +343,6 @@ var _ = Describe("Actuator", func() {
 						Name: contextResourceName,
 					},
 					ModelID: "test-model/metrics-test",
-					ModelProfile: llmdVariantAutoscalingV1alpha1.ModelProfile{
-						Accelerators: []llmdVariantAutoscalingV1alpha1.AcceleratorProfile{
-							{
-								Acc:      "A100",
-								AccCount: 1,
-
-								MaxBatchSize: 32,
-							},
-						},
-					},
 				},
 				Status: llmdVariantAutoscalingV1alpha1.VariantAutoscalingStatus{
 					CurrentAlloc: llmdVariantAutoscalingV1alpha1.Allocation{
@@ -434,16 +414,6 @@ var _ = Describe("Actuator", func() {
 						Name: "incomplete-va",
 					},
 					ModelID: "test-model/incomplete",
-					ModelProfile: llmdVariantAutoscalingV1alpha1.ModelProfile{
-						Accelerators: []llmdVariantAutoscalingV1alpha1.AcceleratorProfile{
-							{
-								Acc:      "A100",
-								AccCount: 1,
-
-								MaxBatchSize: 32,
-							},
-						},
-					},
 				},
 				Status: llmdVariantAutoscalingV1alpha1.VariantAutoscalingStatus{
 					// DesiredOptimizedAlloc.NumReplicas will be 0 by default
@@ -513,16 +483,6 @@ var _ = Describe("Actuator", func() {
 						Name: contextResourceName,
 					},
 					ModelID: "test-model/validation-test",
-					ModelProfile: llmdVariantAutoscalingV1alpha1.ModelProfile{
-						Accelerators: []llmdVariantAutoscalingV1alpha1.AcceleratorProfile{
-							{
-								Acc:      "A100",
-								AccCount: 1,
-
-								MaxBatchSize: 32,
-							},
-						},
-					},
 				},
 				Status: llmdVariantAutoscalingV1alpha1.VariantAutoscalingStatus{
 					CurrentAlloc: llmdVariantAutoscalingV1alpha1.Allocation{

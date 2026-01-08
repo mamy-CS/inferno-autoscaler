@@ -321,16 +321,6 @@ data:
 							Name: name,
 						},
 						ModelID: modelID,
-						ModelProfile: llmdVariantAutoscalingV1alpha1.ModelProfile{
-							Accelerators: []llmdVariantAutoscalingV1alpha1.AcceleratorProfile{
-								{
-									Acc:      "A100",
-									AccCount: 1,
-
-									MaxBatchSize: 4,
-								},
-							},
-						},
 					},
 				}
 				Expect(k8sClient.Create(ctx, r)).To(Succeed())
@@ -405,7 +395,7 @@ data:
 
 			// Populate global config
 			common.Config.UpdateSaturationConfig(map[string]interfaces.SaturationScalingConfig{
-				"default": {}, // Empty config is valid enough to proceed? Validate() might fail if not checked.
+				"default": {},
 			})
 
 			By("Performing optimization loop")

@@ -246,24 +246,46 @@ func (e *Engine) optimize(ctx context.Context) error {
 func (e *Engine) BuildVariantStates(
 	ctx context.Context,
 	vas []llmdVariantAutoscalingV1alpha1.VariantAutoscaling,
+	deployments map[string]*appsv1.Deployment,
 	k8sClient client.Client,
 ) []interfaces.VariantReplicaState {
 	states := make([]interfaces.VariantReplicaState, 0, len(vas))
 
 	for _, va := range vas {
 		// Get current replicas from deployment using ScaleTargetRef
-		var deploy appsv1.Deployment
-		if err := utils.GetDeploymentWithBackoff(ctx, k8sClient, va.GetScaleTargetName(), va.Namespace, &deploy); err != nil {
-			ctrl.LoggerFrom(ctx).V(logging.DEBUG).Info("Could not get deployment for VA, skipping",
-				"variant", va.Name,
-				"error", err)
-			continue
+		// Get current replicas from deployment using ScaleTargetRef
+		var deploy *appsv1.Deployment
+		var found bool
+
+		// Try to look up in provided map first (optimization)
+		if deployments != nil {
+			// Deployment map is keyed by deployment name
+			// But do we know the deployment name?
+			// va.GetScaleTargetName() gives the name.
+			deploy, found = deployments[va.GetScaleTargetName()]
+		}
+
+		if !found {
+			// Fallback to API call
+			fetchedDeploy := &appsv1.Deployment{}
+			if err := utils.GetDeploymentWithBackoff(ctx, k8sClient, va.GetScaleTargetName(), va.Namespace, fetchedDeploy); err != nil {
+				ctrl.LoggerFrom(ctx).V(logging.DEBUG).Info("Could not get deployment for VA, skipping",
+					"variant", va.Name,
+					"error", err)
+				continue
+			}
+			deploy = fetchedDeploy
+			ctrl.LoggerFrom(ctx).Info("DEBUG: BuildVariantStates fallback lookup", "variant", va.Name, "deployName", deploy.Name, "specReplicas", deploy.Spec.Replicas, "statusReplicas", deploy.Status.Replicas)
+		} else {
+			ctrl.LoggerFrom(ctx).Info("DEBUG: BuildVariantStates map lookup", "variant", va.Name, "deployName", deploy.Name, "specReplicas", deploy.Spec.Replicas, "statusReplicas", deploy.Status.Replicas)
 		}
 
 		currentReplicas := int(deploy.Status.Replicas)
 		if currentReplicas == 0 && deploy.Spec.Replicas != nil {
 			currentReplicas = int(*deploy.Spec.Replicas)
 		}
+
+		ctrl.LoggerFrom(ctx).Info("DEBUG: BuildVariantStates result", "variant", va.Name, "currentReplicas", currentReplicas)
 
 		states = append(states, interfaces.VariantReplicaState{
 			VariantName:     deploy.Name,
@@ -436,7 +458,7 @@ func (e *Engine) RunSaturationAnalysis(
 		"scaleDownSafe", saturationAnalysis.ScaleDownSafe)
 
 	// Build variant states (current and desired replicas)
-	variantStates := e.BuildVariantStates(ctx, modelVAs, k8sClient)
+	variantStates := e.BuildVariantStates(ctx, modelVAs, deployments, k8sClient)
 
 	// Calculate saturation-based targets
 	saturationTargets := saturationAnalyzer.CalculateSaturationTargets(ctx, saturationAnalysis, variantStates)

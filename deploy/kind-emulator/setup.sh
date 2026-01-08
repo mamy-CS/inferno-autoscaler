@@ -26,11 +26,6 @@ k8s_version="${K8S_VERSION:-$DEFAULT_K8S_VERSION}"
 # Cleanup on exit
 # --------------------------------------------------------------------
 cleanup() {
-    if [[ -n "${proxy_pid:-}" ]]; then
-        kill "$proxy_pid" &>/dev/null || true
-        # wait may return 143 (SIGTERM), ignore it
-        wait "$proxy_pid" 2>/dev/null || true
-    fi
     [[ -f "kind-config.yaml" ]] && rm -f "kind-config.yaml" || true
     return 0
 }
@@ -156,14 +151,7 @@ done
 # --------------------------------------------------------------------
 # Patch Node Capacities
 # --------------------------------------------------------------------
-echo "[3/6] Starting kubectl proxy..."
-kubectl proxy > /dev/null 2>&1 &
-proxy_pid=$!
-for i in {1..30}; do
-    if curl -s 127.0.0.1:8001/api/v1 > /dev/null 2>&1; then break; fi
-    sleep 1
-done
-
+echo "[3/6] Patching node capacities..."
 for i in "${!node_array[@]}"; do
     node_name="${node_array[$i]}"
     if [ "$gpu_type" != "mix" ]; then
@@ -177,11 +165,13 @@ for i in "${!node_array[@]}"; do
     fi
 
     resource_name="${current_type}.com~1gpu"
-    curl --header "Content-Type: application/json-patch+json" \
-         --request PATCH \
-         --data '[{"op":"add","path":"/status/capacity/'${resource_name}'","value":"'${gpus_per_node}'"},
-                  {"op":"add","path":"/status/allocatable/'${resource_name}'","value":"'${gpus_per_node}'"}]' \
-         http://localhost:8001/api/v1/nodes/${node_name}/status
+    
+    # Use kubectl patch with --subresource=status to directly update node status
+    # This avoids the need for kubectl proxy and raw curl requests
+    kubectl patch node "${node_name}" --subresource=status --type=json -p '[
+        {"op":"add","path":"/status/capacity/'${resource_name}'","value":"'${gpus_per_node}'"},
+        {"op":"add","path":"/status/allocatable/'${resource_name}'","value":"'${gpus_per_node}'"}
+    ]'
 done
 
 # --------------------------------------------------------------------
@@ -206,7 +196,6 @@ for node in "${node_array[@]}"; do
 done
 echo "-------------------------------------------------------------------------------------------------------------------------------"
 
-echo "[5/6] Cleaning up proxy..."
-cleanup
+
 
 echo "[6/6] Done!"

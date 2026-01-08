@@ -82,9 +82,7 @@ func GroupVariantAutoscalingByModel(
 // 3. Returns empty string if neither is available
 func GetAcceleratorType(va *wvav1alpha1.VariantAutoscaling) string {
 	// Try spec first (primary source of truth)
-	if len(va.Spec.ModelProfile.Accelerators) > 0 {
-		return va.Spec.ModelProfile.Accelerators[0].Acc
-	}
+	// Spec.ModelProfile is deprecated/removed, falling back to label
 
 	// Fall back to label
 	if va.Labels != nil {
