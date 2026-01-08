@@ -159,7 +159,6 @@ var _ = Describe("VariantAutoscalings Controller", func() {
 	})
 
 	Context("When validating configurations", func() {
-		const configResourceName = "config-test-resource"
 
 		BeforeEach(func() {
 			logging.NewTestLogger()
