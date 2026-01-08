@@ -649,7 +649,7 @@ data:
 			source := collectorv2.NewPrometheusSource(context.Background(), mockPromAPI, config)
 
 			// Register in the global registry so engine.NewEngine can retrieve it
-			sourceRegistry.Register("prometheus", source)
+			sourceRegistry.Register("prometheus", source) // nolint:errcheck
 
 			// Initialize legacy MetricsCollector for non-saturation metrics
 			metricsCollector := collector.NewPrometheusCollector(mockPromAPI)
@@ -719,7 +719,7 @@ data:
 			config := collectorv2.DefaultPrometheusSourceConfig()
 			source := collectorv2.NewPrometheusSource(context.Background(), mockPromAPI, config)
 			// Register in the global registry so engine.NewEngine can retrieve it
-			sourceRegistry.Register("prometheus", source)
+			sourceRegistry.Register("prometheus", source) // nolint:errcheck
 
 			metricsCollector := collector.NewPrometheusCollector(mockPromAPI)
 			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, metricsCollector, sourceRegistry)
