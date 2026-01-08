@@ -6,7 +6,7 @@ import (
 
 // Query name constants for type-safe query references.
 const (
-	// Saturation queries (per-pod metrics)
+	// Saturation queries (per-pod peak metrics over time windows)
 	QueryKvCacheUsage = "kv_cache_usage"
 	QueryQueueLength  = "queue_length"
 )

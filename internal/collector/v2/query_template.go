@@ -7,6 +7,12 @@ import (
 	"sync"
 )
 
+var (
+	// Pre-compiled regex patterns for PromQL value escaping.
+	backslashPattern = regexp.MustCompile(`\\`)
+	quotePattern     = regexp.MustCompile(`"`)
+)
+
 // Common parameter names used across queries.
 const (
 	ParamNamespace = "namespace"
@@ -140,8 +146,8 @@ func (r *QueryList) List() []string {
 // Prevents injection by escaping backslashes and double quotes.
 func EscapePromQLValue(value string) string {
 	// Escape backslashes first (must be done before escaping quotes)
-	value = regexp.MustCompile(`\\`).ReplaceAllString(value, `\\`)
+	value = backslashPattern.ReplaceAllString(value, `\\`)
 	// Escape double quotes
-	value = regexp.MustCompile(`"`).ReplaceAllString(value, `\"`)
+	value = quotePattern.ReplaceAllString(value, `\"`)
 	return value
 }
