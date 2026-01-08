@@ -52,6 +52,7 @@ func (m *PodVAMapper) findDeploymentForPod(
 ) string {
 	logger := ctrl.LoggerFrom(ctx)
 
+	// TODO: optimize
 	for deploymentName, deployment := range deployments {
 		selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
 		if err != nil {

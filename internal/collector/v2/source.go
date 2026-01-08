@@ -19,7 +19,8 @@ type MetricsSource interface {
 
 	// Get retrieves a cached value for a query with the given parameters.
 	// The cache key is constructed from both queryName and params.
-	// Returns nil if not cached or expired.
+	// Returns nil if not cached or expired
+	// The returned CachedValue must not be modified by the caller.
 	Get(queryName string, params map[string]string) *CachedValue
 }
 

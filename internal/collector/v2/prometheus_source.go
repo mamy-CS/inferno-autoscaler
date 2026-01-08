@@ -51,7 +51,7 @@ func NewPrometheusSource(ctx context.Context, api promv1.API, config PrometheusS
 		api:      api,
 		registry: newQueryList(),
 		config:   config,
-		cache:    NewCache(ctx, config.DefaultTTL, 1*time.Second),
+		cache:    newCache(ctx, config.DefaultTTL, 1*time.Second),
 	}
 }
 
@@ -99,7 +99,7 @@ func (p *PrometheusSource) Refresh(ctx context.Context, spec RefreshSpec) (map[s
 
 			// Update cache with key that includes params
 			cacheKey := BuildCacheKey(queryName, spec.Params)
-			p.cache.Set(cacheKey, *result, p.config.DefaultTTL)
+			p.cache.set(cacheKey, *result, p.config.DefaultTTL)
 		}(name)
 	}
 
@@ -256,7 +256,7 @@ func (p *PrometheusSource) Get(queryName string, params map[string]string) *Cach
 	defer p.mu.RUnlock()
 
 	cacheKey := BuildCacheKey(queryName, params)
-	cached, ok := p.cache.Get(cacheKey)
+	cached, ok := p.cache.get(cacheKey)
 	if !ok {
 		return nil
 	}

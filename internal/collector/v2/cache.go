@@ -24,8 +24,8 @@ type Cache struct {
 	cleanupInterval time.Duration
 }
 
-// NewCache creates a new in-memory cache
-func NewCache(ctx context.Context, configuredTTL time.Duration, cleanupInterval time.Duration) *Cache {
+// newCache creates a new in-memory cache
+func newCache(ctx context.Context, configuredTTL time.Duration, cleanupInterval time.Duration) *Cache {
 	c := &Cache{
 		configuredTTL:   configuredTTL,
 		cleanupInterval: cleanupInterval,
@@ -40,9 +40,9 @@ func NewCache(ctx context.Context, configuredTTL time.Duration, cleanupInterval 
 	return c
 }
 
-// Get retrieves cached metrics by key
+// get retrieves cached metrics by key
 // Returns the cached metrics and true if found and not expired, false otherwise
-func (c *Cache) Get(key CacheKey) (*CachedValue, bool) {
+func (c *Cache) get(key CacheKey) (*CachedValue, bool) {
 	c.mu.RLock()
 	value, ok := c.cache[key]
 	c.mu.RUnlock()
@@ -55,7 +55,7 @@ func (c *Cache) Get(key CacheKey) (*CachedValue, bool) {
 }
 
 // Set stores metrics in the cache
-func (c *Cache) Set(key CacheKey, data MetricResult, ttl time.Duration) {
+func (c *Cache) set(key CacheKey, data MetricResult, ttl time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	// Use configured TTL if not specified (ttl=0 means "use configured value")
@@ -70,20 +70,6 @@ func (c *Cache) Set(key CacheKey, data MetricResult, ttl time.Duration) {
 	}
 
 	c.cache[key] = cached
-}
-
-// Invalidate removes a specific cache entry
-func (c *Cache) Invalidate(key CacheKey) {
-	c.mu.Lock()
-	delete(c.cache, key)
-	c.mu.Unlock()
-}
-
-// Size returns the number of entries in the cache
-func (c *Cache) Size() int {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return len(c.cache)
 }
 
 // startCleanup runs a background goroutine to periodically clean up expired entries
