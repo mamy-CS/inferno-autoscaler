@@ -392,7 +392,7 @@ data:
 
 			// Populate global config
 			common.Config.UpdateSaturationConfig(map[string]interfaces.SaturationScalingConfig{
-				"default": {}, // Empty config is valid enough to proceed? Validate() might fail if not checked.
+				"default": {},
 			})
 
 			By("Performing optimization loop")
