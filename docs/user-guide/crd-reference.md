@@ -14,25 +14,6 @@ Package v1alpha1 contains API Schema definitions for the llmd v1alpha1 API group
 
 
 
-#### AcceleratorProfile
-
-
-
-AcceleratorProfile defines the configuration for an accelerator used in autoscaling.
-It specifies the type and count of accelerator, as well as parameters for scaling behavior.
-
-
-
-_Appears in:_
-- [ModelProfile](#modelprofile)
-
-| Field | Description | Default | Validation |
-| --- | --- | --- | --- |
-| `acc` _string_ | Acc specifies the type or name of the accelerator (e.g., GPU type). |  | MinLength: 1 <br /> |
-| `accCount` _integer_ | AccCount specifies the number of accelerator units to be used. |  | Minimum: 1 <br /> |
-| `maxBatchSize` _integer_ | MaxBatchSize is the maximum batch size supported by the accelerator. |  | Minimum: 1 <br /> |
-
-
 #### ActuationStatus
 
 
@@ -89,22 +70,6 @@ _Appears in:_
 | `arrivalRate` _string_ | ArrivalRate is the rate of incoming requests in inference server. |  |  |
 | `avgInputTokens` _string_ | AvgInputTokens is the average number of input(prefill) tokens per request in inference server. |  |  |
 | `avgOutputTokens` _string_ | AvgOutputTokens is the average number of output(decode) tokens per request in inference server. |  |  |
-
-
-#### ModelProfile
-
-
-
-ModelProfile provides resource and performance characteristics for the model variant.
-
-
-
-_Appears in:_
-- [VariantAutoscalingSpec](#variantautoscalingspec)
-
-| Field | Description | Default | Validation |
-| --- | --- | --- | --- |
-| `accelerators` _[AcceleratorProfile](#acceleratorprofile) array_ | Accelerators is a list of accelerator profiles for the model variant. |  | MinItems: 1 <br /> |
 
 
 #### OptimizedAlloc
@@ -183,7 +148,6 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `scaleTargetRef` _[CrossVersionObjectReference](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#crossversionobjectreference-v1-autoscaling)_ | ScaleTargetRef references the scalable resource to manage.<br />This follows the same pattern as HorizontalPodAutoscaler. |  | Required: \{\} <br /> |
 | `modelID` _string_ | ModelID specifies the unique identifier of the model to be autoscaled. |  | MinLength: 1 <br />Required: \{\} <br /> |
-| `modelProfile` _[ModelProfile](#modelprofile)_ | ModelProfile provides resource and performance characteristics for the model variant. |  | Optional: \{\} <br /> |
 | `variantCost` _string_ | VariantCost specifies the cost per replica for this variant (used in saturation analysis). | 10.0 | Optional: \{\} <br />Pattern: `^\d+(\.\d+)?$` <br /> |
 
 

@@ -1445,9 +1445,6 @@ var _ = Describe("Test accelerator-based VA grouping isolation", Ordered, func()
 		Expect(err).NotTo(HaveOccurred())
 		Expect(h100VA.Spec.ModelID).To(Equal(modelName))
 
-		By("verifying they have different accelerators")
-		Expect(a100VA.Spec.ModelProfile.Accelerators[0].Acc).To(Equal(a100Acc))
-		Expect(h100VA.Spec.ModelProfile.Accelerators[0].Acc).To(Equal(h100Acc))
 	})
 
 	It("should isolate scaling decisions between VAs with different accelerators", func() {

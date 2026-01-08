@@ -199,40 +199,6 @@ func CreateSystemData(
 }
 
 // add model accelerator pair profile data to inferno system data
-func AddModelAcceleratorProfileToSystemData(
-	sd *infernoConfig.SystemData,
-	modelName string,
-	modelAcceleratorProfile *llmdVariantAutoscalingV1alpha1.AcceleratorProfile) (err error) {
-
-	// extract decode model (itl) parameters
-	// TODO: These parameters are currently hardcoded for testing purposes as we transition
-	// away from storing them in the CRD.
-	// In the future, these should be retrieved from a config map or another source.
-	alpha := 20.28
-	beta := 0.72
-
-	// extract prefill model (ttft) parameters
-	// TODO: These parameters are currently hardcoded for testing purposes.
-	gamma := 0.0
-	delta := 0.0
-
-	sd.Spec.Models.PerfData = append(sd.Spec.Models.PerfData,
-		infernoConfig.ModelAcceleratorPerfData{
-			Name:         modelName,
-			Acc:          modelAcceleratorProfile.Acc,
-			AccCount:     modelAcceleratorProfile.AccCount,
-			MaxBatchSize: modelAcceleratorProfile.MaxBatchSize,
-			DecodeParms: infernoConfig.DecodeParms{
-				Alpha: float32(alpha),
-				Beta:  float32(beta),
-			},
-			PrefillParms: infernoConfig.PrefillParms{
-				Gamma: float32(gamma),
-				Delta: float32(delta),
-			},
-		})
-	return nil
-}
 
 // Add server specs to inferno system data
 func AddServerInfoToSystemData(
@@ -308,14 +274,12 @@ func AddServerInfoToSystemData(
 	}
 
 	// set max batch size if configured
-	maxBatchSize := 0
-	accName := va.Labels["inference.optimization/acceleratorName"]
-	for _, ap := range va.Spec.ModelProfile.Accelerators {
-		if ap.Acc == accName {
-			maxBatchSize = ap.MaxBatchSize
-			break
-		}
-	}
+	maxBatchSize := 32 // Default value now that ModelProfile is removed
+
+	// set max batch size if configured - now handled by capacity/hardcoded or label-based lookups
+	// For now, removing the dependency on ModelProfile.
+	// TODO: Retrieve this from a ConfigMap or other source if needed.
+
 	if maxBatchSize > 0 {
 		serverSpec.MaxBatchSize = maxBatchSize
 	}

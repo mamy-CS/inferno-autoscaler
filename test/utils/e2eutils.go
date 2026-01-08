@@ -933,34 +933,6 @@ func CreateVariantAutoscalingResource(namespace, resourceName, modelId, acc stri
 				Name: resourceName, // Use resourceName as the deployment name
 			},
 			ModelID: modelId,
-			ModelProfile: v1alpha1.ModelProfile{
-				Accelerators: []v1alpha1.AcceleratorProfile{
-					{
-						Acc:      "A100",
-						AccCount: 1,
-
-						MaxBatchSize: 4,
-					},
-					{
-						Acc:      "H100",
-						AccCount: 1,
-
-						MaxBatchSize: 4,
-					},
-					{
-						Acc:      "MI300X",
-						AccCount: 1,
-
-						MaxBatchSize: 4,
-					},
-					{
-						Acc:      "G2",
-						AccCount: 1,
-
-						MaxBatchSize: 4,
-					},
-				},
-			},
 		},
 	}
 }

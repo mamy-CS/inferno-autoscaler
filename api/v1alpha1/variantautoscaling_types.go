@@ -17,38 +17,11 @@ type VariantAutoscalingSpec struct {
 	// +kubebuilder:validation:Required
 	ModelID string `json:"modelID"`
 
-	// ModelProfile provides resource and performance characteristics for the model variant.
-	// +kubebuilder:validation:Optional
-	ModelProfile ModelProfile `json:"modelProfile"`
-
 	// VariantCost specifies the cost per replica for this variant (used in saturation analysis).
 	// +kubebuilder:validation:Optional
 	// +kubebuilder:validation:Pattern=`^\d+(\.\d+)?$`
 	// +kubebuilder:default="10.0"
 	VariantCost string `json:"variantCost,omitempty"`
-}
-
-// ModelProfile provides resource and performance characteristics for the model variant.
-type ModelProfile struct {
-	// Accelerators is a list of accelerator profiles for the model variant.
-	// +kubebuilder:validation:MinItems=1
-	Accelerators []AcceleratorProfile `json:"accelerators"`
-}
-
-// AcceleratorProfile defines the configuration for an accelerator used in autoscaling.
-// It specifies the type and count of accelerator, as well as parameters for scaling behavior.
-type AcceleratorProfile struct {
-	// Acc specifies the type or name of the accelerator (e.g., GPU type).
-	// +kubebuilder:validation:MinLength=1
-	Acc string `json:"acc"`
-
-	// AccCount specifies the number of accelerator units to be used.
-	// +kubebuilder:validation:Minimum=1
-	AccCount int `json:"accCount"`
-
-	// MaxBatchSize is the maximum batch size supported by the accelerator.
-	// +kubebuilder:validation:Minimum=1
-	MaxBatchSize int `json:"maxBatchSize"`
 }
 
 // VariantAutoscalingStatus represents the current status of autoscaling for a variant,

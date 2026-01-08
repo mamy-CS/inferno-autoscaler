@@ -33,15 +33,9 @@ func TestGetAcceleratorType(t *testing.T) {
 		{
 			name: "accelerator from spec",
 			va: &wvav1alpha1.VariantAutoscaling{
-				Spec: wvav1alpha1.VariantAutoscalingSpec{
-					ModelProfile: wvav1alpha1.ModelProfile{
-						Accelerators: []wvav1alpha1.AcceleratorProfile{
-							{Acc: "A100", AccCount: 1, MaxBatchSize: 32},
-						},
-					},
-				},
+				Spec: wvav1alpha1.VariantAutoscalingSpec{},
 			},
-			expected: "A100",
+			expected: "",
 		},
 		{
 			name: "accelerator from label when spec is empty",
@@ -51,11 +45,7 @@ func TestGetAcceleratorType(t *testing.T) {
 						AcceleratorNameLabel: "H100",
 					},
 				},
-				Spec: wvav1alpha1.VariantAutoscalingSpec{
-					ModelProfile: wvav1alpha1.ModelProfile{
-						Accelerators: []wvav1alpha1.AcceleratorProfile{},
-					},
-				},
+				Spec: wvav1alpha1.VariantAutoscalingSpec{},
 			},
 			expected: "H100",
 		},
@@ -67,24 +57,14 @@ func TestGetAcceleratorType(t *testing.T) {
 						AcceleratorNameLabel: "H100",
 					},
 				},
-				Spec: wvav1alpha1.VariantAutoscalingSpec{
-					ModelProfile: wvav1alpha1.ModelProfile{
-						Accelerators: []wvav1alpha1.AcceleratorProfile{
-							{Acc: "A100", AccCount: 1, MaxBatchSize: 32},
-						},
-					},
-				},
+				Spec: wvav1alpha1.VariantAutoscalingSpec{},
 			},
-			expected: "A100",
+			expected: "H100",
 		},
 		{
 			name: "empty when no accelerator info",
 			va: &wvav1alpha1.VariantAutoscaling{
-				Spec: wvav1alpha1.VariantAutoscalingSpec{
-					ModelProfile: wvav1alpha1.ModelProfile{
-						Accelerators: []wvav1alpha1.AcceleratorProfile{},
-					},
-				},
+				Spec: wvav1alpha1.VariantAutoscalingSpec{},
 			},
 			expected: "",
 		},
@@ -94,11 +74,7 @@ func TestGetAcceleratorType(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: nil,
 				},
-				Spec: wvav1alpha1.VariantAutoscalingSpec{
-					ModelProfile: wvav1alpha1.ModelProfile{
-						Accelerators: []wvav1alpha1.AcceleratorProfile{},
-					},
-				},
+				Spec: wvav1alpha1.VariantAutoscalingSpec{},
 			},
 			expected: "",
 		},
@@ -128,28 +104,24 @@ func TestGroupVariantAutoscalingByModel(t *testing.T) {
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "va-a100",
 						Namespace: "default",
+						Labels: map[string]string{
+							"inference.optimization/acceleratorName": "A100",
+						},
 					},
 					Spec: wvav1alpha1.VariantAutoscalingSpec{
 						ModelID: "llama-8b",
-						ModelProfile: wvav1alpha1.ModelProfile{
-							Accelerators: []wvav1alpha1.AcceleratorProfile{
-								{Acc: "A100", AccCount: 1, MaxBatchSize: 32},
-							},
-						},
 					},
 				},
 				{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "va-h100",
 						Namespace: "default",
+						Labels: map[string]string{
+							"inference.optimization/acceleratorName": "H100",
+						},
 					},
 					Spec: wvav1alpha1.VariantAutoscalingSpec{
 						ModelID: "llama-8b",
-						ModelProfile: wvav1alpha1.ModelProfile{
-							Accelerators: []wvav1alpha1.AcceleratorProfile{
-								{Acc: "H100", AccCount: 1, MaxBatchSize: 64},
-							},
-						},
 					},
 				},
 			},
@@ -166,11 +138,6 @@ func TestGroupVariantAutoscalingByModel(t *testing.T) {
 					},
 					Spec: wvav1alpha1.VariantAutoscalingSpec{
 						ModelID: "llama-8b",
-						ModelProfile: wvav1alpha1.ModelProfile{
-							Accelerators: []wvav1alpha1.AcceleratorProfile{
-								{Acc: "A100", AccCount: 1, MaxBatchSize: 32},
-							},
-						},
 					},
 				},
 				{
@@ -180,16 +147,11 @@ func TestGroupVariantAutoscalingByModel(t *testing.T) {
 					},
 					Spec: wvav1alpha1.VariantAutoscalingSpec{
 						ModelID: "llama-8b",
-						ModelProfile: wvav1alpha1.ModelProfile{
-							Accelerators: []wvav1alpha1.AcceleratorProfile{
-								{Acc: "A100", AccCount: 1, MaxBatchSize: 32},
-							},
-						},
 					},
 				},
 			},
 			expectedGroups: 1,
-			expectedKeys:   []string{"llama-8b|default|A100"},
+			expectedKeys:   []string{"llama-8b|default|"},
 		},
 		{
 			name: "different namespaces creates separate groups",
@@ -201,11 +163,6 @@ func TestGroupVariantAutoscalingByModel(t *testing.T) {
 					},
 					Spec: wvav1alpha1.VariantAutoscalingSpec{
 						ModelID: "llama-8b",
-						ModelProfile: wvav1alpha1.ModelProfile{
-							Accelerators: []wvav1alpha1.AcceleratorProfile{
-								{Acc: "A100", AccCount: 1, MaxBatchSize: 32},
-							},
-						},
 					},
 				},
 				{
@@ -215,16 +172,11 @@ func TestGroupVariantAutoscalingByModel(t *testing.T) {
 					},
 					Spec: wvav1alpha1.VariantAutoscalingSpec{
 						ModelID: "llama-8b",
-						ModelProfile: wvav1alpha1.ModelProfile{
-							Accelerators: []wvav1alpha1.AcceleratorProfile{
-								{Acc: "A100", AccCount: 1, MaxBatchSize: 32},
-							},
-						},
 					},
 				},
 			},
 			expectedGroups: 2,
-			expectedKeys:   []string{"llama-8b|ns1|A100", "llama-8b|ns2|A100"},
+			expectedKeys:   []string{"llama-8b|ns1|", "llama-8b|ns2|"},
 		},
 	}
 
