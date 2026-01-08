@@ -1,8 +1,3 @@
-// Package collector provides metrics collection functionality.
-//
-// This package implements a source registry that manages multiple
-// metrics sources (Prometheus, Direct Pod scraping, EPP).
-// Each source maintains its own query registry.
 package collector
 
 import (
@@ -10,6 +5,13 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+)
+
+// Common parameter names used across queries.
+const (
+	ParamNamespace = "namespace"
+	ParamModelID   = "modelID"
+	ParamPodFilter = "podFilter" // Optional regex filter for pod names
 )
 
 // QueryType distinguishes between simple metric names and full PromQL expressions.
@@ -40,22 +42,22 @@ type QueryTemplate struct {
 	Description string
 }
 
-// QueryRegistry stores and manages query templates for a metrics source.
-// Each source (PrometheusSource, PodScrapeSource, etc.) has its own QueryRegistry.
-type QueryRegistry struct {
+// QueryList stores and manages query templates for a metrics source.
+// Each source (PrometheusSource, EPPSource, etc.) has its own QueryList.
+type QueryList struct {
 	mu      sync.RWMutex
 	queries map[string]QueryTemplate
 }
 
-// NewQueryRegistry creates a new query registry.
-func newQueryRegistry() *QueryRegistry {
-	return &QueryRegistry{
+// NewQueryList creates a new query registry.
+func newQueryList() *QueryList {
+	return &QueryList{
 		queries: make(map[string]QueryTemplate),
 	}
 }
 
 // Register adds a query template to this registry.
-func (r *QueryRegistry) Register(query QueryTemplate) error {
+func (r *QueryList) Register(query QueryTemplate) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -75,14 +77,14 @@ func (r *QueryRegistry) Register(query QueryTemplate) error {
 
 // MustRegister is like Register but panics on error.
 // Use for init-time registration where errors are programming mistakes.
-func (r *QueryRegistry) MustRegister(query QueryTemplate) {
+func (r *QueryList) MustRegister(query QueryTemplate) {
 	if err := r.Register(query); err != nil {
 		panic(fmt.Sprintf("failed to register query: %v", err))
 	}
 }
 
 // Get retrieves a registered query by name.
-func (r *QueryRegistry) Get(name string) *QueryTemplate {
+func (r *QueryList) Get(name string) *QueryTemplate {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -94,7 +96,7 @@ func (r *QueryRegistry) Get(name string) *QueryTemplate {
 
 // Build constructs the final query string by substituting parameters.
 // Uses simple {{.paramName}} placeholder replacement.
-func (r *QueryRegistry) Build(name string, params map[string]string) (string, error) {
+func (r *QueryList) Build(name string, params map[string]string) (string, error) {
 	r.mu.RLock()
 	query, ok := r.queries[name]
 	r.mu.RUnlock()
@@ -121,7 +123,7 @@ func (r *QueryRegistry) Build(name string, params map[string]string) (string, er
 }
 
 // List returns all registered query names.
-func (r *QueryRegistry) List() []string {
+func (r *QueryList) List() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 

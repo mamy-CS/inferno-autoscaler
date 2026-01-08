@@ -22,6 +22,7 @@ import (
 	goflag "flag"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
@@ -45,6 +46,7 @@ import (
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/prometheus"
+	collectorv2 "github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/v2"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/config"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/controller"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/saturation"
@@ -386,11 +388,28 @@ func main() {
 
 	// Register optimization engine loops with the manager. Only start when leader.
 	err = mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
+		sourceRegistry := collectorv2.NewSourceRegistry()
+
+		// Initialize collector v2 if COLLECTOR_V2 is enabled
+		if strings.EqualFold(os.Getenv("COLLECTOR_V2"), "true") {
+			setupLog.Info("COLLECTOR_V2 enabled, initializing v2 collector")
+
+			// Create PrometheusSource with default config
+			promSource := collectorv2.NewPrometheusSource(ctx, promAPI, collectorv2.DefaultPrometheusSourceConfig())
+
+			// Register in global source registry
+			if err := sourceRegistry.Register("prometheus", promSource); err != nil {
+				setupLog.Error(err, "failed to register prometheus source in v2 registry")
+				os.Exit(1)
+			}
+		}
+
 		engine := saturation.NewEngine(
 			mgr.GetClient(),
 			mgr.GetScheme(),
 			mgr.GetEventRecorderFor("workload-variant-autoscaler-saturation-engine"),
 			metricsCollector,
+			sourceRegistry,
 		)
 		go engine.StartOptimizeLoop(ctx)
 		return nil

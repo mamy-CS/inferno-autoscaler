@@ -38,32 +38,35 @@ func DefaultPrometheusSourceConfig() PrometheusSourceConfig {
 // PrometheusSource implements MetricsSource for Prometheus backend.
 type PrometheusSource struct {
 	api      promv1.API
-	registry *QueryRegistry // registry stores query templates for this source
+	registry *QueryList // registry stores query templates for this source
 	config   PrometheusSourceConfig
 
-	mu    sync.RWMutex
-	cache map[CacheKey]*CachedValue
+	mu    sync.RWMutex // protects the cache and refresh operations
+	cache *Cache
 }
 
 // NewPrometheusSource creates a new Prometheus metrics source with a default query registry.
-func NewPrometheusSource(api promv1.API, config PrometheusSourceConfig) *PrometheusSource {
+func NewPrometheusSource(ctx context.Context, api promv1.API, config PrometheusSourceConfig) *PrometheusSource {
 	return &PrometheusSource{
 		api:      api,
-		registry: newQueryRegistry(),
+		registry: newQueryList(),
 		config:   config,
-		cache:    make(map[CacheKey]*CachedValue),
+		cache:    NewCache(ctx, config.DefaultTTL, 1*time.Second),
 	}
 }
 
-// QueryRegistry returns the query registry for this source.
+// QueryList returns the query registry for this source.
 // Use this to register queries specific to this source.
-func (p *PrometheusSource) QueryRegistry() *QueryRegistry {
+func (p *PrometheusSource) QueryList() *QueryList {
 	return p.registry
 }
 
 // Refresh executes queries and updates the cache.
 // If spec.Queries is empty, refreshes all registered queries for this source.
 func (p *PrometheusSource) Refresh(ctx context.Context, spec RefreshSpec) (map[string]*MetricResult, error) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
 	logger := ctrl.LoggerFrom(ctx)
 
 	// Determine which queries to execute
@@ -96,14 +99,7 @@ func (p *PrometheusSource) Refresh(ctx context.Context, spec RefreshSpec) (map[s
 
 			// Update cache with key that includes params
 			cacheKey := BuildCacheKey(queryName, spec.Params)
-			p.mu.Lock()
-			p.cache[cacheKey] = &CachedValue{
-				Result:   result,
-				CachedAt: time.Now(),
-				TTL:      p.config.DefaultTTL,
-				Params:   spec.Params,
-			}
-			p.mu.Unlock()
+			p.cache.Set(cacheKey, *result, p.config.DefaultTTL)
 		}(name)
 	}
 
@@ -260,7 +256,7 @@ func (p *PrometheusSource) Get(queryName string, params map[string]string) *Cach
 	defer p.mu.RUnlock()
 
 	cacheKey := BuildCacheKey(queryName, params)
-	cached, ok := p.cache[cacheKey]
+	cached, ok := p.cache.Get(cacheKey)
 	if !ok {
 		return nil
 	}
@@ -270,61 +266,6 @@ func (p *PrometheusSource) Get(queryName string, params map[string]string) *Cach
 	}
 
 	return cached
-}
-
-// GetAll returns all non-expired cached values.
-func (p *PrometheusSource) GetAll() map[CacheKey]*CachedValue {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-
-	results := make(map[CacheKey]*CachedValue)
-	for key, cached := range p.cache {
-		if !cached.IsExpired() {
-			results[key] = cached
-		}
-	}
-	return results
-}
-
-// Invalidate removes cached results matching the query name.
-// If params is provided, only invalidates the specific query+params combination.
-// If params is nil, invalidates all cached values for that query name.
-func (p *PrometheusSource) Invalidate(queryName string, params map[string]string) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	if params != nil {
-		// Invalidate specific query+params combination
-		cacheKey := BuildCacheKey(queryName, params)
-		delete(p.cache, cacheKey)
-		return
-	}
-
-	// Invalidate all entries for this query name
-	for key := range p.cache {
-		if key.QueryName() == queryName {
-			delete(p.cache, key)
-		}
-	}
-}
-
-// InvalidateAll removes all cached results.
-func (p *PrometheusSource) InvalidateAll() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.cache = make(map[CacheKey]*CachedValue)
-}
-
-// GetWithFreshness retrieves a cached value with freshness information.
-// Returns the cached value and whether it's considered fresh.
-func (p *PrometheusSource) GetWithFreshness(queryName string, params map[string]string, freshnessThreshold time.Duration) (*CachedValue, bool) {
-	cached := p.Get(queryName, params)
-	if cached == nil {
-		return nil, false
-	}
-
-	isFresh := time.Since(cached.CachedAt) <= freshnessThreshold
-	return cached, isFresh
 }
 
 // MustGet retrieves a cached result or refreshes if expired.

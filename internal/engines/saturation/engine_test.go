@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -37,7 +36,6 @@ import (
 	collectorv2 "github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/v2"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/config"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/common"
-	saturationmetrics "github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/saturation/metrics"
 	interfaces "github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
 	utils "github.com/llm-d-incubation/workload-variant-autoscaler/internal/utils"
@@ -403,7 +401,7 @@ data:
 
 			// Initialize MetricsCollector with mock Prometheus API
 			metricsCollector := collector.NewPrometheusCollector(mockPromAPI)
-			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, metricsCollector)
+			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, metricsCollector, collectorv2.NewSourceRegistry())
 
 			// Populate global config
 			common.Config.UpdateSaturationConfig(map[string]interfaces.SaturationScalingConfig{
@@ -464,7 +462,7 @@ data:
 			}
 
 			By("Converting saturation targets to decisions")
-			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, nil)
+			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, nil, collectorv2.NewSourceRegistry())
 			decisions := engine.convertSaturationTargetsToDecisions(context.Background(), saturationTargets, saturationAnalysis, variantStates)
 
 			By("Verifying all variants are included in decisions")
@@ -480,107 +478,6 @@ data:
 			Expect(decisionMap["variant-a"].Action).To(Equal(interfaces.ActionNoChange))
 			Expect(decisionMap["variant-b"].Action).To(Equal(interfaces.ActionScaleUp))
 			Expect(decisionMap["variant-c"].Action).To(Equal(interfaces.ActionNoChange))
-		})
-	})
-
-	Context("Collector V2 Integration", func() {
-		BeforeEach(func() {
-			logging.NewTestLogger()
-		})
-
-		It("should return false when UseCollectorV2 is called without env variable set", func() {
-			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, nil)
-			Expect(engine.UseCollectorV2()).To(BeFalse())
-		})
-
-		It("should return false when UseCollectorV2 is called with env variable but no collector set", func() {
-			os.Setenv("COLLECTOR_V2", "true") // nolint:errcheck
-			defer os.Unsetenv("COLLECTOR_V2") // nolint:errcheck
-
-			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, nil)
-			Expect(engine.UseCollectorV2()).To(BeFalse())
-		})
-
-		It("should return true when UseCollectorV2 is called with env variable and collector set", func() {
-			os.Setenv("COLLECTOR_V2", "true") // nolint:errcheck
-			defer os.Unsetenv("COLLECTOR_V2") // nolint:errcheck
-
-			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, nil)
-
-			// Create a mock v2 collector using testutils.MockPromAPI
-			mockAPI := &testutils.MockPromAPI{
-				QueryResults: map[string]model.Value{},
-			}
-			config := collectorv2.DefaultPrometheusSourceConfig()
-			source := collectorv2.NewPrometheusSource(mockAPI, config)
-			collectorv2.RegisterStandardQueries(source)
-			v2Collector := saturationmetrics.NewReplicaMetricsCollector(source, k8sClient)
-
-			engine.SetReplicaMetricsCollectorV2(v2Collector)
-			Expect(engine.UseCollectorV2()).To(BeTrue())
-		})
-
-		It("should accept SetReplicaMetricsCollectorV2 and store the collector", func() {
-			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, nil)
-
-			mockAPI := &testutils.MockPromAPI{
-				QueryResults: map[string]model.Value{},
-			}
-			config := collectorv2.DefaultPrometheusSourceConfig()
-			source := collectorv2.NewPrometheusSource(mockAPI, config)
-			collectorv2.RegisterStandardQueries(source)
-			v2Collector := saturationmetrics.NewReplicaMetricsCollector(source, k8sClient)
-
-			engine.SetReplicaMetricsCollectorV2(v2Collector)
-			Expect(engine.ReplicaMetricsCollectorV2).ToNot(BeNil())
-			Expect(engine.ReplicaMetricsCollectorV2).To(Equal(v2Collector))
-		})
-
-		It("should use custom staleness threshold when creating v2 collector", func() {
-			mockAPI := &testutils.MockPromAPI{
-				QueryResults: map[string]model.Value{},
-			}
-			config := collectorv2.DefaultPrometheusSourceConfig()
-			source := collectorv2.NewPrometheusSource(mockAPI, config)
-			collectorv2.RegisterStandardQueries(source)
-			customThreshold := 5 * time.Minute
-			v2Collector := saturationmetrics.NewReplicaMetricsCollectorWithThreshold(source, k8sClient, customThreshold)
-
-			Expect(v2Collector).ToNot(BeNil())
-		})
-
-		It("should handle COLLECTOR_V2 env variable case insensitively", func() {
-			testCases := []struct {
-				envValue string
-				expected bool
-			}{
-				{"true", true},
-				{"TRUE", true},
-				{"True", true},
-				{"false", false},
-				{"FALSE", false},
-				{"", false},
-				{"invalid", false},
-			}
-
-			for _, tc := range testCases {
-				os.Setenv("COLLECTOR_V2", tc.envValue) // nolint:errcheck
-
-				engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, nil)
-				mockAPI := &testutils.MockPromAPI{
-					QueryResults: map[string]model.Value{},
-				}
-				config := collectorv2.DefaultPrometheusSourceConfig()
-				source := collectorv2.NewPrometheusSource(mockAPI, config)
-				collectorv2.RegisterStandardQueries(source)
-				v2Collector := saturationmetrics.NewReplicaMetricsCollector(source, k8sClient)
-				engine.SetReplicaMetricsCollectorV2(v2Collector)
-
-				result := engine.UseCollectorV2()
-				Expect(result).To(Equal(tc.expected), fmt.Sprintf("Expected %v for env value '%s'", tc.expected, tc.envValue))
-
-				os.Unsetenv("COLLECTOR_V2") // nolint:errcheck
-			}
 		})
 	})
 
@@ -747,16 +644,16 @@ data:
 			}
 
 			// Create v2 collector infrastructure
+			sourceRegistry := collectorv2.NewSourceRegistry()
 			config := collectorv2.DefaultPrometheusSourceConfig()
-			source := collectorv2.NewPrometheusSource(mockPromAPI, config)
-			collectorv2.RegisterStandardQueries(source)
-			v2Collector := saturationmetrics.NewReplicaMetricsCollector(source, k8sClient)
+			source := collectorv2.NewPrometheusSource(context.Background(), mockPromAPI, config)
+
+			// Register in the global registry so engine.NewEngine can retrieve it
+			sourceRegistry.Register("prometheus", source)
 
 			// Initialize legacy MetricsCollector for non-saturation metrics
 			metricsCollector := collector.NewPrometheusCollector(mockPromAPI)
-			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, metricsCollector)
-			engine.SetReplicaMetricsCollectorV2(v2Collector)
-
+			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, metricsCollector, sourceRegistry)
 			// Verify v2 collector is active
 			Expect(engine.UseCollectorV2()).To(BeTrue())
 
@@ -794,7 +691,7 @@ data:
 			}
 
 			metricsCollector := collector.NewPrometheusCollector(mockPromAPI)
-			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, metricsCollector)
+			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, metricsCollector, collectorv2.NewSourceRegistry())
 
 			// Verify v2 collector is NOT active
 			Expect(engine.UseCollectorV2()).To(BeFalse())
@@ -818,14 +715,14 @@ data:
 				QueryErrors:  map[string]error{},
 			}
 
+			sourceRegistry := collectorv2.NewSourceRegistry()
 			config := collectorv2.DefaultPrometheusSourceConfig()
-			source := collectorv2.NewPrometheusSource(mockPromAPI, config)
-			collectorv2.RegisterStandardQueries(source)
-			v2Collector := saturationmetrics.NewReplicaMetricsCollector(source, k8sClient)
+			source := collectorv2.NewPrometheusSource(context.Background(), mockPromAPI, config)
+			// Register in the global registry so engine.NewEngine can retrieve it
+			sourceRegistry.Register("prometheus", source)
 
 			metricsCollector := collector.NewPrometheusCollector(mockPromAPI)
-			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, metricsCollector)
-			engine.SetReplicaMetricsCollectorV2(v2Collector)
+			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, metricsCollector, sourceRegistry)
 
 			Expect(engine.UseCollectorV2()).To(BeTrue())
 

@@ -1,7 +1,3 @@
-// Package collector provides metrics collection functionality.
-//
-// This file defines the MetricsSource interface and related types for
-// collecting and caching metrics from various backends.
 package collector
 
 import (
@@ -12,9 +8,9 @@ import (
 // MetricsSource defines the interface for a metrics collection source.
 // Implementations collect metrics from a specific backend and cache results.
 type MetricsSource interface {
-	// QueryRegistry returns the query registry for this source.
+	// QueryList returns the query registry for this source.
 	// Use this to register queries specific to this source.
-	QueryRegistry() *QueryRegistry
+	QueryList() *QueryList
 
 	// Refresh executes queries and updates the cache.
 	// If spec.Queries is empty, refreshes all registered queries.
@@ -25,18 +21,6 @@ type MetricsSource interface {
 	// The cache key is constructed from both queryName and params.
 	// Returns nil if not cached or expired.
 	Get(queryName string, params map[string]string) *CachedValue
-
-	// GetAll returns all cached values.
-	GetAll() map[CacheKey]*CachedValue
-
-	// Invalidate removes cached results matching the query name.
-	// If params is provided, only invalidates the specific query+params combination.
-	// If params is nil, invalidates all cached values for that query name.
-	// If no arguments provided, invalidates all cached results.
-	Invalidate(queryName string, params map[string]string)
-
-	// InvalidateAll removes all cached results.
-	InvalidateAll()
 }
 
 // MetricValue represents a single metric value with its metadata.

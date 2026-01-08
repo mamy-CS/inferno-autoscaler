@@ -1,8 +1,3 @@
-// Package collector provides metrics collection functionality.
-//
-// This package implements a source registry that manages multiple
-// metrics sources (Prometheus, Direct Pod scraping, EPP).
-// Each source maintains its own query registry.
 package collector
 
 import (
@@ -11,13 +6,16 @@ import (
 )
 
 // SourceRegistry manages multiple metrics sources.
-// This replaces the old global query registry approach.
+// Use DefaultSourceRegistry() to access the singleton instance,
+// or NewSourceRegistry() to create isolated instances for testing.
 type SourceRegistry struct {
 	mu      sync.RWMutex
 	sources map[string]MetricsSource
 }
 
 // NewSourceRegistry creates a new source registry.
+// For production use, prefer DefaultSourceRegistry() to access the singleton.
+// This constructor is useful for testing with isolated registries.
 func NewSourceRegistry() *SourceRegistry {
 	return &SourceRegistry{
 		sources: make(map[string]MetricsSource),
@@ -25,17 +23,10 @@ func NewSourceRegistry() *SourceRegistry {
 }
 
 // Register adds a metrics source to the registry.
-// The source is identified by a unique name (e.g., "prometheus-primary").
+// The source is identified by a unique name (e.g., "prometheus").
 func (r *SourceRegistry) Register(name string, source MetricsSource) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-
-	if name == "" {
-		return fmt.Errorf("source name is required")
-	}
-	if source == nil {
-		return fmt.Errorf("source cannot be nil")
-	}
 
 	if _, exists := r.sources[name]; exists {
 		return fmt.Errorf("source %q already registered", name)
@@ -70,12 +61,4 @@ func (r *SourceRegistry) List() []string {
 		names = append(names, name)
 	}
 	return names
-}
-
-// Unregister removes a source from the registry.
-func (r *SourceRegistry) Unregister(name string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	delete(r.sources, name)
 }

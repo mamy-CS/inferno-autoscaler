@@ -105,8 +105,8 @@ func (c *ReplicaMetricsCollector) CollectReplicaMetrics(
 
 	// Refresh saturation queries (KV cache and queue length)
 	queries := []string{
-		collector.QueryKvCacheUsage,
-		collector.QueryQueueLength,
+		QueryKvCacheUsage,
+		QueryQueueLength,
 	}
 
 	results, err := c.source.Refresh(ctx, collector.RefreshSpec{
@@ -132,7 +132,7 @@ func (c *ReplicaMetricsCollector) CollectReplicaMetrics(
 	now := time.Now()
 
 	// Process KV cache results
-	if result := results[collector.QueryKvCacheUsage]; result != nil {
+	if result := results[QueryKvCacheUsage]; result != nil {
 		if result.HasError() {
 			return nil, fmt.Errorf("KV cache query failed: %w", result.Error)
 		}
@@ -148,7 +148,7 @@ func (c *ReplicaMetricsCollector) CollectReplicaMetrics(
 			// Check if metric is stale based on timestamp
 			metricAge := now.Sub(value.Timestamp)
 			if metricAge > c.stalenessThreshold {
-				logger.V(logging.DEBUG).Info("Filtering stale KV cache metric",
+				logger.V(logging.VERBOSE).Info("Filtering stale KV cache metric",
 					"pod", podName,
 					"metricAge", metricAge.String(),
 					"threshold", c.stalenessThreshold.String(),
@@ -172,7 +172,7 @@ func (c *ReplicaMetricsCollector) CollectReplicaMetrics(
 	}
 
 	// Process queue length results
-	if result := results[collector.QueryQueueLength]; result != nil {
+	if result := results[QueryQueueLength]; result != nil {
 		if result.HasError() {
 			return nil, fmt.Errorf("queue length query failed: %w", result.Error)
 		}
@@ -188,7 +188,7 @@ func (c *ReplicaMetricsCollector) CollectReplicaMetrics(
 			// Check if metric is stale based on timestamp
 			metricAge := now.Sub(value.Timestamp)
 			if metricAge > c.stalenessThreshold {
-				logger.V(logging.DEBUG).Info("Filtering stale queue metric",
+				logger.V(logging.VERBOSE).Info("Filtering stale queue metric",
 					"pod", podName,
 					"metricAge", metricAge.String(),
 					"threshold", c.stalenessThreshold.String(),

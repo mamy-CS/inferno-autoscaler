@@ -36,6 +36,7 @@ import (
 	actuator "github.com/llm-d-incubation/workload-variant-autoscaler/internal/actuator"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/prometheus"
+	collectorv2 "github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/v2"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/common"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/executor"
 	saturationmetrics "github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/saturation/metrics"
@@ -61,7 +62,7 @@ type Engine struct {
 }
 
 // NewEngine creates a new instance of the saturation engine.
-func NewEngine(client client.Client, scheme *runtime.Scheme, recorder record.EventRecorder, collector interfaces.MetricsCollector) *Engine {
+func NewEngine(client client.Client, scheme *runtime.Scheme, recorder record.EventRecorder, collector interfaces.MetricsCollector, metricsRegistry *collectorv2.SourceRegistry) *Engine {
 	engine := Engine{
 		client:           client,
 		scheme:           scheme,
@@ -77,13 +78,15 @@ func NewEngine(client client.Client, scheme *runtime.Scheme, recorder record.Eve
 		RetryBackoff: 100 * time.Millisecond,
 	})
 
-	return &engine
-}
+	if strings.EqualFold(os.Getenv("COLLECTOR_V2"), "true") {
 
-// SetReplicaMetricsCollectorV2 sets the v2 replica metrics collector.
-// This should be called during engine initialization when COLLECTOR_V2 env is set.
-func (e *Engine) SetReplicaMetricsCollectorV2(collector *saturationmetrics.ReplicaMetricsCollector) {
-	e.ReplicaMetricsCollectorV2 = collector
+		promSource := metricsRegistry.Get("prometheus").(*collectorv2.PrometheusSource)
+		engine.ReplicaMetricsCollectorV2 = saturationmetrics.NewReplicaMetricsCollector(promSource, client)
+
+		saturationmetrics.RegisterSaturationQueries(metricsRegistry)
+	}
+
+	return &engine
 }
 
 // UseCollectorV2 returns true if the v2 collector should be used.

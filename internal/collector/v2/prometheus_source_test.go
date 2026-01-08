@@ -86,7 +86,7 @@ func (m *mockPrometheusAPI) WalReplay(ctx context.Context) (v1.WalReplayStatus, 
 var _ = Describe("PrometheusSource", func() {
 	var (
 		mockAPI  *mockPrometheusAPI
-		registry *QueryRegistry
+		registry *QueryList
 		source   *PrometheusSource
 		ctx      context.Context
 	)
@@ -114,11 +114,11 @@ var _ = Describe("PrometheusSource", func() {
 				},
 			}
 
-			source = NewPrometheusSource(mockAPI, PrometheusSourceConfig{
+			source = NewPrometheusSource(context.Background(), mockAPI, PrometheusSourceConfig{
 				DefaultTTL:   30 * time.Second,
 				QueryTimeout: 5 * time.Second,
 			})
-			registry = source.QueryRegistry()
+			registry = source.QueryList()
 			err := registry.Register(QueryTemplate{
 				Name:        "test_query",
 				Type:        QueryTypePromQL,
@@ -164,11 +164,11 @@ var _ = Describe("PrometheusSource", func() {
 				},
 			}
 
-			source = NewPrometheusSource(mockAPI, PrometheusSourceConfig{
+			source = NewPrometheusSource(context.Background(), mockAPI, PrometheusSourceConfig{
 				DefaultTTL:   1 * time.Hour,
 				QueryTimeout: 5 * time.Second,
 			})
-			registry = source.QueryRegistry()
+			registry = source.QueryList()
 
 			err := registry.Register(QueryTemplate{
 				Name:        "cached_query",
@@ -245,8 +245,8 @@ var _ = Describe("PrometheusSource", func() {
 				},
 			}
 
-			source = NewPrometheusSource(mockAPI, DefaultPrometheusSourceConfig())
-			registry = source.QueryRegistry()
+			source = NewPrometheusSource(context.Background(), mockAPI, DefaultPrometheusSourceConfig())
+			registry = source.QueryList()
 
 			err := registry.Register(QueryTemplate{
 				Name:     "query1",
@@ -262,32 +262,6 @@ var _ = Describe("PrometheusSource", func() {
 			Expect(err).ToNot(HaveOccurred())
 		})
 
-		Context("when invalidating a specific query", func() {
-			It("should remove only the specified query from cache", func() {
-				_, err := source.Refresh(ctx, RefreshSpec{})
-				Expect(err).NotTo(HaveOccurred())
-
-				Expect(source.Get("query1", nil)).NotTo(BeNil())
-				Expect(source.Get("query2", nil)).NotTo(BeNil())
-
-				source.Invalidate("query1", nil)
-
-				Expect(source.Get("query1", nil)).To(BeNil())
-				Expect(source.Get("query2", nil)).NotTo(BeNil())
-			})
-		})
-
-		Context("when invalidating all queries", func() {
-			It("should clear the entire cache", func() {
-				_, err := source.Refresh(ctx, RefreshSpec{})
-				Expect(err).NotTo(HaveOccurred())
-
-				source.InvalidateAll()
-
-				Expect(source.Get("query1", nil)).To(BeNil())
-				Expect(source.Get("query2", nil)).To(BeNil())
-			})
-		})
 	})
 
 	Describe("Parsing", func() {
