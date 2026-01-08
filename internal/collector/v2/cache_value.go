@@ -12,7 +12,7 @@ type CacheKey string
 
 // CachedValue wraps a MetricResult with cache metadata.
 type CachedValue struct {
-	Result   *MetricResult
+	Result   MetricResult
 	CachedAt time.Time
 	TTL      time.Duration
 	// Params stores the parameters used to generate this cached value.

@@ -64,8 +64,8 @@ func (p *PrometheusSource) QueryList() *QueryList {
 // Refresh executes queries and updates the cache.
 // If spec.Queries is empty, refreshes all registered queries for this source.
 func (p *PrometheusSource) Refresh(ctx context.Context, spec RefreshSpec) (map[string]*MetricResult, error) {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
+	p.mu.Lock()
+	defer p.mu.Unlock()
 
 	logger := ctrl.LoggerFrom(ctx)
 
@@ -272,8 +272,8 @@ func (p *PrometheusSource) Get(queryName string, params map[string]string) *Cach
 // This is a convenience method for cases where you always want a result.
 func (p *PrometheusSource) MustGet(ctx context.Context, queryName string, params map[string]string) *MetricResult {
 	cached := p.Get(queryName, params)
-	if cached != nil && cached.Result != nil {
-		return cached.Result
+	if cached != nil {
+		return &cached.Result
 	}
 
 	// Not cached or expired, refresh this specific query

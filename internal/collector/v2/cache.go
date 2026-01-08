@@ -41,21 +41,13 @@ func NewCache(ctx context.Context, configuredTTL time.Duration, cleanupInterval 
 }
 
 // Get retrieves cached metrics by key
+// Returns the cached metrics and true if found and not expired, false otherwise
 func (c *Cache) Get(key CacheKey) (*CachedValue, bool) {
 	c.mu.RLock()
 	value, ok := c.cache[key]
 	c.mu.RUnlock()
 
-	if !ok {
-		return nil, false
-	}
-
-	// Check if expired
-	if value.IsExpired() {
-		// Remove expired entry
-		c.mu.Lock()
-		delete(c.cache, key)
-		c.mu.Unlock()
+	if !ok || value == nil || value.IsExpired() {
 		return nil, false
 	}
 
@@ -72,7 +64,7 @@ func (c *Cache) Set(key CacheKey, data MetricResult, ttl time.Duration) {
 	}
 
 	cached := &CachedValue{
-		Result:   &data,
+		Result:   data,
 		CachedAt: time.Now(),
 		TTL:      ttl,
 	}
