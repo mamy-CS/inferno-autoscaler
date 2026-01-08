@@ -438,7 +438,7 @@ func TestCalculatesaturationTargets_ScaleDownMostExpensive(t *testing.T) {
 	}
 }
 
-func TestCalculatesaturationTargets_PreserveDesired(t *testing.T) {
+func TestCalculatesaturationTargets_ModelLevelTransitionBlocking(t *testing.T) {
 	analyzer := NewAnalyzer()
 
 	saturationAnalysis := &interfaces.ModelSaturationAnalysis{
@@ -453,6 +453,7 @@ func TestCalculatesaturationTargets_PreserveDesired(t *testing.T) {
 	}
 
 	// v1 has desired > current (previous optimizer wanted to scale up)
+	// This puts the MODEL in transition state, blocking all scaling decisions
 	variantStates := []interfaces.VariantReplicaState{
 		{VariantName: "v1-expensive", CurrentReplicas: 2, DesiredReplicas: 4},
 		{VariantName: "v2-cheap", CurrentReplicas: 2, DesiredReplicas: 0},
@@ -460,13 +461,49 @@ func TestCalculatesaturationTargets_PreserveDesired(t *testing.T) {
 
 	targets := analyzer.CalculateSaturationTargets(context.Background(), saturationAnalysis, variantStates)
 
-	// Should preserve v1's desired replicas
+	// v1 should preserve its desired replicas (transition in progress)
 	if targets["v1-expensive"] != 4 {
 		t.Errorf("expected v1-expensive target=4 (preserved desired), got %d", targets["v1-expensive"])
 	}
 
-	// v2 should be scaled up (cheapest non-preserved variant) since Saturation still needs scale-up
-	if targets["v2-cheap"] != 3 {
-		t.Errorf("expected v2-cheap target=3 (cheapest for Saturation scale-up), got %d", targets["v2-cheap"])
+	// v2 should NOT be scaled up because model is in transition (v1 is transitioning)
+	// Model-level transition protection blocks all scaling decisions
+	if targets["v2-cheap"] != 2 {
+		t.Errorf("expected v2-cheap target=2 (blocked by model transition), got %d", targets["v2-cheap"])
+	}
+}
+
+func TestCalculatesaturationTargets_MetricsMismatchBlocksScaling(t *testing.T) {
+	analyzer := NewAnalyzer()
+
+	saturationAnalysis := &interfaces.ModelSaturationAnalysis{
+		ModelID:       "test-model",
+		Namespace:     "test-ns",
+		ShouldScaleUp: true,
+		ScaleUpReason: "KV spare Saturation low",
+		VariantAnalyses: []interfaces.VariantSaturationAnalysis{
+			// v1 has 3 replicas but only 2 are reporting metrics
+			{VariantName: "v1-expensive", Cost: 20, ReplicaCount: 2},
+			{VariantName: "v2-cheap", Cost: 5, ReplicaCount: 2},
+		},
+	}
+
+	// v1 has metrics(2) != current(3) - some pods not reporting yet
+	// This puts the MODEL in transition state
+	variantStates := []interfaces.VariantReplicaState{
+		{VariantName: "v1-expensive", CurrentReplicas: 3, DesiredReplicas: 0},
+		{VariantName: "v2-cheap", CurrentReplicas: 2, DesiredReplicas: 0},
+	}
+
+	targets := analyzer.CalculateSaturationTargets(context.Background(), saturationAnalysis, variantStates)
+
+	// v1 should stay at current replicas (metrics incomplete)
+	if targets["v1-expensive"] != 3 {
+		t.Errorf("expected v1-expensive target=3 (current, metrics incomplete), got %d", targets["v1-expensive"])
+	}
+
+	// v2 should NOT be scaled up because model is in transition (v1 has incomplete metrics)
+	if targets["v2-cheap"] != 2 {
+		t.Errorf("expected v2-cheap target=2 (blocked by model transition), got %d", targets["v2-cheap"])
 	}
 }
