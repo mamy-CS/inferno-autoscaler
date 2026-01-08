@@ -22,6 +22,22 @@ This workflow:
 
 **Workflow file**: `.github/workflows/update-docs.md`
 
+### Assign Docs PR to Original Author
+
+**Trigger**: Automatic when a PR is opened by `github-actions[bot]` with title starting with `docs:`  
+**Purpose**: Assigns documentation PRs to the author of the original PR that triggered the docs update
+
+This workflow:
+- Detects documentation PRs created by the Update Docs workflow
+- Extracts the original PR number from the docs PR body or branch name
+- Assigns the docs PR to the original PR author (not the merger)
+- Adds a comment with attribution for transparency
+- Falls back to the most recently merged PR if metadata lookup fails
+
+**Workflow file**: `.github/workflows/assign-docs-pr.yml`
+
+This ensures accountability and visibility for documentation changes, making it clear who should review and merge the docs update.
+
 ### Create Agentic Workflow
 
 **Trigger**: Manual via custom agent  
