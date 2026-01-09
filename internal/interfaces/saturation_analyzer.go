@@ -4,7 +4,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -88,7 +87,9 @@ type VariantDecision struct {
 
 	// CurrentAllocation carries the collected metrics/allocation state
 	// This helps the Controller update status without re-collecting metrics
-	CurrentAllocation *v1alpha1.Allocation
+	// CurrentAllocation carries the collected metrics/allocation state
+	// This helps the Controller update status without re-collecting metrics
+	CurrentAllocation *Allocation
 }
 
 // SaturationAction represents the scaling action

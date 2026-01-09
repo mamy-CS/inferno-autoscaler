@@ -58,7 +58,7 @@ func (a *Actuator) EmitMetrics(ctx context.Context, VariantAutoscaling *llmdOptv
 		if err != nil {
 			logger.Error(err, "Could not get current deployment replicas, using VariantAutoscaling status",
 				"variantName", VariantAutoscaling.Name)
-			currentReplicas = int32(VariantAutoscaling.Status.CurrentAlloc.NumReplicas) // fallback
+			currentReplicas = 0 // Fallback to 0 since CurrentAlloc is removed
 		}
 
 		if err := a.MetricsEmitter.EmitReplicaMetrics(
@@ -76,7 +76,7 @@ func (a *Actuator) EmitMetrics(ctx context.Context, VariantAutoscaling *llmdOptv
 		}
 		logger.Info("EmitReplicaMetrics completed",
 			"variantName", VariantAutoscaling.Name,
-			"currentReplicas", VariantAutoscaling.Status.CurrentAlloc.NumReplicas,
+			"currentReplicas", currentReplicas,
 			"desiredReplicas", VariantAutoscaling.Status.DesiredOptimizedAlloc.NumReplicas,
 			"accelerator", VariantAutoscaling.Status.DesiredOptimizedAlloc.Accelerator)
 		return nil

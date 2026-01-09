@@ -34,18 +34,7 @@ func makeValidVA() *VariantAutoscaling {
 			ModelID: "model-123",
 		},
 		Status: VariantAutoscalingStatus{
-			CurrentAlloc: Allocation{
-				Accelerator: "nvidia.com/mig-1g.5gb",
-				NumReplicas: 1,
-				MaxBatch:    8,
-				ITLAverage:  "45.6",
-				TTFTAverage: "3.2",
-				Load: LoadProfile{
-					ArrivalRate:     "12 rps",
-					AvgOutputTokens: "2.5 s",
-					AvgInputTokens:  "2.5 s",
-				},
-			},
+			// CurrentAlloc: Allocation{...} -- Removed
 			DesiredOptimizedAlloc: OptimizedAlloc{
 				LastRunTime: metav1.NewTime(time.Unix(1730000000, 0).UTC()),
 				Accelerator: "nvidia.com/mig-1g.5gb",
@@ -86,15 +75,16 @@ func TestDeepCopyIndependence(t *testing.T) {
 	cp := orig.DeepCopy()
 
 	cp.Spec.ModelID = "model-456"
-	cp.Status.CurrentAlloc.Load.ArrivalRate = "20 rps"
+	cp.Spec.ModelID = "model-456"
+	// cp.Status.CurrentAlloc.Load.ArrivalRate = "20 rps" -- Removed
 
 	if orig.Spec.ModelID == cp.Spec.ModelID {
 		t.Errorf("DeepCopy did not create independent copy for Spec.ModelID")
 	}
 
-	if orig.Status.CurrentAlloc.Load.ArrivalRate == cp.Status.CurrentAlloc.Load.ArrivalRate {
-		t.Errorf("DeepCopy did not create independent copy for nested Status.Load")
-	}
+	// if orig.Status.CurrentAlloc.Load.ArrivalRate == cp.Status.CurrentAlloc.Load.ArrivalRate {
+	// 	t.Errorf("DeepCopy did not create independent copy for nested Status.Load")
+	// }
 }
 
 func TestJSONRoundTrip(t *testing.T) {
@@ -170,9 +160,6 @@ func TestStatusOmitEmpty(t *testing.T) {
 	// Optional: sanity-check a couple of zero values inside status
 	var probe struct {
 		Status struct {
-			CurrentAlloc struct {
-				Accelerator string `json:"accelerator"`
-			} `json:"currentAlloc"`
 			DesiredOptimizedAlloc struct {
 				LastRunTime *string `json:"lastRunTime"`
 				NumReplicas int     `json:"numReplicas"`
@@ -185,8 +172,7 @@ func TestStatusOmitEmpty(t *testing.T) {
 	if err := json.Unmarshal(b, &probe); err != nil {
 		t.Fatalf("unmarshal probe failed: %v", err)
 	}
-	if probe.Status.CurrentAlloc.Accelerator != "" ||
-		probe.Status.DesiredOptimizedAlloc.NumReplicas != 0 ||
+	if probe.Status.DesiredOptimizedAlloc.NumReplicas != 0 ||
 		probe.Status.Actuation.Applied != false {
 		t.Errorf("unexpected non-zero defaults in status: %+v", probe.Status)
 	}

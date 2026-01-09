@@ -171,6 +171,10 @@ func (e *Engine) optimize(ctx context.Context) error {
 		vaMap[va.GetScaleTargetName()] = &va
 	}
 
+	// Create map to store current allocations populated during metrics collection
+	// Keyed by deployment name (ScaleTargetName)
+	currentAllocations := make(map[string]*interfaces.Allocation)
+
 	for groupKey, modelVAs := range modelGroups {
 		// The groupKey is "modelID|namespace" - extract actual modelID from VAs
 		// All VAs in the group have the same modelID and namespace
@@ -183,7 +187,7 @@ func (e *Engine) optimize(ctx context.Context) error {
 
 		// Collect metrics and populate CurrentAlloc for saturation-only mode
 		// This validates metrics availability and populates the VariantAutoscalings with CurrentAlloc
-		if err := e.CollectMetricsForSaturationMode(ctx, modelVAs, vaMap, e.client, e.MetricsCollector); err != nil {
+		if err := e.CollectMetricsForSaturationMode(ctx, modelVAs, vaMap, currentAllocations, e.client, e.MetricsCollector); err != nil {
 			logger.Error(err, "Failed to collect metrics for saturation mode",
 				"modelID", modelID)
 			// Metrics collection error - individual VAs are skipped
@@ -201,7 +205,7 @@ func (e *Engine) optimize(ctx context.Context) error {
 				"modelID", modelID)
 
 			// Activate safety net to ensure HPA doesn't scale to zero on partial failure
-			e.emitSafetyNetMetrics(ctx, modelVAs)
+			e.emitSafetyNetMetrics(ctx, modelVAs, currentAllocations)
 			continue
 		}
 
@@ -229,7 +233,7 @@ func (e *Engine) optimize(ctx context.Context) error {
 	} else {
 		logger.Info("No scaling decisions to apply, updating VA status with metrics")
 	}
-	if err := e.applySaturationDecisions(ctx, allDecisions, vaMap); err != nil {
+	if err := e.applySaturationDecisions(ctx, allDecisions, vaMap, currentAllocations); err != nil {
 		logger.Error(err, "Failed to apply saturation decisions")
 		return err
 	}
@@ -475,6 +479,7 @@ func (e *Engine) CollectMetricsForSaturationMode(
 	ctx context.Context,
 	modelVAs []llmdVariantAutoscalingV1alpha1.VariantAutoscaling,
 	vaMap map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling,
+	currentAllocations map[string]*interfaces.Allocation,
 	k8sClient client.Client,
 	metricsCollector interfaces.MetricsCollector,
 ) error {
@@ -571,10 +576,10 @@ func (e *Engine) CollectMetricsForSaturationMode(
 			continue
 		}
 
-		// Update the VA in vaMap with populated CurrentAlloc
-		updateVA.Status.CurrentAlloc = currentAllocation
+		// Store the allocation in the map
+		currentAllocations[updateVA.GetScaleTargetName()] = &currentAllocation
 
-		// Update vaMap with the VA that has CurrentAlloc populated
+		// Update vaMap with the VA (status update might happen later in applySaturationDecisions)
 		// Use deployment name as key to match the initial vaMap population
 		vaMap[updateVA.GetScaleTargetName()] = &updateVA
 
@@ -595,6 +600,7 @@ func (e *Engine) applySaturationDecisions(
 	ctx context.Context,
 	decisions []interfaces.VariantDecision,
 	vaMap map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling,
+	currentAllocations map[string]*interfaces.Allocation,
 ) error {
 	logger := ctrl.LoggerFrom(ctx)
 	// Create a map of decisions for O(1) lookup
@@ -627,9 +633,14 @@ func (e *Engine) applySaturationDecisions(
 		}
 
 		// Update CurrentAlloc from local analysis (which has the latest metrics)
-		// valid check: we only update if we have a valid current alloc from the analysis phase
-		if va.Status.CurrentAlloc.Accelerator != "" {
-			updateVa.Status.CurrentAlloc = va.Status.CurrentAlloc
+		// We use currentAllocations map instead of Status.CurrentAlloc
+		if currentAlloc, ok := currentAllocations[vaName]; ok {
+			// If we have a decision, attach current alloc to it for cache
+			// If we have a decision, attach current alloc to it for cache
+			// (Future logic if needed)
+			_ = currentAlloc // Used for something?
+			// Previously we updated va.Status.CurrentAlloc = currentAlloc
+			// Now we just don't update status with it.
 		}
 
 		// Copy MetricsAvailable condition from local analysis (set during metrics collection)
@@ -656,14 +667,14 @@ func (e *Engine) applySaturationDecisions(
 			// We effectively explicitly "decide" to keep things as they are if no decision was made
 			if updateVa.Status.DesiredOptimizedAlloc.NumReplicas > 0 {
 				targetReplicas = updateVa.Status.DesiredOptimizedAlloc.NumReplicas
-			} else {
-				targetReplicas = updateVa.Status.CurrentAlloc.NumReplicas
+			} else if curr, ok := currentAllocations[vaName]; ok {
+				targetReplicas = curr.NumReplicas
 			}
 			// Keep existing accelerator or use current
 			if updateVa.Status.DesiredOptimizedAlloc.Accelerator != "" {
 				acceleratorName = updateVa.Status.DesiredOptimizedAlloc.Accelerator
-			} else {
-				acceleratorName = updateVa.Status.CurrentAlloc.Accelerator
+			} else if curr, ok := currentAllocations[vaName]; ok {
+				acceleratorName = curr.Accelerator
 			}
 			reason = "No scaling decision (optimization loop)"
 		}
@@ -754,7 +765,7 @@ func (e *Engine) applySaturationDecisions(
 			TargetReplicas:    targetReplicas,
 			AcceleratorName:   acceleratorName,
 			LastRunTime:       metav1.Now(),
-			CurrentAllocation: &updateVa.Status.CurrentAlloc,
+			CurrentAllocation: currentAllocations[vaName],
 			// Pass other fields if needed, but these are crucial for Status
 		})
 
@@ -788,6 +799,7 @@ func (e *Engine) applySaturationDecisions(
 func (e *Engine) emitSafetyNetMetrics(
 	ctx context.Context,
 	modelVAs []llmdVariantAutoscalingV1alpha1.VariantAutoscaling,
+	currentAllocations map[string]*interfaces.Allocation,
 ) {
 	logger := ctrl.LoggerFrom(ctx)
 	act := actuator.NewActuator(e.client)
@@ -800,9 +812,11 @@ func (e *Engine) emitSafetyNetMetrics(
 		// Get current replicas for metric emission
 		currentReplicas, err := act.GetCurrentDeploymentReplicas(ctx, &va)
 		if err != nil {
-			logger.Error(err, "Safety net: failed to get current replicas from Deployment for metrics", "using VariantAutoscaling status",
+			logger.Error(err, "Safety net: failed to get current replicas from Deployment for metrics", "using cached allocation",
 				"variant", va.Name)
-			currentReplicas = int32(va.Status.CurrentAlloc.NumReplicas)
+			if curr, ok := currentAllocations[va.GetScaleTargetName()]; ok {
+				currentReplicas = int32(curr.NumReplicas)
+			}
 		}
 
 		// Strategy 1: Use previous desired replicas if available
@@ -819,7 +833,9 @@ func (e *Engine) emitSafetyNetMetrics(
 		// with required accelerator field
 		accelerator := va.Status.DesiredOptimizedAlloc.Accelerator
 		if accelerator == "" {
-			accelerator = va.Status.CurrentAlloc.Accelerator
+			if curr, ok := currentAllocations[va.GetScaleTargetName()]; ok {
+				accelerator = curr.Accelerator
+			}
 		}
 		if accelerator == "" {
 			// Try to get from VA labels as last resort

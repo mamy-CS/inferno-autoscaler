@@ -21,7 +21,7 @@ func BuildAllocationFromMetrics(
 	va *v1alpha1.VariantAutoscaling,
 	deployment appsv1.Deployment,
 	acceleratorCost float64,
-) (v1alpha1.Allocation, error) {
+) (interfaces.Allocation, error) {
 	// Extract K8s information
 	// Number of replicas
 	numReplicas := int(*deployment.Spec.Replicas)
@@ -31,7 +31,7 @@ func BuildAllocationFromMetrics(
 	if val, ok := va.Labels["inference.optimization/acceleratorName"]; ok && val != "" {
 		acc = val
 	} else {
-		return v1alpha1.Allocation{},
+		return interfaces.Allocation{},
 			fmt.Errorf("missing or empty acceleratorName label on VariantAutoscaling object: %s", va.Name)
 	}
 
@@ -54,14 +54,14 @@ func BuildAllocationFromMetrics(
 	avgOutputTokensStr := strconv.FormatFloat(metrics.AvgOutputTokens, 'f', 2, 64)
 
 	// Build Allocation struct
-	allocation := v1alpha1.Allocation{
+	allocation := interfaces.Allocation{
 		Accelerator: acc,
 		NumReplicas: numReplicas,
 		MaxBatch:    maxBatch,
 		// VariantCost removed from Status
 		TTFTAverage: ttftAverageStr,
 		ITLAverage:  itlAverageStr,
-		Load: v1alpha1.LoadProfile{
+		Load: interfaces.LoadProfile{
 			ArrivalRate:     arrivalRateStr,
 			AvgInputTokens:  avgInputTokensStr,
 			AvgOutputTokens: avgOutputTokensStr,

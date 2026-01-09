@@ -14,6 +14,6 @@ func BuildAllocationFromMetrics(
 	va *v1alpha1.VariantAutoscaling,
 	deployment appsv1.Deployment,
 	acceleratorCost float64,
-) (v1alpha1.Allocation, error) {
+) (interfaces.Allocation, error) {
 	return utils.BuildAllocationFromMetrics(metrics, va, deployment, acceleratorCost)
 }

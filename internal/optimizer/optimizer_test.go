@@ -282,9 +282,7 @@ var _ = Describe("Optimizer", Ordered, func() {
 				Expect(err).NotTo(HaveOccurred(), "unable to fetch metrics and add to Optimizer status for variantAutoscaling - ", "variantAutoscaling-name: ", va.Name)
 				currentAllocation, err := utils.BuildAllocationFromMetrics(metrics, &updateVA, deploy, acceleratorCostValFloat)
 				Expect(err).NotTo(HaveOccurred(), "unable to build allocation from metrics for variantAutoscaling - ", "variantAutoscaling-name: ", va.Name)
-				updateVA.Status.CurrentAlloc = currentAllocation
-
-				err = utils.AddServerInfoToSystemData(systemData, &updateVA, className)
+				err = utils.AddServerInfoToSystemData(systemData, &updateVA, &currentAllocation, className)
 				Expect(err).NotTo(HaveOccurred(), "failed to add server info to system data for variantAutoscaling - ", "variantAutoscaling-name: ", va.Name)
 
 				// Manually add ModelAcceleratorPerfData to systemData since AddModelAcceleratorProfileToSystemData was removed
@@ -424,9 +422,7 @@ var _ = Describe("Optimizer", Ordered, func() {
 				Expect(err).NotTo(HaveOccurred(), "unable to fetch metrics and add to Optimizer status for variantAutoscaling - ", "variantAutoscaling-name: ", va.Name)
 				currentAllocation, err := utils.BuildAllocationFromMetrics(metrics, &updateVA, deploy, acceleratorCostValFloat)
 				Expect(err).NotTo(HaveOccurred(), "unable to build allocation from metrics for variantAutoscaling - ", "variantAutoscaling-name: ", va.Name)
-				updateVA.Status.CurrentAlloc = currentAllocation
-
-				err = utils.AddServerInfoToSystemData(systemData, &updateVA, className)
+				err = utils.AddServerInfoToSystemData(systemData, &updateVA, &currentAllocation, className)
 				Expect(err).NotTo(HaveOccurred(), "failed to add server info to system data for variantAutoscaling - ", "variantAutoscaling-name: ", va.Name)
 
 				// Manually add ModelAcceleratorPerfData to systemData since AddModelAcceleratorProfileToSystemData was removed

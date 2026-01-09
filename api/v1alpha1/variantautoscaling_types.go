@@ -27,9 +27,6 @@ type VariantAutoscalingSpec struct {
 // VariantAutoscalingStatus represents the current status of autoscaling for a variant,
 // including the current allocation, desired optimized allocation, and actuation status.
 type VariantAutoscalingStatus struct {
-	// CurrentAlloc specifies the current resource allocation for the variant.
-	// +kubebuilder:validation:Optional
-	CurrentAlloc Allocation `json:"currentAlloc,omitempty"`
 
 	// DesiredOptimizedAlloc indicates the target optimized allocation based on autoscaling logic.
 	DesiredOptimizedAlloc OptimizedAlloc `json:"desiredOptimizedAlloc,omitempty"`
@@ -44,47 +41,6 @@ type VariantAutoscalingStatus struct {
 	// +listType=map
 	// +listMapKey=type
 	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type"`
-}
-
-// Allocation describes the current resource allocation for a model variant.
-type Allocation struct {
-	// Accelerator is the type of accelerator currently allocated.
-	// +kubebuilder:validation:MinLength=1
-	Accelerator string `json:"accelerator"`
-
-	// NumReplicas is the number of replicas currently allocated.
-	// +kubebuilder:validation:Minimum=0
-	NumReplicas int `json:"numReplicas"`
-
-	// MaxBatch is the maximum batch size currently allocated.
-	// +kubebuilder:validation:Minimum=0
-	MaxBatch int `json:"maxBatch"`
-
-	// ITLAverage is the average inter token latency for the current allocation.
-	// +kubebuilder:validation:Pattern=`^\d+(\.\d+)?$`
-	ITLAverage string `json:"itlAverage"`
-
-	// TTFTAverage is the average time to first token for the current allocation
-	// +kubebuilder:validation:Pattern=`^\d+(\.\d+)?$`
-	TTFTAverage string `json:"ttftAverage"`
-
-	// Load describes the workload characteristics for the current allocation.
-	Load LoadProfile `json:"load"`
-}
-
-// LoadProfile represents the configuration for workload characteristics,
-// including the rate of incoming requests (ArrivalRate) and the average
-// length of each request (AvgLength). Both fields are specified as strings
-// to allow flexible input formats.
-type LoadProfile struct {
-	// ArrivalRate is the rate of incoming requests in inference server.
-	ArrivalRate string `json:"arrivalRate"`
-
-	// AvgInputTokens is the average number of input(prefill) tokens per request in inference server.
-	AvgInputTokens string `json:"avgInputTokens"`
-
-	// AvgOutputTokens is the average number of output(decode) tokens per request in inference server.
-	AvgOutputTokens string `json:"avgOutputTokens"`
 }
 
 // OptimizedAlloc describes the target optimized allocation for a model variant.
@@ -112,8 +68,6 @@ type ActuationStatus struct {
 // +kubebuilder:resource:shortName=va
 // +kubebuilder:printcolumn:name="Target",type=string,JSONPath=".spec.scaleTargetRef.name"
 // +kubebuilder:printcolumn:name="Model",type=string,JSONPath=".spec.modelID"
-// +kubebuilder:printcolumn:name="Accelerator",type=string,JSONPath=".status.currentAlloc.accelerator"
-// +kubebuilder:printcolumn:name="CurrentReplicas",type=integer,JSONPath=".status.currentAlloc.numReplicas"
 // +kubebuilder:printcolumn:name="Optimized",type=string,JSONPath=".status.desiredOptimizedAlloc.numReplicas"
 // +kubebuilder:printcolumn:name="MetricsReady",type=string,JSONPath=".status.conditions[?(@.type=='MetricsAvailable')].status"
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=".metadata.creationTimestamp"

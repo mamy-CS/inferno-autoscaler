@@ -202,10 +202,8 @@ func (r *VariantAutoscalingReconciler) Reconcile(ctx context.Context, req ctrl.R
 		va.Status.DesiredOptimizedAlloc.Accelerator = accelerator
 		va.Status.DesiredOptimizedAlloc.LastRunTime = lastRunTime
 
-		// Update CurrentAlloc if provided by the Engine (avoids duplicate collection)
-		if decision.CurrentAllocation != nil {
-			va.Status.CurrentAlloc = *decision.CurrentAllocation
-		}
+		// Note: CurrentAlloc is removed from Status.
+		// Internal allocation state is managed by the Engine and Actuator.
 	} else {
 		logger.V(logging.DEBUG).Info("No decision found in cache for VA", "variant", va.Name)
 	}
