@@ -187,18 +187,34 @@ func (r *VariantAutoscalingReconciler) Reconcile(ctx context.Context, req ctrl.R
 	// Process Engine Decisions from Shared Cache
 	// This mechanism allows the Engine to trigger updates without touching the API server directly.
 	if decision, ok := common.DecisionCache.Get(va.Name, va.Namespace); ok {
+		logger.Info("Found decision in cache", "va", va.Name, "namespace", va.Namespace, "metricsAvailable", decision.MetricsAvailable)
 		// Only apply if the decision is fresher than the last one applied or if we haven't applied it
 		// Note: We blindly apply for now, assuming the Engine acts as the source of truth for "Desired" state
 		numReplicas, accelerator, lastRunTime := common.DecisionToOptimizedAlloc(decision)
 
-		va.Status.DesiredOptimizedAlloc.NumReplicas = numReplicas
-		va.Status.DesiredOptimizedAlloc.Accelerator = accelerator
-		va.Status.DesiredOptimizedAlloc.LastRunTime = lastRunTime
+		// Only update DesiredOptimizedAlloc if we have a valid accelerator (required by CRD).
+		// Note: numReplicas may legitimately be 0 for scale-to-zero scenarios.
+		if accelerator != "" {
+			va.Status.DesiredOptimizedAlloc.NumReplicas = numReplicas
+			va.Status.DesiredOptimizedAlloc.Accelerator = accelerator
+			va.Status.DesiredOptimizedAlloc.LastRunTime = lastRunTime
+		}
+
+		// Always apply MetricsAvailable condition from cache
+		metricsStatus := metav1.ConditionFalse
+		if decision.MetricsAvailable {
+			metricsStatus = metav1.ConditionTrue
+		}
+		llmdVariantAutoscalingV1alpha1.SetCondition(&va,
+			llmdVariantAutoscalingV1alpha1.TypeMetricsAvailable,
+			metricsStatus,
+			decision.MetricsReason,
+			decision.MetricsMessage)
 
 		// Note: CurrentAlloc is removed from Status.
 		// Internal allocation state is managed by the Engine and Actuator.
 	} else {
-		logger.V(logging.DEBUG).Info("No decision found in cache for VA", "variant", va.Name)
+		logger.Info("No decision found in cache for VA", "va", va.Name, "namespace", va.Namespace)
 	}
 
 	// Update Status if we have changes (Conditions or OptimizedAlloc)

@@ -45,6 +45,14 @@ import (
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/utils"
 )
 
+// Constants for MetricsAvailable condition
+const (
+	MetricsReasonAvailable   = "MetricsAvailable"
+	MetricsReasonUnavailable = "MetricsUnavailable"
+	MetricsMessageAvailable  = "Saturation metrics data is available for scaling decisions"
+	MetricsMessageUnavailable = "No saturation metrics available - pods may not be ready or metrics not yet scraped"
+)
+
 type Engine struct {
 	client   client.Client
 	scheme   *runtime.Scheme
@@ -511,15 +519,8 @@ func (e *Engine) applySaturationDecisions(
 			// Now we just don't update status with it.
 		}
 
-		// Copy MetricsAvailable condition from local analysis (set during metrics collection)
-		// This condition was set on `va` but we fetched a fresh `updateVa` from API server
-		if metricsCondition := llmdVariantAutoscalingV1alpha1.GetCondition(va, llmdVariantAutoscalingV1alpha1.TypeMetricsAvailable); metricsCondition != nil {
-			llmdVariantAutoscalingV1alpha1.SetCondition(&updateVa,
-				llmdVariantAutoscalingV1alpha1.TypeMetricsAvailable,
-				metricsCondition.Status,
-				metricsCondition.Reason,
-				metricsCondition.Message)
-		}
+		// Check if we have metrics data for this VA (used for cache below)
+		_, hasAllocation := currentAllocations[vaName]
 
 		// Determine target replicas and accelerator
 		var targetReplicas int
@@ -548,9 +549,25 @@ func (e *Engine) applySaturationDecisions(
 		}
 
 		// If we still don't have an accelerator name (e.g. new VA, no decision, no current alloc), we can't update status sensibly
+		// But we still need to set MetricsAvailable condition via the cache
 		if acceleratorName == "" {
-			logger.Info("Skipping status update for VA without accelerator info",
-				"variant", vaName)
+			logger.Info("Skipping status update for VA without accelerator info, but setting MetricsAvailable=False",
+				"variant", vaName, "cacheKey.name", va.Name, "cacheKey.namespace", va.Namespace)
+			// Still set the cache entry so the controller can set MetricsAvailable=False.
+			// This is a partial decision for metrics status only - other fields like
+			// TargetReplicas and AcceleratorName are left at zero values since we don't
+			// have enough information to set them.
+			common.DecisionCache.Set(va.Name, va.Namespace, interfaces.VariantDecision{
+				VariantName:      vaName,
+				Namespace:        va.Namespace,
+				MetricsAvailable: false,
+				MetricsReason:    MetricsReasonUnavailable,
+				MetricsMessage:   MetricsMessageUnavailable,
+			})
+			// Trigger reconciler to apply the condition
+			common.DecisionTrigger <- event.GenericEvent{
+				Object: &updateVa,
+			}
 			continue
 		}
 
@@ -627,6 +644,20 @@ func (e *Engine) applySaturationDecisions(
 		// This avoids any API server interaction from the Engine.
 
 		// 1. Update Cache
+		// Determine MetricsAvailable status for the cache.
+		// - hasAllocation is true when we successfully collected current replica metrics
+		//   for this variant during this loop (metrics pipeline is working).
+		// - hasDecision is true when the optimizer produced a scaling decision based on
+		//   saturation metrics in this run.
+		// Either condition implies saturation metrics were available and usable.
+		metricsAvailable := hasAllocation || hasDecision
+		metricsReason := MetricsReasonUnavailable
+		metricsMessage := MetricsMessageUnavailable
+		if metricsAvailable {
+			metricsReason = MetricsReasonAvailable
+			metricsMessage = MetricsMessageAvailable
+		}
+
 		common.DecisionCache.Set(va.Name, va.Namespace, interfaces.VariantDecision{
 			VariantName:       vaName,
 			Namespace:         va.Namespace,
@@ -634,7 +665,9 @@ func (e *Engine) applySaturationDecisions(
 			AcceleratorName:   acceleratorName,
 			LastRunTime:       metav1.Now(),
 			CurrentAllocation: currentAllocations[vaName],
-			// Pass other fields if needed, but these are crucial for Status
+			MetricsAvailable:  metricsAvailable,
+			MetricsReason:     metricsReason,
+			MetricsMessage:    metricsMessage,
 		})
 
 		// 2. Trigger Reconciler
