@@ -86,14 +86,7 @@ metadata:
     inference.optimization/modelName: Meta-Llama-3.1-8B
     inference.optimization/acceleratorName: H100
 spec:
-  modelID: unsloth/Meta-Llama-3.1-8B
-  modelProfile:
-    accelerators:
-      - acc: "H100"
-        accCount: 1
-        alpha: "6.958"
-        beta: "0.042"
-        maxBatchSize: 512 
+  modelID: unsloth/Meta-Llama-3.1-8B 
 ```
 
 

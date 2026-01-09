@@ -248,10 +248,6 @@ Specifies the cost per replica for this variant, used in saturation-based cost o
 spec:
   modelID: "meta/llama-3.1-8b"
   variantCost: 15.5  # Cost per replica (default: 10.0)
-  modelProfile:
-    accelerators:
-      - acc: "A100"
-        accCount: 1
 ```
 
 **Default:** 10.0
@@ -268,17 +264,11 @@ spec:
 spec:
   modelID: "meta/llama-3.1-70b"
   variantCost: 80.0
-  modelProfile:
-    accelerators:
-      - acc: "H100"
 
 # Standard variant (A100, lower cost)
 spec:
   modelID: "meta/llama-3.1-70b"
   variantCost: 40.0
-  modelProfile:
-    accelerators:
-      - acc: "A100"
 ```
 
 **Behavior:**
