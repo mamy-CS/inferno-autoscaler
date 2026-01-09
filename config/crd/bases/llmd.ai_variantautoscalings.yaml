@@ -23,12 +23,6 @@ spec:
     - jsonPath: .spec.modelID
       name: Model
       type: string
-    - jsonPath: .status.currentAlloc.accelerator
-      name: Accelerator
-      type: string
-    - jsonPath: .status.currentAlloc.numReplicas
-      name: CurrentReplicas
-      type: integer
     - jsonPath: .status.desiredOptimizedAlloc.numReplicas
       name: Optimized
       type: string
@@ -176,62 +170,6 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
-              currentAlloc:
-                description: CurrentAlloc specifies the current resource allocation
-                  for the variant.
-                properties:
-                  accelerator:
-                    description: Accelerator is the type of accelerator currently
-                      allocated.
-                    minLength: 1
-                    type: string
-                  itlAverage:
-                    description: ITLAverage is the average inter token latency for
-                      the current allocation.
-                    pattern: ^\d+(\.\d+)?$
-                    type: string
-                  load:
-                    description: Load describes the workload characteristics for the
-                      current allocation.
-                    properties:
-                      arrivalRate:
-                        description: ArrivalRate is the rate of incoming requests
-                          in inference server.
-                        type: string
-                      avgInputTokens:
-                        description: AvgInputTokens is the average number of input(prefill)
-                          tokens per request in inference server.
-                        type: string
-                      avgOutputTokens:
-                        description: AvgOutputTokens is the average number of output(decode)
-                          tokens per request in inference server.
-                        type: string
-                    required:
-                    - arrivalRate
-                    - avgInputTokens
-                    - avgOutputTokens
-                    type: object
-                  maxBatch:
-                    description: MaxBatch is the maximum batch size currently allocated.
-                    minimum: 0
-                    type: integer
-                  numReplicas:
-                    description: NumReplicas is the number of replicas currently allocated.
-                    minimum: 0
-                    type: integer
-                  ttftAverage:
-                    description: TTFTAverage is the average time to first token for
-                      the current allocation
-                    pattern: ^\d+(\.\d+)?$
-                    type: string
-                required:
-                - accelerator
-                - itlAverage
-                - load
-                - maxBatch
-                - numReplicas
-                - ttftAverage
-                type: object
               desiredOptimizedAlloc:
                 description: DesiredOptimizedAlloc indicates the target optimized
                   allocation based on autoscaling logic.

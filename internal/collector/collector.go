@@ -90,19 +90,19 @@ func AddMetricsToOptStatus(ctx context.Context,
 	opt *llmdVariantAutoscalingV1alpha1.VariantAutoscaling,
 	deployment appsv1.Deployment,
 	acceleratorCostVal float64,
-	promAPI promv1.API) (llmdVariantAutoscalingV1alpha1.Allocation, error) {
+	promAPI promv1.API) (interfaces.Allocation, error) {
 	// Use factory to create collector to avoid import cycle
 	pc, err := NewMetricsCollector(Config{
 		Type:    CollectorTypePrometheus,
 		PromAPI: promAPI,
 	})
 	if err != nil {
-		return llmdVariantAutoscalingV1alpha1.Allocation{}, err
+		return interfaces.Allocation{}, err
 	}
 	// Get raw metrics from collector
 	metrics, err := pc.AddMetricsToOptStatus(ctx, opt, deployment, acceleratorCostVal)
 	if err != nil {
-		return llmdVariantAutoscalingV1alpha1.Allocation{}, err
+		return interfaces.Allocation{}, err
 	}
 	// Build Allocation from metrics (using utils to avoid import cycle)
 	return utils.BuildAllocationFromMetrics(metrics, opt, deployment, acceleratorCostVal)

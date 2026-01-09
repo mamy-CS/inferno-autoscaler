@@ -19,6 +19,7 @@ import (
 
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/constants"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/test/utils"
 )
 
@@ -396,7 +397,7 @@ var _ = Describe("Collector", func() {
 			// Should fail with error due to missing accelerator label (required by CRD validation)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("missing or empty acceleratorName label"))
-			Expect(allocation).To(Equal(llmdVariantAutoscalingV1alpha1.Allocation{})) // Empty allocation on error
+			Expect(allocation).To(Equal(interfaces.Allocation{})) // Empty allocation on error
 		})
 
 		It("should handle Prometheus Query errors", func() {
@@ -408,7 +409,7 @@ var _ = Describe("Collector", func() {
 
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("prometheus connection failed"))
-			Expect(allocation).To(Equal(llmdVariantAutoscalingV1alpha1.Allocation{})) // Expect empty allocation on error
+			Expect(allocation).To(Equal(interfaces.Allocation{})) // Expect empty allocation on error
 		})
 
 		It("should handle empty metric results gracefully", func() {

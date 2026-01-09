@@ -204,17 +204,23 @@ func CreateSystemData(
 func AddServerInfoToSystemData(
 	sd *infernoConfig.SystemData,
 	va *llmdVariantAutoscalingV1alpha1.VariantAutoscaling,
+	currentAlloc *interfaces.Allocation,
 	className string) (err error) {
 
 	// server load statistics
 	var arrivalRate, avgOutputTokens, avgInputTokens, cost, itlAverage, ttftAverage float64
-	if arrivalRate, err = strconv.ParseFloat(va.Status.CurrentAlloc.Load.ArrivalRate, 32); err != nil || !CheckValue(arrivalRate) {
+	if currentAlloc == nil {
+		// Use empty/default values if no current allocation
+		currentAlloc = &interfaces.Allocation{}
+	}
+
+	if arrivalRate, err = strconv.ParseFloat(currentAlloc.Load.ArrivalRate, 32); err != nil || !CheckValue(arrivalRate) {
 		arrivalRate = 0
 	}
-	if avgOutputTokens, err = strconv.ParseFloat(va.Status.CurrentAlloc.Load.AvgOutputTokens, 32); err != nil || !CheckValue(avgOutputTokens) {
+	if avgOutputTokens, err = strconv.ParseFloat(currentAlloc.Load.AvgOutputTokens, 32); err != nil || !CheckValue(avgOutputTokens) {
 		avgOutputTokens = 0
 	}
-	if avgInputTokens, err = strconv.ParseFloat(va.Status.CurrentAlloc.Load.AvgInputTokens, 32); err != nil || !CheckValue(avgInputTokens) {
+	if avgInputTokens, err = strconv.ParseFloat(currentAlloc.Load.AvgInputTokens, 32); err != nil || !CheckValue(avgInputTokens) {
 		avgInputTokens = 0
 	}
 
@@ -237,21 +243,21 @@ func AddServerInfoToSystemData(
 		unitCost = 10.0 // Fallback/Default
 	}
 
-	cost = unitCost * float64(va.Status.CurrentAlloc.NumReplicas)
+	cost = unitCost * float64(currentAlloc.NumReplicas)
 	if !CheckValue(cost) {
 		cost = 0
 	}
-	if itlAverage, err = strconv.ParseFloat(va.Status.CurrentAlloc.ITLAverage, 32); err != nil || !CheckValue(itlAverage) {
+	if itlAverage, err = strconv.ParseFloat(currentAlloc.ITLAverage, 32); err != nil || !CheckValue(itlAverage) {
 		itlAverage = 0
 	}
-	if ttftAverage, err = strconv.ParseFloat(va.Status.CurrentAlloc.TTFTAverage, 32); err != nil || !CheckValue(ttftAverage) {
+	if ttftAverage, err = strconv.ParseFloat(currentAlloc.TTFTAverage, 32); err != nil || !CheckValue(ttftAverage) {
 		ttftAverage = 0
 	}
 
 	AllocationData := &infernoConfig.AllocationData{
-		Accelerator: va.Status.CurrentAlloc.Accelerator,
-		NumReplicas: va.Status.CurrentAlloc.NumReplicas,
-		MaxBatch:    va.Status.CurrentAlloc.MaxBatch,
+		Accelerator: currentAlloc.Accelerator,
+		NumReplicas: currentAlloc.NumReplicas,
+		MaxBatch:    currentAlloc.MaxBatch,
 		Cost:        float32(cost),
 		ITLAverage:  float32(itlAverage),
 		TTFTAverage: float32(ttftAverage),

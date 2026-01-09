@@ -389,7 +389,8 @@ exit 1`,
 					g.Expect(err).NotTo(HaveOccurred(), "Should be able to get VariantAutoscaling")
 
 					scaledOptimized = int32(va.Status.DesiredOptimizedAlloc.NumReplicas)
-					currentRateStr := va.Status.CurrentAlloc.Load.ArrivalRate
+					// currentRateStr := va.Status.DesiredOptimizedAlloc.Load.ArrivalRate (Load not in status)
+					currentRateStr := "unknown"
 
 					// Dynamically update initial baseline if replicas decrease during the test.
 					// This is intentional and correct behavior, not masking bugs:
