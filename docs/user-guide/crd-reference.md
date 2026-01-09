@@ -30,48 +30,6 @@ _Appears in:_
 | `applied` _boolean_ | Applied indicates whether the actuation was successfully applied. |  |  |
 
 
-#### Allocation
-
-
-
-Allocation describes the current resource allocation for a model variant.
-
-
-
-_Appears in:_
-- [VariantAutoscalingStatus](#variantautoscalingstatus)
-
-| Field | Description | Default | Validation |
-| --- | --- | --- | --- |
-| `accelerator` _string_ | Accelerator is the type of accelerator currently allocated. |  | MinLength: 1 <br /> |
-| `numReplicas` _integer_ | NumReplicas is the number of replicas currently allocated. |  | Minimum: 0 <br /> |
-| `maxBatch` _integer_ | MaxBatch is the maximum batch size currently allocated. |  | Minimum: 0 <br /> |
-| `itlAverage` _string_ | ITLAverage is the average inter token latency for the current allocation. |  | Pattern: `^\d+(\.\d+)?$` <br /> |
-| `ttftAverage` _string_ | TTFTAverage is the average time to first token for the current allocation |  | Pattern: `^\d+(\.\d+)?$` <br /> |
-| `load` _[LoadProfile](#loadprofile)_ | Load describes the workload characteristics for the current allocation. |  |  |
-
-
-#### LoadProfile
-
-
-
-LoadProfile represents the configuration for workload characteristics,
-including the rate of incoming requests (ArrivalRate) and the average
-length of each request (AvgLength). Both fields are specified as strings
-to allow flexible input formats.
-
-
-
-_Appears in:_
-- [Allocation](#allocation)
-
-| Field | Description | Default | Validation |
-| --- | --- | --- | --- |
-| `arrivalRate` _string_ | ArrivalRate is the rate of incoming requests in inference server. |  |  |
-| `avgInputTokens` _string_ | AvgInputTokens is the average number of input(prefill) tokens per request in inference server. |  |  |
-| `avgOutputTokens` _string_ | AvgOutputTokens is the average number of output(decode) tokens per request in inference server. |  |  |
-
-
 #### OptimizedAlloc
 
 
@@ -156,7 +114,7 @@ _Appears in:_
 
 
 VariantAutoscalingStatus represents the current status of autoscaling for a variant,
-including the current allocation, desired optimized allocation, and actuation status.
+including the desired optimized allocation and actuation status.
 
 
 
@@ -165,7 +123,6 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `currentAlloc` _[Allocation](#allocation)_ | CurrentAlloc specifies the current resource allocation for the variant. |  | Optional: \{\} <br /> |
 | `desiredOptimizedAlloc` _[OptimizedAlloc](#optimizedalloc)_ | DesiredOptimizedAlloc indicates the target optimized allocation based on autoscaling logic. |  |  |
 | `actuation` _[ActuationStatus](#actuationstatus)_ | Actuation provides details about the actuation process and its current status. |  |  |
 | `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#condition-v1-meta) array_ | Conditions represent the latest available observations of the VariantAutoscaling's state |  | Optional: \{\} <br /> |

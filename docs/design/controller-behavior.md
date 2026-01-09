@@ -64,7 +64,7 @@ status:
   conditions:
   - type: Ready
     status: "True"
-  currentAllocation:
+  desiredOptimizedAlloc:
     numReplicas: 3
     accelerator: "A100"
 
@@ -75,8 +75,7 @@ status:
     status: "False"
     reason: "DeploymentNotFound"
     message: "Target deployment no longer exists"
-  currentAllocation:
-    numReplicas: 0
+  desiredOptimizedAlloc: {}
 ```
 
 When a Deployment is deleted:
