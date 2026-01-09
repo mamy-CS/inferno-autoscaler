@@ -141,7 +141,11 @@ metadata:
   name: llama-8b-autoscaler
   namespace: llm-inference
 spec:
-  modelId: "meta/llama-3.1-8b"
+  scaleTargetRef:
+    kind: Deployment
+    name: llama-8b
+  modelID: "meta/llama-3.1-8b"
+  variantCost: "10.0"  # Optional, defaults to "10.0"
 ```
 
 More examples in [config/samples/](config/samples/).
