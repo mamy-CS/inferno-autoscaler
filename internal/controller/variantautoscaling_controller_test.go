@@ -23,7 +23,6 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	promoperator "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
-	"github.com/prometheus/common/model"
 	autoscalingv1 "k8s.io/api/autoscaling/v1"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -35,7 +34,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
-	collector "github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
 	testutils "github.com/llm-d-incubation/workload-variant-autoscaler/test/utils"
 )
@@ -137,17 +135,11 @@ var _ = Describe("VariantAutoscalings Controller", func() {
 
 		It("should successfully reconcile the resource", func() {
 			By("Reconciling the created resource")
-			mockPromAPI := &testutils.MockPromAPI{
-				QueryResults: map[string]model.Value{},
-				QueryErrors:  map[string]error{},
-			}
+
 			// Initialize MetricsCollector with mock Prometheus API
-			metricsCollector := collector.NewPrometheusCollector(mockPromAPI)
 			controllerReconciler := &VariantAutoscalingReconciler{
-				Client:           k8sClient,
-				Scheme:           k8sClient.Scheme(),
-				PromAPI:          mockPromAPI,
-				MetricsCollector: metricsCollector,
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
 			}
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
@@ -345,13 +337,9 @@ var _ = Describe("VariantAutoscalings Controller", func() {
 			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 
 			// Mock controller components
-			mockPromAPI := &testutils.MockPromAPI{}
-			metricsCollector := collector.NewPrometheusCollector(mockPromAPI)
 			controllerReconciler := &VariantAutoscalingReconciler{
-				Client:           k8sClient,
-				Scheme:           k8sClient.Scheme(),
-				PromAPI:          mockPromAPI,
-				MetricsCollector: metricsCollector,
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
 			}
 
 			By("Reconciling - expect TargetNotFound")

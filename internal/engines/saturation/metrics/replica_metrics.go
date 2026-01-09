@@ -44,14 +44,14 @@ const (
 // ReplicaMetricsCollector collects replica-level metrics for saturation analysis
 // using the v2 collector infrastructure.
 type ReplicaMetricsCollector struct {
-	source             *collector.PrometheusSource
+	source             collector.MetricsSource
 	k8sClient          client.Client
 	podVAMapper        *collector.PodVAMapper
 	stalenessThreshold time.Duration
 }
 
 // NewReplicaMetricsCollector creates a new replica metrics collector.
-func NewReplicaMetricsCollector(source *collector.PrometheusSource, k8sClient client.Client) *ReplicaMetricsCollector {
+func NewReplicaMetricsCollector(source collector.MetricsSource, k8sClient client.Client) *ReplicaMetricsCollector {
 	return &ReplicaMetricsCollector{
 		source:             source,
 		k8sClient:          k8sClient,
@@ -61,7 +61,7 @@ func NewReplicaMetricsCollector(source *collector.PrometheusSource, k8sClient cl
 }
 
 // NewReplicaMetricsCollectorWithThreshold creates a new replica metrics collector with a custom staleness threshold.
-func NewReplicaMetricsCollectorWithThreshold(source *collector.PrometheusSource, k8sClient client.Client, stalenessThreshold time.Duration) *ReplicaMetricsCollector {
+func NewReplicaMetricsCollectorWithThreshold(source collector.MetricsSource, k8sClient client.Client, stalenessThreshold time.Duration) *ReplicaMetricsCollector {
 	return &ReplicaMetricsCollector{
 		source:             source,
 		k8sClient:          k8sClient,

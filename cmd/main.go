@@ -22,7 +22,6 @@ import (
 	goflag "flag"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
@@ -44,8 +43,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
-	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector"
-	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/prometheus"
 	collectorv2 "github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/v2"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/config"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/controller"
@@ -349,66 +346,32 @@ func main() {
 	}
 	setupLog.Info("Prometheus client and API wrapper initialized and validated successfully")
 
-	// Read Prometheus cache configuration from ConfigMap
-	cacheConfig, err := config.ReadPrometheusCacheConfig(context.Background(), mgr.GetClient())
-	if err != nil {
-		setupLog.Error(err, "Failed to read Prometheus cache config from ConfigMap, using defaults")
-		cacheConfig = nil // Use defaults
-	}
-
-	// Initialize metrics collector plugin (defaults to Prometheus)
-	metricsCollector, err := collector.NewMetricsCollector(collector.Config{
-		Type:        collector.CollectorTypePrometheus,
-		PromAPI:     promAPI,
-		CacheConfig: cacheConfig,
-	})
-	if err != nil {
-		setupLog.Error(err, "failed to create metrics collector")
-		os.Exit(1)
-	}
-
-	// Set K8sClient on the collector if it supports it (for pod discovery in saturation metrics)
-	if promCollector, ok := metricsCollector.(*prometheus.PrometheusCollector); ok {
-		promCollector.SetK8sClient(mgr.GetClient())
-
-		// Start background fetching executor using manager context
-		// This ensures the executor stops gracefully when the manager stops
-		if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
-			promCollector.StartBackgroundWorker(ctx)
-			<-ctx.Done() // Wait for context cancellation
-			return nil
-		})); err != nil {
-			setupLog.Error(err, "Failed to register background fetching executor with manager")
-		} else {
-			setupLog.Info("Registered background fetching executor with manager")
-		}
-	}
-
-	setupLog.Info("Metrics collector initialized successfully")
-
 	// Register optimization engine loops with the manager. Only start when leader.
 	err = mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
 		sourceRegistry := collectorv2.NewSourceRegistry()
+		setupLog.Info("Initializing v2 collector")
 
-		// Initialize collector v2 if COLLECTOR_V2 is enabled
-		if strings.EqualFold(os.Getenv("COLLECTOR_V2"), "true") {
-			setupLog.Info("COLLECTOR_V2 enabled, initializing v2 collector")
+		// Read Prometheus cache configuration from ConfigMap
+		// TODO(LV): Uncomment and implement cache configuration reading
+		// cacheConfig, err := config.ReadPrometheusCacheConfig(context.Background(), mgr.GetClient())
+		// if err != nil {
+		// 	setupLog.Error(err, "Failed to read Prometheus cache config from ConfigMap, using defaults")
+		// 	cacheConfig = nil // Use defaults
+		// }
 
-			// Create PrometheusSource with default config
-			promSource := collectorv2.NewPrometheusSource(ctx, promAPI, collectorv2.DefaultPrometheusSourceConfig())
+		// Register PrometheusSource with default config
+		promSource := collectorv2.NewPrometheusSource(ctx, promAPI, collectorv2.DefaultPrometheusSourceConfig())
 
-			// Register in global source registry
-			if err := sourceRegistry.Register("prometheus", promSource); err != nil {
-				setupLog.Error(err, "failed to register prometheus source in v2 registry")
-				os.Exit(1)
-			}
+		// Register in global source registry
+		if err := sourceRegistry.Register("prometheus", promSource); err != nil {
+			setupLog.Error(err, "failed to register prometheus source in v2 registry")
+			os.Exit(1)
 		}
 
 		engine := saturation.NewEngine(
 			mgr.GetClient(),
 			mgr.GetScheme(),
 			mgr.GetEventRecorderFor("workload-variant-autoscaler-saturation-engine"),
-			metricsCollector,
 			sourceRegistry,
 		)
 		go engine.StartOptimizeLoop(ctx)
@@ -434,11 +397,9 @@ func main() {
 
 	// Create the reconciler
 	reconciler := &controller.VariantAutoscalingReconciler{
-		Client:           mgr.GetClient(),
-		Scheme:           mgr.GetScheme(),
-		Recorder:         mgr.GetEventRecorderFor("workload-variant-autoscaler-controller-manager"),
-		PromAPI:          promAPI,
-		MetricsCollector: metricsCollector,
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("workload-variant-autoscaler-controller-manager"),
 	}
 
 	// Setup the controller with the manager

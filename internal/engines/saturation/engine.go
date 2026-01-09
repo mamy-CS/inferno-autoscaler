@@ -35,7 +35,6 @@ import (
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
 	actuator "github.com/llm-d-incubation/workload-variant-autoscaler/internal/actuator"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector"
-	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/prometheus"
 	collectorv2 "github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/v2"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/common"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/executor"
@@ -51,23 +50,21 @@ type Engine struct {
 	scheme   *runtime.Scheme
 	executor executor.Executor
 
-	Recorder         record.EventRecorder
-	MetricsCollector interfaces.MetricsCollector
+	Recorder record.EventRecorder
 
-	// ReplicaMetricsCollectorV2 is the v2 collector for replica metrics (optional).
-	// Set via SetReplicaMetricsCollectorV2 when COLLECTOR_V2 env is enabled.
+	// ReplicaMetricsCollectorV2 is the v2 collector for replica metrics
 	ReplicaMetricsCollectorV2 *saturationmetrics.ReplicaMetricsCollector
-
-	// Saturation scaling config cache (thread-safe, updated on ConfigMap changes)
 }
 
 // NewEngine creates a new instance of the saturation engine.
-func NewEngine(client client.Client, scheme *runtime.Scheme, recorder record.EventRecorder, collector interfaces.MetricsCollector, metricsRegistry *collectorv2.SourceRegistry) *Engine {
+func NewEngine(client client.Client, scheme *runtime.Scheme, recorder record.EventRecorder, metricsRegistry *collectorv2.SourceRegistry) *Engine {
+	promSource := metricsRegistry.Get("prometheus") // assume prometheus source is registered
+
 	engine := Engine{
-		client:           client,
-		scheme:           scheme,
-		Recorder:         recorder,
-		MetricsCollector: collector,
+		client:                    client,
+		scheme:                    scheme,
+		Recorder:                  recorder,
+		ReplicaMetricsCollectorV2: saturationmetrics.NewReplicaMetricsCollector(promSource, client),
 	}
 
 	engine.executor = executor.NewPollingExecutor(executor.PollingConfig{
@@ -78,21 +75,10 @@ func NewEngine(client client.Client, scheme *runtime.Scheme, recorder record.Eve
 		RetryBackoff: 100 * time.Millisecond,
 	})
 
-	if strings.EqualFold(os.Getenv("COLLECTOR_V2"), "true") {
-
-		promSource := metricsRegistry.Get("prometheus").(*collectorv2.PrometheusSource)
-		engine.ReplicaMetricsCollectorV2 = saturationmetrics.NewReplicaMetricsCollector(promSource, client)
-
-		saturationmetrics.RegisterSaturationQueries(metricsRegistry)
-	}
+	// Register saturation-specific queries in the metrics registry
+	saturationmetrics.RegisterSaturationQueries(metricsRegistry)
 
 	return &engine
-}
-
-// UseCollectorV2 returns true if the v2 collector should be used.
-// This checks the COLLECTOR_V2 environment variable and whether the v2 collector is configured.
-func (e *Engine) UseCollectorV2() bool {
-	return strings.EqualFold(os.Getenv("COLLECTOR_V2"), "true") && e.ReplicaMetricsCollectorV2 != nil
 }
 
 // StartOptimizeLoop starts the optimization loop for the saturation engine.
@@ -103,9 +89,9 @@ func (e *Engine) StartOptimizeLoop(ctx context.Context) {
 
 // optimize performs the optimization logic.
 func (e *Engine) optimize(ctx context.Context) error {
-	//TODO: move interval to manager.yaml
 	logger := ctrl.LoggerFrom(ctx)
 
+	//TODO: move interval to manager.yaml
 	interval := common.Config.GetOptimizationInterval()
 
 	// Update the executor interval if changed
@@ -153,6 +139,12 @@ func (e *Engine) optimize(ctx context.Context) error {
 		return nil
 	}
 
+	saturationConfig, ok := saturationConfigMap["default"]
+	if !ok {
+		logger.Info("Default saturation scaling config not found, skipping optimization")
+		return nil
+	}
+
 	// Group VAs by model for per-model capacity analysis
 	modelGroups := utils.GroupVariantAutoscalingByModel(activeVAs)
 	logger.Info("Grouped VAs by model",
@@ -185,21 +177,7 @@ func (e *Engine) optimize(ctx context.Context) error {
 			"variantCount", len(modelVAs),
 			"groupKey", groupKey)
 
-		// Collect metrics and populate CurrentAlloc for saturation-only mode
-		// This validates metrics availability and populates the VariantAutoscalings with CurrentAlloc
-		if err := e.CollectMetricsForSaturationMode(ctx, modelVAs, vaMap, currentAllocations, e.client, e.MetricsCollector); err != nil {
-			logger.Error(err, "Failed to collect metrics for saturation mode",
-				"modelID", modelID)
-			// Metrics collection error - individual VAs are skipped
-		}
-
-		// Get saturation config for this model (use default)
-		var saturationConfig interfaces.SaturationScalingConfig
-		//TODO: if modelVAs is less than zero we continue saturation analysis and fail??
-		if len(modelVAs) > 0 {
-			saturationConfig = saturationConfigMap["default"]
-		}
-		saturationTargets, saturationAnalysis, variantStates, err := e.RunSaturationAnalysis(ctx, modelID, modelVAs, saturationConfig, e.client, e.MetricsCollector)
+		saturationTargets, saturationAnalysis, variantStates, err := e.RunSaturationAnalysis(ctx, modelID, modelVAs, saturationConfig, e.client)
 		if err != nil {
 			logger.Error(err, "Saturation analysis failed",
 				"modelID", modelID)
@@ -374,7 +352,6 @@ func (e *Engine) RunSaturationAnalysis(
 	modelVAs []llmdVariantAutoscalingV1alpha1.VariantAutoscaling,
 	SaturationConfig interfaces.SaturationScalingConfig,
 	k8sClient client.Client,
-	metricsCollector interfaces.MetricsCollector,
 ) (map[string]int, *interfaces.ModelSaturationAnalysis, []interfaces.VariantReplicaState, error) {
 	if len(modelVAs) == 0 {
 		return nil, nil, nil, fmt.Errorf("no VAs provided for model %s", modelID)
@@ -417,18 +394,11 @@ func (e *Engine) RunSaturationAnalysis(
 		variantCosts[deploy.Name] = cost
 	}
 
-	// Collect Saturation metrics using v2 collector if enabled, otherwise use legacy collector
-	var replicaMetrics []interfaces.ReplicaMetrics
-	var err error
-
-	if e.UseCollectorV2() {
-		logger.V(logging.DEBUG).Info("Using v2 collector for replica metrics",
-			"modelID", modelID,
-			"namespace", namespace)
-		replicaMetrics, err = e.ReplicaMetricsCollectorV2.CollectReplicaMetrics(ctx, modelID, namespace, deployments, variantAutoscalings, variantCosts)
-	} else {
-		replicaMetrics, err = metricsCollector.CollectReplicaMetrics(ctx, modelID, namespace, deployments, variantAutoscalings, variantCosts)
-	}
+	// Collect Saturation metrics using v2 collector
+	logger.V(logging.DEBUG).Info("Using v2 collector for replica metrics",
+		"modelID", modelID,
+		"namespace", namespace)
+	replicaMetrics, err := e.ReplicaMetricsCollectorV2.CollectReplicaMetrics(ctx, modelID, namespace, deployments, variantAutoscalings, variantCosts)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to collect Saturation metrics for model %s: %w", modelID, err)
 	}
@@ -780,15 +750,6 @@ func (e *Engine) applySaturationDecisions(
 				"action", decision.Action,
 				"target", targetReplicas,
 				"reason", reason)
-
-			// Invalidate cache when scaling occurs
-			if decision.Action != interfaces.ActionNoChange {
-				if promCollector, ok := e.MetricsCollector.(*prometheus.PrometheusCollector); ok {
-					promCollector.InvalidateCacheForVariant(decision.ModelID, decision.Namespace, decision.VariantName)
-					logger.V(logging.DEBUG).Info("Invalidated metrics cache after scaling",
-						"variant", decision.VariantName)
-				}
-			}
 		}
 	}
 
