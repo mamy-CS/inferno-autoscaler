@@ -32,26 +32,6 @@ spec:
   # Premium tier: H100 accelerator with higher cost
   variantCost: 80.0  # Cost per replica (reflects H100 premium pricing)
 
-  # Model profile for H100 accelerator
-  modelProfile:
-    accelerators:
-      - acc: "H100"
-        accCount: 1
-
-        # Performance parameters for H100 (faster than A100)
-        perfParms:
-          decodeParms:
-            # ITL equation: itl = alpha + beta * maxBatchSize
-            alpha: "15.2"   # Lower base latency (H100 is faster)
-            beta: "0.28"    # Lower per-batch overhead
-
-          prefillParms:
-            # TTFT equation: ttft = gamma + delta * tokens * maxBatchSize
-            gamma: "3.8"    # Lower base prefill time
-            delta: "0.07"   # Lower per-token cost
-
-        maxBatchSize: 256
-
 ---
 apiVersion: llmd.ai/v1alpha1
 kind: VariantAutoscaling
@@ -74,26 +54,6 @@ spec:
 
   # Standard tier: A100 accelerator with standard cost
   variantCost: 40.0  # Cost per replica (standard A100 pricing)
-
-  # Model profile for A100 accelerator
-  modelProfile:
-    accelerators:
-      - acc: "A100"
-        accCount: 1
-
-        # Performance parameters for A100 (standard performance)
-        perfParms:
-          decodeParms:
-            # ITL equation: itl = alpha + beta * maxBatchSize
-            alpha: "20.5"   # Higher base latency than H100
-            beta: "0.41"    # Higher per-batch overhead
-
-          prefillParms:
-            # TTFT equation: ttft = gamma + delta * tokens * maxBatchSize
-            gamma: "5.2"    # Higher base prefill time
-            delta: "0.1"    # Higher per-token cost
-
-        maxBatchSize: 256
 
 ---
 # Example: Budget variant with lower cost for best-effort workloads
@@ -118,19 +78,6 @@ spec:
   # Budget tier: Very low cost for cost-sensitive workloads
   variantCost: 5.0  # Minimal cost for T4 GPUs
 
-  modelProfile:
-    accelerators:
-      - acc: "T4"
-        accCount: 1
-        perfParms:
-          decodeParms:
-            alpha: "35.0"   # Slower performance
-            beta: "0.75"
-          prefillParms:
-            gamma: "12.0"
-            delta: "0.25"
-        maxBatchSize: 64  # Smaller batch size for T4
-
 ---
 # Example: Multi-tenant cost tracking
 # Assign different costs to the same accelerator for different tenants
@@ -153,19 +100,6 @@ spec:
   # Gold tenant: Premium pricing for priority service
   variantCost: 25.0  # Higher cost reflects priority/SLA
 
-  modelProfile:
-    accelerators:
-      - acc: "A100"
-        accCount: 1
-        perfParms:
-          decodeParms:
-            alpha: "20.5"
-            beta: "0.41"
-          prefillParms:
-            gamma: "5.2"
-            delta: "0.1"
-        maxBatchSize: 256
-
 ---
 apiVersion: llmd.ai/v1alpha1
 kind: VariantAutoscaling
@@ -186,19 +120,6 @@ spec:
   # Silver tenant: Standard pricing
   variantCost: 15.0  # Standard cost
 
-  modelProfile:
-    accelerators:
-      - acc: "A100"
-        accCount: 1
-        perfParms:
-          decodeParms:
-            alpha: "20.5"
-            beta: "0.41"
-          prefillParms:
-            gamma: "5.2"
-            delta: "0.1"
-        maxBatchSize: 256
-
 ---
 # Note: If variantCost is not specified, it defaults to 10.0
 # Example of default behavior:
@@ -216,16 +137,3 @@ spec:
   modelID: "meta/llama-3.1-8b"
 
   # variantCost omitted - will default to 10.0
-
-  modelProfile:
-    accelerators:
-      - acc: "A100"
-        accCount: 1
-        perfParms:
-          decodeParms:
-            alpha: "20.5"
-            beta: "0.41"
-          prefillParms:
-            gamma: "5.2"
-            delta: "0.1"
-        maxBatchSize: 256
