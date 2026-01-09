@@ -64,8 +64,7 @@ status:
     status: "False"
     reason: "DeploymentNotFound"
     message: "Target deployment 'llama-8b' no longer exists"
-  currentAllocation:
-    numReplicas: 0  # Cleared to reflect no deployment
+  desiredOptimizedAlloc: {}  # Cleared to reflect no deployment
 ```
 
 **Recovery Process:**
