@@ -247,15 +247,11 @@ Specifies the cost per replica for this variant, used in saturation-based cost o
 ```yaml
 spec:
   modelID: "meta/llama-3.1-8b"
-  variantCost: 15.5  # Cost per replica (default: 10.0)
-  modelProfile:
-    accelerators:
-      - acc: "A100"
-        accCount: 1
+  variantCost: "15.5"  # Cost per replica (default: "10.0")
 ```
 
-**Default:** 10.0
-**Validation:** Must be >= 0
+**Default:** "10.0"
+**Validation:** Must be a string matching pattern `^\d+(\.\d+)?$` (numeric string)
 
 **Use Cases:**
 - **Differentiated Pricing**: Higher cost for premium accelerators (H100) vs. standard (A100)
@@ -267,18 +263,12 @@ spec:
 # Premium variant (H100, higher cost)
 spec:
   modelID: "meta/llama-3.1-70b"
-  variantCost: 80.0
-  modelProfile:
-    accelerators:
-      - acc: "H100"
+  variantCost: "80.0"
 
 # Standard variant (A100, lower cost)
 spec:
   modelID: "meta/llama-3.1-70b"
-  variantCost: 40.0
-  modelProfile:
-    accelerators:
-      - acc: "A100"
+  variantCost: "40.0"
 ```
 
 **Behavior:**
