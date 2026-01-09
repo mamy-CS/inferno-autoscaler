@@ -77,14 +77,9 @@ func GroupVariantAutoscalingByModel(
 
 // GetAcceleratorType extracts the accelerator type from a VariantAutoscaling.
 // It checks in order:
-// 1. The first accelerator in Spec.ModelProfile.Accelerators
-// 2. The inference.optimization/acceleratorName label
-// 3. Returns empty string if neither is available
+// 1. The inference.optimization/acceleratorName label
+// 2. Returns empty string if neither is available
 func GetAcceleratorType(va *wvav1alpha1.VariantAutoscaling) string {
-	// Try spec first (primary source of truth)
-	// Spec.ModelProfile is deprecated/removed, falling back to label
-
-	// Fall back to label
 	if va.Labels != nil {
 		if acc, exists := va.Labels[AcceleratorNameLabel]; exists {
 			return acc

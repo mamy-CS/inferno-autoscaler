@@ -22,7 +22,6 @@ import (
 	"os"
 
 	promoperator "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
-	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	yaml "gopkg.in/yaml.v3"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -51,12 +50,6 @@ type VariantAutoscalingReconciler struct {
 	Scheme *runtime.Scheme
 
 	Recorder record.EventRecorder
-
-	PromAPI promv1.API
-
-	// MetricsCollector is the interface for collecting metrics from various backends
-	// Defaults to Prometheus collector, but can be swapped for other backends (e.g., EPP)
-	MetricsCollector interfaces.MetricsCollector
 }
 
 // +kubebuilder:rbac:groups=llmd.ai,resources=variantautoscalings,verbs=get;list;watch;create;update;patch;delete

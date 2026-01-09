@@ -19,7 +19,6 @@ package saturation
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -32,7 +31,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
-	collector "github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector"
 	collectorv2 "github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/v2"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/config"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/common"
@@ -390,8 +388,10 @@ data:
 			}
 
 			// Initialize MetricsCollector with mock Prometheus API
-			metricsCollector := collector.NewPrometheusCollector(mockPromAPI)
-			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, metricsCollector, collectorv2.NewSourceRegistry())
+			sourceRegistry := collectorv2.NewSourceRegistry()
+			promSource := collectorv2.NewPrometheusSource(ctx, mockPromAPI, collectorv2.DefaultPrometheusSourceConfig())
+			sourceRegistry.Register("prometheus", promSource) // nolint:errcheck
+			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, sourceRegistry)
 
 			// Populate global config
 			common.Config.UpdateSaturationConfig(map[string]interfaces.SaturationScalingConfig{
@@ -452,7 +452,9 @@ data:
 			}
 
 			By("Converting saturation targets to decisions")
-			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, nil, collectorv2.NewSourceRegistry())
+			sourceRegistry := collectorv2.NewSourceRegistry()
+			sourceRegistry.Register("prometheus", collectorv2.NewNoOpSource()) // nolint:errcheck
+			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, sourceRegistry)
 			decisions := engine.convertSaturationTargetsToDecisions(context.Background(), saturationTargets, saturationAnalysis, variantStates)
 
 			By("Verifying all variants are included in decisions")
@@ -475,6 +477,8 @@ data:
 		const totalVAs = 3
 		const configMapName = "workload-variant-autoscaler-variantautoscaling-config"
 		var configMapNamespace = getNamespace()
+		var sourceRegistry *collectorv2.SourceRegistry
+		var mockPromAPI *testutils.MockPromAPI
 
 		BeforeEach(func() {
 			logging.NewTestLogger()
@@ -485,6 +489,19 @@ data:
 				},
 			}
 			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, ns))).NotTo(HaveOccurred())
+
+			By("Using a working mock Prometheus API with no data")
+			mockPromAPI = &testutils.MockPromAPI{
+				QueryResults: map[string]model.Value{
+					// Add default responses for common queries
+				},
+				QueryErrors: map[string]error{},
+			}
+
+			By("creating the source registry with mock Prometheus API")
+			sourceRegistry = collectorv2.NewSourceRegistry()
+			promSource := collectorv2.NewPrometheusSource(ctx, mockPromAPI, collectorv2.DefaultPrometheusSourceConfig())
+			sourceRegistry.Register("prometheus", promSource) // nolint:errcheck
 
 			By("creating the required configmaps")
 			// Use custom configmap creation function
@@ -609,34 +626,12 @@ data:
 				}
 			}
 
-			// Unset COLLECTOR_V2 environment variable
-			os.Unsetenv("COLLECTOR_V2") // nolint:errcheck
 		})
 
 		It("should successfully run optimization with v2 collector", func() {
-			os.Setenv("COLLECTOR_V2", "true") // nolint:errcheck
-
-			By("Setting up v2 collector with mock Prometheus API")
-			mockPromAPI := &testutils.MockPromAPI{
-				QueryResults: map[string]model.Value{
-					// Add default responses for common queries
-				},
-				QueryErrors: map[string]error{},
-			}
-
-			// Create v2 collector infrastructure
-			sourceRegistry := collectorv2.NewSourceRegistry()
-			config := collectorv2.DefaultPrometheusSourceConfig()
-			source := collectorv2.NewPrometheusSource(context.Background(), mockPromAPI, config)
-
-			// Register in the global registry so engine.NewEngine can retrieve it
-			sourceRegistry.Register("prometheus", source) // nolint:errcheck
 
 			// Initialize legacy MetricsCollector for non-saturation metrics
-			metricsCollector := collector.NewPrometheusCollector(mockPromAPI)
-			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, metricsCollector, sourceRegistry)
-			// Verify v2 collector is active
-			Expect(engine.UseCollectorV2()).To(BeTrue())
+			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, sourceRegistry)
 
 			// Populate global config
 			common.Config.UpdateSaturationConfig(map[string]interfaces.SaturationScalingConfig{
@@ -662,55 +657,6 @@ data:
 			Expect(v2VAs).To(Equal(totalVAs), "Expected all v2 test VAs to be present")
 		})
 
-		It("should fall back to legacy collector when v2 is not configured", func() {
-			// Do NOT set COLLECTOR_V2 env variable
-
-			By("Setting up only legacy collector")
-			mockPromAPI := &testutils.MockPromAPI{
-				QueryResults: map[string]model.Value{},
-				QueryErrors:  map[string]error{},
-			}
-
-			metricsCollector := collector.NewPrometheusCollector(mockPromAPI)
-			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, metricsCollector, collectorv2.NewSourceRegistry())
-
-			// Verify v2 collector is NOT active
-			Expect(engine.UseCollectorV2()).To(BeFalse())
-
-			// Populate global config
-			common.Config.UpdateSaturationConfig(map[string]interfaces.SaturationScalingConfig{
-				"default": {},
-			})
-
-			By("Performing optimization loop with legacy collector")
-			err := engine.optimize(ctx)
-			Expect(err).NotTo(HaveOccurred())
-		})
-
-		It("should use v2 collector for saturation metrics when enabled", func() {
-			os.Setenv("COLLECTOR_V2", "true") // nolint:errcheck
-
-			By("Creating engine with both collectors")
-			mockPromAPI := &testutils.MockPromAPI{
-				QueryResults: map[string]model.Value{},
-				QueryErrors:  map[string]error{},
-			}
-
-			sourceRegistry := collectorv2.NewSourceRegistry()
-			config := collectorv2.DefaultPrometheusSourceConfig()
-			source := collectorv2.NewPrometheusSource(context.Background(), mockPromAPI, config)
-			// Register in the global registry so engine.NewEngine can retrieve it
-			sourceRegistry.Register("prometheus", source) // nolint:errcheck
-
-			metricsCollector := collector.NewPrometheusCollector(mockPromAPI)
-			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, metricsCollector, sourceRegistry)
-
-			Expect(engine.UseCollectorV2()).To(BeTrue())
-
-			By("Verifying v2 collector is properly configured")
-			Expect(engine.ReplicaMetricsCollectorV2).ToNot(BeNil())
-			Expect(engine.MetricsCollector).ToNot(BeNil())
-		})
 	})
 
 })

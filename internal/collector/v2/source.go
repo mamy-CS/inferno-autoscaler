@@ -1,3 +1,7 @@
+// Package collector provides metrics collection functionality.
+//
+// This file defines the MetricsSource interface and related types for
+// collecting and caching metrics from various backends.
 package collector
 
 import (
