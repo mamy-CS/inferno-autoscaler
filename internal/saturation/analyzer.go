@@ -297,8 +297,8 @@ func (a *Analyzer) isScaleDownSafe(
 // Step 1: Pure saturation-based target calculation
 // Uses replica count from Saturation metrics (ready replicas) to avoid excessive scale-up.
 // Rules:
-// - If desired ≠ 0 and desired ≠ current: target = desired (preserve previous optimizer decision)
-// - Else if Saturation needs scale-up: cheapest variant gets readyReplicas+1
+// - If ANY variant is transitioning (desired ≠ current OR metrics ≠ current): block all scaling for the model
+// - Else if Saturation needs scale-up: cheapest variant (without pending replicas) gets readyReplicas+1
 // - Else if Saturation allows scale-down: most expensive variant gets readyReplicas-1
 // - Else: target = readyReplicas (replicas with metrics)
 func (a *Analyzer) CalculateSaturationTargets(
@@ -308,6 +308,7 @@ func (a *Analyzer) CalculateSaturationTargets(
 ) map[string]int {
 
 	targets := make(map[string]int)
+	logger := ctrl.LoggerFrom(ctx)
 
 	// Nil safety
 	if saturationAnalysis == nil || len(saturationAnalysis.VariantAnalyses) == 0 {
@@ -324,116 +325,126 @@ func (a *Analyzer) CalculateSaturationTargets(
 		stateMap[state.VariantName] = state
 	}
 
-	// Initialize all targets to current ready replicas (those with metrics) from deployment status
-	// This prevents excessive scale-up when replicas are not yet ready
+	// STEP 1: Check model-level transition state
+	// If ANY variant is transitioning, block all scaling decisions for the entire model.
+	// This prevents making decisions based on incomplete capacity data.
+	modelInTransition := false
+	var transitionReasons []string
+
 	for _, va := range saturationAnalysis.VariantAnalyses {
 		state := stateMap[va.VariantName]
 
-		// TODO: will need to adjust this logic to address readiness based on metrics
-		// Check if the VA state is stable (DesiredReplicas and CurrentReplicas match) and all expected pods are reporting metrics
-		isStable := (state.DesiredReplicas == 0 || state.DesiredReplicas == state.CurrentReplicas)
-		allMetricsAvailable := (va.ReplicaCount == state.CurrentReplicas)
+		// Check 1: Desired vs Current mismatch (scaling in progress)
+		desiredCurrentMismatch := state.DesiredReplicas != 0 && state.DesiredReplicas != state.CurrentReplicas
+		if desiredCurrentMismatch {
+			modelInTransition = true
+			transitionReasons = append(transitionReasons,
+				fmt.Sprintf("%s: desired(%d)!=current(%d)", va.VariantName, state.DesiredReplicas, state.CurrentReplicas))
+		}
 
-		if isStable && allMetricsAvailable {
-			// Stable VA state and all pods have report metrics: use metrics count
-			targets[va.VariantName] = va.ReplicaCount
-			ctrl.LoggerFrom(ctx).V(logging.DEBUG).Info("Target initialized to metrics count (stable)",
-				"variant", va.VariantName, "count", va.ReplicaCount)
-		} else {
-			// Transitional state or incomplete metrics: preserve current replica count
-			targets[va.VariantName] = state.CurrentReplicas
-			if !allMetricsAvailable {
-				ctrl.LoggerFrom(ctx).V(logging.DEBUG).Info("Target initialized to current replicas (incomplete metrics)",
-					"variant", va.VariantName, "currentReplicas", state.CurrentReplicas, "metricsCount", va.ReplicaCount)
-			} else if !isStable {
-				ctrl.LoggerFrom(ctx).V(logging.DEBUG).Info("Target initialized to current replicas (transitioning)",
-					"variant", va.VariantName, "desired", state.DesiredReplicas, "current", state.CurrentReplicas, "metricsCount", va.ReplicaCount)
+		// Check 2: Metrics vs Current mismatch (pods not yet ready/reporting)
+		metricsCurrentMismatch := va.ReplicaCount != state.CurrentReplicas
+		if metricsCurrentMismatch {
+			modelInTransition = true
+			transitionReasons = append(transitionReasons,
+				fmt.Sprintf("%s: metrics(%d)!=current(%d)", va.VariantName, va.ReplicaCount, state.CurrentReplicas))
+		}
+	}
+
+	// STEP 2: Initialize targets
+	// If model is transitioning, preserve desired (if set) or current replicas
+	// If model is stable, use metrics count as the base
+	for _, va := range saturationAnalysis.VariantAnalyses {
+		state := stateMap[va.VariantName]
+
+		if modelInTransition {
+			// Model in transition: preserve desired replicas if set, otherwise current
+			if state.DesiredReplicas != 0 && state.DesiredReplicas != state.CurrentReplicas {
+				targets[va.VariantName] = state.DesiredReplicas
+				logger.V(logging.DEBUG).Info("Target set to desired (model transitioning)",
+					"variant", va.VariantName, "desired", state.DesiredReplicas)
+			} else {
+				targets[va.VariantName] = state.CurrentReplicas
+				logger.V(logging.DEBUG).Info("Target set to current (model transitioning)",
+					"variant", va.VariantName, "current", state.CurrentReplicas)
 			}
+		} else {
+			// Model stable: use metrics count
+			targets[va.VariantName] = va.ReplicaCount
+			logger.V(logging.DEBUG).Info("Target initialized to metrics count (stable)",
+				"variant", va.VariantName, "count", va.ReplicaCount)
 		}
 	}
 
-	// Check if we should preserve any desired replicas
-	// If desired ≠ 0 and desired ≠ current, preserve desired
-	preservedVariants := make(map[string]bool)
-	for _, va := range saturationAnalysis.VariantAnalyses {
-		state := stateMap[va.VariantName]
-		if state.DesiredReplicas != 0 && state.DesiredReplicas != state.CurrentReplicas {
-			targets[va.VariantName] = state.DesiredReplicas
-			preservedVariants[va.VariantName] = true
-			ctrl.LoggerFrom(ctx).V(logging.DEBUG).Info("Preserving desired replicas",
-				"variant", va.VariantName, "currentReplicas", state.CurrentReplicas, "readyReplicas", va.ReplicaCount, "desired", state.DesiredReplicas)
-		}
+	// STEP 3: If model is transitioning, log and return early (no scaling decisions)
+	if modelInTransition {
+		logger.Info("Model in transition, blocking scaling decisions",
+			"modelID", saturationAnalysis.ModelID,
+			"reasons", transitionReasons)
+		return targets
 	}
 
-	// Determine saturation action
+	// STEP 4: Model is stable - proceed with scaling decisions
 	if saturationAnalysis.ShouldScaleUp {
-		// Find cheapest variant that doesn't have preserved desired and has no pending replicas.
-		// We check pending replicas per-variant rather than globally, so a variant without
-		// pending pods can scale up even if another variant has pending pods.
-		var cheapestNonPreserved *interfaces.VariantSaturationAnalysis
+		// Find cheapest variant for scale-up, skipping variants with pending replicas
+		var cheapestVariant *interfaces.VariantSaturationAnalysis
 		for i := range saturationAnalysis.VariantAnalyses {
 			va := &saturationAnalysis.VariantAnalyses[i]
-			if preservedVariants[va.VariantName] {
-				continue
-			}
+
 			// Skip variants with pending replicas to prevent cascade scaling
 			state := stateMap[va.VariantName]
 			if state.PendingReplicas > 0 {
-				ctrl.LoggerFrom(ctx).V(logging.DEBUG).Info("Skipping variant with pending replicas for scale-up",
+				logger.V(logging.DEBUG).Info("Skipping variant with pending replicas for scale-up",
 					"variant", va.VariantName, "pendingReplicas", state.PendingReplicas)
 				continue
 			}
+
 			// Select cheapest, with stable tie-breaking by variant name (alphabetically first)
-			if cheapestNonPreserved == nil ||
-				va.Cost < cheapestNonPreserved.Cost ||
-				(va.Cost == cheapestNonPreserved.Cost && va.VariantName < cheapestNonPreserved.VariantName) {
-				cheapestNonPreserved = va
+			if cheapestVariant == nil ||
+				va.Cost < cheapestVariant.Cost ||
+				(va.Cost == cheapestVariant.Cost && va.VariantName < cheapestVariant.VariantName) {
+				cheapestVariant = va
 			}
 		}
 
-		if cheapestNonPreserved != nil {
-			state := stateMap[cheapestNonPreserved.VariantName]
-			// The base target is from initialization: if we preserved desired, it uses that; else, it uses current/metrics
-			baseTarget := targets[cheapestNonPreserved.VariantName]
-			targets[cheapestNonPreserved.VariantName] = baseTarget + 1
-			ctrl.LoggerFrom(ctx).V(logging.VERBOSE).Info("Saturation target: scale-up cheapest variant",
-				"variant", cheapestNonPreserved.VariantName, "cost", cheapestNonPreserved.Cost, "currentReplicas", state.CurrentReplicas,
-				"readyReplicas", cheapestNonPreserved.ReplicaCount, "baseTarget", baseTarget, "target", targets[cheapestNonPreserved.VariantName], "reason", saturationAnalysis.ScaleUpReason)
+		if cheapestVariant != nil {
+			state := stateMap[cheapestVariant.VariantName]
+			baseTarget := targets[cheapestVariant.VariantName]
+			targets[cheapestVariant.VariantName] = baseTarget + 1
+			logger.V(logging.VERBOSE).Info("Saturation target: scale-up cheapest variant",
+				"variant", cheapestVariant.VariantName, "cost", cheapestVariant.Cost, "currentReplicas", state.CurrentReplicas,
+				"readyReplicas", cheapestVariant.ReplicaCount, "baseTarget", baseTarget, "target", targets[cheapestVariant.VariantName], "reason", saturationAnalysis.ScaleUpReason)
 		}
+
 	} else if saturationAnalysis.ScaleDownSafe {
-		// Find most expensive variant that doesn't have preserved desired
-		var mostExpensiveNonPreserved *interfaces.VariantSaturationAnalysis
+		// Find most expensive variant for scale-down
+		var mostExpensiveVariant *interfaces.VariantSaturationAnalysis
 		for i := range saturationAnalysis.VariantAnalyses {
 			va := &saturationAnalysis.VariantAnalyses[i]
-			if preservedVariants[va.VariantName] {
-				continue
-			}
 			// Can't scale down if at or below minimum (1 replica)
-			// The base target is from initialization: if we preserved desired, it uses that; else, it uses current/metrics
 			baseTarget := targets[va.VariantName]
 			if baseTarget <= 1 {
 				continue
 			}
 			// Select most expensive, with stable tie-breaking by variant name
-			if mostExpensiveNonPreserved == nil ||
-				va.Cost > mostExpensiveNonPreserved.Cost ||
-				(va.Cost == mostExpensiveNonPreserved.Cost && va.VariantName > mostExpensiveNonPreserved.VariantName) {
-				mostExpensiveNonPreserved = va
+			if mostExpensiveVariant == nil ||
+				va.Cost > mostExpensiveVariant.Cost ||
+				(va.Cost == mostExpensiveVariant.Cost && va.VariantName > mostExpensiveVariant.VariantName) {
+				mostExpensiveVariant = va
 			}
 		}
 
-		if mostExpensiveNonPreserved != nil {
-			state := stateMap[mostExpensiveNonPreserved.VariantName]
-			// The base target is from initialization: if we preserved desired, it uses that; else, it uses current/metrics
-			baseTarget := targets[mostExpensiveNonPreserved.VariantName]
-			targets[mostExpensiveNonPreserved.VariantName] = baseTarget - 1
-			ctrl.LoggerFrom(ctx).V(logging.VERBOSE).Info("Saturation target: scale-down most expensive variant",
-				"variant", mostExpensiveNonPreserved.VariantName, "cost", mostExpensiveNonPreserved.Cost, "currentReplicas", state.CurrentReplicas,
-				"readyReplicas", mostExpensiveNonPreserved.ReplicaCount, "baseTarget", baseTarget, "target", targets[mostExpensiveNonPreserved.VariantName])
+		if mostExpensiveVariant != nil {
+			state := stateMap[mostExpensiveVariant.VariantName]
+			baseTarget := targets[mostExpensiveVariant.VariantName]
+			targets[mostExpensiveVariant.VariantName] = baseTarget - 1
+			logger.V(logging.VERBOSE).Info("Saturation target: scale-down most expensive variant",
+				"variant", mostExpensiveVariant.VariantName, "cost", mostExpensiveVariant.Cost, "currentReplicas", state.CurrentReplicas,
+				"readyReplicas", mostExpensiveVariant.ReplicaCount, "baseTarget", baseTarget, "target", targets[mostExpensiveVariant.VariantName])
 		}
 	} else {
 		// No scaling action needed - Saturation is adequate and stable
-		ctrl.LoggerFrom(ctx).V(logging.DEBUG).Info("Saturation targets: no scaling needed",
+		logger.V(logging.DEBUG).Info("Saturation targets: no scaling needed",
 			"avgSpareKvCapacity", saturationAnalysis.AvgSpareKvCapacity,
 			"avgSpareQueueLength", saturationAnalysis.AvgSpareQueueLength)
 	}
