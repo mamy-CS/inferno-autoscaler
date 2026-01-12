@@ -8,6 +8,10 @@
 #
 # The capacity analyzer will prefer scaling the lower-cost variant when both
 # can handle the load, enabling cost optimization.
+#
+# Note: The accelerator type is determined by the deployment's actual hardware
+# and can be tracked via labels for operational clarity. The VariantAutoscaling
+# CR itself only specifies the cost via the variantCost field.
 
 ---
 apiVersion: llmd.ai/v1alpha1
@@ -30,7 +34,7 @@ spec:
   modelID: "meta/llama-3.1-70b"
 
   # Premium tier: H100 accelerator with higher cost
-  variantCost: 80.0  # Cost per replica (reflects H100 premium pricing)
+  variantCost: "80.0"  # Cost per replica (reflects H100 premium pricing)
 
 ---
 apiVersion: llmd.ai/v1alpha1
@@ -53,7 +57,7 @@ spec:
   modelID: "meta/llama-3.1-70b"
 
   # Standard tier: A100 accelerator with standard cost
-  variantCost: 40.0  # Cost per replica (standard A100 pricing)
+  variantCost: "40.0"  # Cost per replica (standard A100 pricing)
 
 ---
 # Example: Budget variant with lower cost for best-effort workloads
@@ -76,7 +80,7 @@ spec:
   modelID: "meta/llama-3.1-8b"
 
   # Budget tier: Very low cost for cost-sensitive workloads
-  variantCost: 5.0  # Minimal cost for T4 GPUs
+  variantCost: "5.0"  # Minimal cost for T4 GPUs
 
 ---
 # Example: Multi-tenant cost tracking
@@ -98,7 +102,7 @@ spec:
   modelID: "meta/llama-3.1-8b"
 
   # Gold tenant: Premium pricing for priority service
-  variantCost: 25.0  # Higher cost reflects priority/SLA
+  variantCost: "25.0"  # Higher cost reflects priority/SLA
 
 ---
 apiVersion: llmd.ai/v1alpha1
@@ -118,7 +122,7 @@ spec:
   modelID: "meta/llama-3.1-8b"
 
   # Silver tenant: Standard pricing
-  variantCost: 15.0  # Standard cost
+  variantCost: "15.0"  # Standard cost
 
 ---
 # Note: If variantCost is not specified, it defaults to 10.0

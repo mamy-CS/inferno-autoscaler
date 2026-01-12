@@ -87,9 +87,14 @@ type VariantDecision struct {
 
 	// CurrentAllocation carries the collected metrics/allocation state
 	// This helps the Controller update status without re-collecting metrics
-	// CurrentAllocation carries the collected metrics/allocation state
-	// This helps the Controller update status without re-collecting metrics
 	CurrentAllocation *Allocation
+
+	// MetricsAvailable indicates whether saturation metrics were available for this decision
+	MetricsAvailable bool
+	// MetricsReason is the reason for the MetricsAvailable condition
+	MetricsReason string
+	// MetricsMessage is the human-readable message for the MetricsAvailable condition
+	MetricsMessage string
 }
 
 // SaturationAction represents the scaling action
@@ -106,6 +111,13 @@ type VariantReplicaState struct {
 	VariantName     string
 	CurrentReplicas int
 	DesiredReplicas int // From optimizer/CRD status, 0 if not set
+	// PendingReplicas are pods that exist but are not yet ready to serve traffic
+	// (CurrentReplicas - ReadyReplicas). This typically occurs during scale-up when
+	// new pods are starting (containers initializing, model loading, health checks).
+	// Pod startup can take 2-7 minutes depending on model size and hardware.
+	// WVA uses this to prevent cascade scaling - avoiding new scale-up requests
+	// while pending pods are still becoming ready.
+	PendingReplicas int
 }
 
 // SaturationAnalyzer analyzes replica saturation metrics and recommends scaling decisions
