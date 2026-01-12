@@ -86,7 +86,7 @@ metadata:
     inference.optimization/modelName: Meta-Llama-3.1-8B
     inference.optimization/acceleratorName: H100
 spec:
-  modelID: unsloth/Meta-Llama-3.1-8B 
+  modelID: unsloth/Meta-Llama-3.1-8B
 ```
 
 
