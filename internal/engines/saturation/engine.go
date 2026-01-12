@@ -45,6 +45,14 @@ import (
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/utils"
 )
 
+// Constants for MetricsAvailable condition
+const (
+	MetricsReasonAvailable   = "MetricsAvailable"
+	MetricsReasonUnavailable = "MetricsUnavailable"
+	MetricsMessageAvailable  = "Saturation metrics data is available for scaling decisions"
+	MetricsMessageUnavailable = "No saturation metrics available - pods may not be ready or metrics not yet scraped"
+)
+
 type Engine struct {
 	client   client.Client
 	scheme   *runtime.Scheme
@@ -54,6 +62,12 @@ type Engine struct {
 
 	// ReplicaMetricsCollectorV2 is the v2 collector for replica metrics
 	ReplicaMetricsCollectorV2 *saturationmetrics.ReplicaMetricsCollector
+}
+
+// getVariantKey returns a unique key for a variant combining namespace and name.
+// This ensures no collisions when multiple namespaces have deployments with the same name.
+func getVariantKey(namespace, name string) string {
+	return namespace + "/" + name
 }
 
 // NewEngine creates a new instance of the saturation engine.
@@ -156,11 +170,11 @@ func (e *Engine) optimize(ctx context.Context) error {
 
 	// Create VA lookup map for applySaturationDecisions (used to access VA status and update decisions)
 	// Copy slice elements to local variable to ensure stable pointers
-	// Use deployment name (ScaleTargetName) as key since decision.VariantName uses deployment name
+	// Use namespace/deploymentName as key to avoid collisions when multiple namespaces have same deployment name
 	vaMap := make(map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling, len(activeVAs))
 	for i := range activeVAs {
 		va := activeVAs[i] // Copy to local variable to ensure stable pointer
-		vaMap[va.GetScaleTargetName()] = &va
+		vaMap[getVariantKey(va.Namespace, va.GetScaleTargetName())] = &va
 	}
 
 	// Create map to store current allocations populated during metrics collection
@@ -257,9 +271,9 @@ func (e *Engine) BuildVariantStates(
 				continue
 			}
 			deploy = fetchedDeploy
-			ctrl.LoggerFrom(ctx).Info("DEBUG: BuildVariantStates fallback lookup", "variant", va.Name, "deployName", deploy.Name, "specReplicas", deploy.Spec.Replicas, "statusReplicas", deploy.Status.Replicas)
+			ctrl.LoggerFrom(ctx).V(1).Info("BuildVariantStates fallback lookup", "variant", va.Name, "deployName", deploy.Name, "specReplicas", deploy.Spec.Replicas, "statusReplicas", deploy.Status.Replicas, "readyReplicas", deploy.Status.ReadyReplicas)
 		} else {
-			ctrl.LoggerFrom(ctx).Info("DEBUG: BuildVariantStates map lookup", "variant", va.Name, "deployName", deploy.Name, "specReplicas", deploy.Spec.Replicas, "statusReplicas", deploy.Status.Replicas)
+			ctrl.LoggerFrom(ctx).V(1).Info("BuildVariantStates map lookup", "variant", va.Name, "deployName", deploy.Name, "specReplicas", deploy.Spec.Replicas, "statusReplicas", deploy.Status.Replicas, "readyReplicas", deploy.Status.ReadyReplicas)
 		}
 
 		currentReplicas := int(deploy.Status.Replicas)
@@ -267,12 +281,24 @@ func (e *Engine) BuildVariantStates(
 			currentReplicas = int(*deploy.Spec.Replicas)
 		}
 
-		ctrl.LoggerFrom(ctx).Info("DEBUG: BuildVariantStates result", "variant", va.Name, "currentReplicas", currentReplicas)
+		// Calculate pending replicas (not yet ready)
+		readyReplicas := int(deploy.Status.ReadyReplicas)
+		pendingReplicas := currentReplicas - readyReplicas
+		if pendingReplicas < 0 {
+			// This indicates an unexpected state where readyReplicas exceeds currentReplicas.
+			// Log at Info level since this inconsistency should be visible to operators.
+			ctrl.LoggerFrom(ctx).Info("Unexpected state: readyReplicas exceeds currentReplicas, clamping pendingReplicas to 0",
+				"variant", va.Name, "currentReplicas", currentReplicas, "readyReplicas", readyReplicas)
+			pendingReplicas = 0
+		}
+
+		ctrl.LoggerFrom(ctx).V(1).Info("BuildVariantStates result", "variant", va.Name, "currentReplicas", currentReplicas, "readyReplicas", readyReplicas, "pendingReplicas", pendingReplicas)
 
 		states = append(states, interfaces.VariantReplicaState{
 			VariantName:     deploy.Name,
 			CurrentReplicas: currentReplicas,
 			DesiredReplicas: va.Status.DesiredOptimizedAlloc.NumReplicas,
+			PendingReplicas: pendingReplicas,
 		})
 	}
 
@@ -453,9 +479,10 @@ func (e *Engine) applySaturationDecisions(
 ) error {
 	logger := ctrl.LoggerFrom(ctx)
 	// Create a map of decisions for O(1) lookup
+	// Use namespace/variantName as key to match vaMap and avoid collisions
 	decisionMap := make(map[string]interfaces.VariantDecision)
 	for _, d := range decisions {
-		decisionMap[d.VariantName] = d
+		decisionMap[getVariantKey(d.Namespace, d.VariantName)] = d
 	}
 
 	// Iterate over ALL active VAs to ensure we update status and trigger reconciliation for everyone
@@ -492,15 +519,8 @@ func (e *Engine) applySaturationDecisions(
 			// Now we just don't update status with it.
 		}
 
-		// Copy MetricsAvailable condition from local analysis (set during metrics collection)
-		// This condition was set on `va` but we fetched a fresh `updateVa` from API server
-		if metricsCondition := llmdVariantAutoscalingV1alpha1.GetCondition(va, llmdVariantAutoscalingV1alpha1.TypeMetricsAvailable); metricsCondition != nil {
-			llmdVariantAutoscalingV1alpha1.SetCondition(&updateVa,
-				llmdVariantAutoscalingV1alpha1.TypeMetricsAvailable,
-				metricsCondition.Status,
-				metricsCondition.Reason,
-				metricsCondition.Message)
-		}
+		// Check if we have metrics data for this VA (used for cache below)
+		_, hasAllocation := currentAllocations[vaName]
 
 		// Determine target replicas and accelerator
 		var targetReplicas int
@@ -529,9 +549,25 @@ func (e *Engine) applySaturationDecisions(
 		}
 
 		// If we still don't have an accelerator name (e.g. new VA, no decision, no current alloc), we can't update status sensibly
+		// But we still need to set MetricsAvailable condition via the cache
 		if acceleratorName == "" {
-			logger.Info("Skipping status update for VA without accelerator info",
-				"variant", vaName)
+			logger.Info("Skipping status update for VA without accelerator info, but setting MetricsAvailable=False",
+				"variant", vaName, "cacheKey.name", va.Name, "cacheKey.namespace", va.Namespace)
+			// Still set the cache entry so the controller can set MetricsAvailable=False.
+			// This is a partial decision for metrics status only - other fields like
+			// TargetReplicas and AcceleratorName are left at zero values since we don't
+			// have enough information to set them.
+			common.DecisionCache.Set(va.Name, va.Namespace, interfaces.VariantDecision{
+				VariantName:      vaName,
+				Namespace:        va.Namespace,
+				MetricsAvailable: false,
+				MetricsReason:    MetricsReasonUnavailable,
+				MetricsMessage:   MetricsMessageUnavailable,
+			})
+			// Trigger reconciler to apply the condition
+			common.DecisionTrigger <- event.GenericEvent{
+				Object: &updateVa,
+			}
 			continue
 		}
 
@@ -608,6 +644,20 @@ func (e *Engine) applySaturationDecisions(
 		// This avoids any API server interaction from the Engine.
 
 		// 1. Update Cache
+		// Determine MetricsAvailable status for the cache.
+		// - hasAllocation is true when we successfully collected current replica metrics
+		//   for this variant during this loop (metrics pipeline is working).
+		// - hasDecision is true when the optimizer produced a scaling decision based on
+		//   saturation metrics in this run.
+		// Either condition implies saturation metrics were available and usable.
+		metricsAvailable := hasAllocation || hasDecision
+		metricsReason := MetricsReasonUnavailable
+		metricsMessage := MetricsMessageUnavailable
+		if metricsAvailable {
+			metricsReason = MetricsReasonAvailable
+			metricsMessage = MetricsMessageAvailable
+		}
+
 		common.DecisionCache.Set(va.Name, va.Namespace, interfaces.VariantDecision{
 			VariantName:       vaName,
 			Namespace:         va.Namespace,
@@ -615,7 +665,9 @@ func (e *Engine) applySaturationDecisions(
 			AcceleratorName:   acceleratorName,
 			LastRunTime:       metav1.Now(),
 			CurrentAllocation: currentAllocations[vaName],
-			// Pass other fields if needed, but these are crucial for Status
+			MetricsAvailable:  metricsAvailable,
+			MetricsReason:     metricsReason,
+			MetricsMessage:    metricsMessage,
 		})
 
 		// 2. Trigger Reconciler
