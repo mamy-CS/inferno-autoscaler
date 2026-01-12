@@ -44,6 +44,7 @@ import (
 
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
 	collectorv2 "github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/v2"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/v2/registration"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/config"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/controller"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/saturation"
@@ -311,6 +312,7 @@ func main() {
 	if promConfig == nil {
 		setupLog.Error(nil, "no Prometheus configuration found - this should not happen")
 		os.Exit(1)
+		return // unreachable but helps staticcheck
 	}
 
 	// Always validate TLS configuration since HTTPS is required
@@ -369,7 +371,7 @@ func main() {
 		}
 
 		// Register scale-to-zero queries with the prometheus source
-		collectorv2.RegisterScaleToZeroQueries(sourceRegistry)
+		registration.RegisterScaleToZeroQueries(sourceRegistry)
 
 		engine := saturation.NewEngine(
 			mgr.GetClient(),
