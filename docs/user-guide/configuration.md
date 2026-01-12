@@ -106,11 +106,11 @@ metadata:
   name: llama-8b-autoscaler
   namespace: llm-inference
 spec:
-  modelName: "meta/llama-3.1-8b"
-  serviceClass: "Premium"
-  acceleratorType: "A100"
-  minReplicas: 1
-  maxBatchSize: 256
+  scaleTargetRef:
+    kind: Deployment
+    name: llama-8b
+  modelID: "meta/llama-3.1-8b"
+  variantCost: "10.0"  # Optional, defaults to "10.0"
 ```
 
 ### Complete Reference
@@ -226,17 +226,20 @@ data:
 
 ## Configuration Options
 
-### Model-Specific Settings
+### Required Fields
 
-- **modelName**: Identifier for your model (e.g., "meta/llama-3.1-8b")
-- **serviceClass**: Service tier (must match ConfigMap)
-- **acceleratorType**: Preferred GPU type (e.g., "A100", "MI300X")
+The VariantAutoscaling CR has the following required fields:
 
-### Scaling Parameters
+- **scaleTargetRef**: Reference to the target Deployment to scale (follows HPA pattern)
+  - **kind**: Resource kind (e.g., "Deployment")
+  - **name**: Name of the deployment
+- **modelID**: OpenAI API compatible identifier for your model (e.g., "meta/llama-3.1-8b")
 
-- **minReplicas**: Minimum number of replicas (default: 1)
-- **maxBatchSize**: Maximum batch size for inference
-- **keepAccelerator**: Pin to specific accelerator type (true/false)
+### Optional Fields
+
+- **variantCost**: Cost per replica for saturation-based cost optimization (default: "10.0")
+  - Must be a string matching pattern `^\d+(\.\d+)?$` (numeric string)
+  - Used by capacity analyzer when multiple variants can handle the load
 
 ### Cost Configuration
 
@@ -247,15 +250,11 @@ Specifies the cost per replica for this variant, used in saturation-based cost o
 ```yaml
 spec:
   modelID: "meta/llama-3.1-8b"
-  variantCost: 15.5  # Cost per replica (default: 10.0)
-  modelProfile:
-    accelerators:
-      - acc: "A100"
-        accCount: 1
+  variantCost: "15.5"  # Cost per replica (default: "10.0")
 ```
 
-**Default:** 10.0
-**Validation:** Must be >= 0
+**Default:** "10.0"
+**Validation:** Must be a string matching pattern `^\d+(\.\d+)?$` (numeric string)
 
 **Use Cases:**
 - **Differentiated Pricing**: Higher cost for premium accelerators (H100) vs. standard (A100)
@@ -267,18 +266,12 @@ spec:
 # Premium variant (H100, higher cost)
 spec:
   modelID: "meta/llama-3.1-70b"
-  variantCost: 80.0
-  modelProfile:
-    accelerators:
-      - acc: "H100"
+  variantCost: "80.0"
 
 # Standard variant (A100, lower cost)
 spec:
   modelID: "meta/llama-3.1-70b"
-  variantCost: 40.0
-  modelProfile:
-    accelerators:
-      - acc: "A100"
+  variantCost: "40.0"
 ```
 
 **Behavior:**
@@ -291,7 +284,7 @@ spec:
 See [CRD Reference](crd-reference.md) for advanced configuration options.
 
 ## Best Practices
-
+ 
 ### Environment Variables
 
 WVA supports configuration via environment variables for operational settings:
@@ -311,19 +304,18 @@ WVA supports configuration via environment variables for operational settings:
 
 See [Prometheus Integration](../integrations/prometheus.md) for detailed Prometheus configuration.
 
-### Choosing Service Classes
+### Cost Optimization
 
-- **Premium**: Latency-sensitive applications (chatbots, interactive AI)
-- **Standard**: Moderate latency requirements (content generation)
-- **Freemium**: Best-effort, cost-optimized (batch processing)
+- Assign higher costs to premium accelerators (H100) and lower costs to standard ones (A100)
+- Use consistent cost values across variants of the same model to enable fair comparison
+- The saturation analyzer will prefer scaling lower-cost variants when multiple can handle the load
 
-### Batch Size Tuning
+### Deployment Configuration
 
-Batch size affects throughput and latency performance:
-- WVA **mirrors** the vLLM server's configured batch size (e.g., `--max-num-seqs`)
-- Do not override `maxBatchSize` in VariantAutoscaling unless you also change the vLLM server configuration
-- When tuning batch size, update **both** the vLLM server argument and the WVA VariantAutoscaling spec together
-- Monitor SLO compliance after any batch size changes
+- Always specify `scaleTargetRef` explicitly to avoid ambiguity
+- Use descriptive names that indicate the model and accelerator type
+- Add labels to deployments and VAs for easier operational management
+- Monitor VA status conditions to detect issues with target deployments
 
 ## Monitoring Configuration
 
@@ -397,14 +389,20 @@ For complete documentation, see [Multi-Controller Isolation Guide](multi-control
 
 ### Common Issues
 
-**SLOs not being met:**
-- Verify service class configuration matches workload
-- Check if accelerator has sufficient capacity
-- Review model parameter estimates (alpha, beta values)
+**Deployment Not Found:**
+- Verify the deployment name in `scaleTargetRef` matches exactly
+- Check that the deployment exists in the same namespace as the VA
+- Review VA status conditions: `kubectl get va <name> -o yaml`
 
-**Cost too high:**
-- Consider allowing accelerator flexibility (`keepAccelerator: false`)
-- Review service class priorities
+**Metrics Not Available:**
+- Ensure Prometheus is properly configured and scraping vLLM metrics
+- Verify ServiceMonitor is created for the vLLM deployment
+- Check VA status condition `MetricsAvailable`
+
+**Cost Optimization Not Working:**
+- Verify `variantCost` is specified for all variants of the same model
+- Check that variants have different costs to enable cost-based selection
+- Review saturation analyzer logs for decision-making process
 - Check if min replicas can be reduced
 
 ## Next Steps
