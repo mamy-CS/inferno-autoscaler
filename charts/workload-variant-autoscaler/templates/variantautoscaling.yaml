@@ -23,6 +23,5 @@ spec:
   # OpenAI API compatible name of the model
   modelID: {{ .Values.llmd.modelID | quote }}
   # Cost per replica for this variant (used in saturation analysis)
-  variantCost: {{ .Values.va.variantCost | default "10.0" | quote }} 
-   
+  variantCost: {{ .Values.va.variantCost | default "10.0" | quote }}
 {{- end }}
