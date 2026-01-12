@@ -22,19 +22,3 @@ spec:
   # Used by capacity analyzer when multiple variants can handle the load
   # Default: 10.0, Validation: Must be >= 0
   # variantCost: 10.0
-  
-  # Static profiled benchmarked data for a variant running on different accelerators
-  modelProfile:
-    accelerators:
-      - acc: "A100"
-        accCount: 1
-        perfParms: 
-          decodeParms:
-            # Decode parameters for ITL equation: itl = alpha + beta * maxBatchSize
-            alpha: "20.58"
-            beta: "0.41"
-          # Prefill parameters for TTFT equation: ttft = gamma + delta * tokens * maxBatchSize  
-          prefillParms:
-            gamma: "5.2"
-            delta: "0.1"
-        maxBatchSize: 4

@@ -1,5 +1,7 @@
 # Guide to Offline Benchmarking for WVA's Model Analyzer
 
+> **⚠️ DEPRECATED**: This guide describes parameter estimation for the `modelProfile` field, which has been removed from the VariantAutoscaling CRD. The model-based optimization feature that used these parameters is not currently available in the CRD specification. This documentation is kept for reference purposes only.
+
 This guide explains how to collect performance parameters (alpha, beta, gamma, delta) for WVA's model analyzer using offline benchmarking. We will use `vllm` for model serving and `guidellm` for benchmarking, all deployed on a cluster.
 
 ## Overview
@@ -323,7 +325,9 @@ After completing all steps, you should have:
 
 ### Use in VariantAutoscaling
 
-Add these parameters to your `VariantAutoscaling` resource:
+> **Note**: The `modelProfile` field shown below is not currently part of the VariantAutoscaling CRD specification. This section is kept for reference only. If you need model-based optimization features, please check the latest WVA documentation or contact the maintainers.
+
+The parameters calculated in this tutorial were intended for the following configuration:
 
 ```yaml
 apiVersion: llmd.ai/v1alpha1
@@ -333,18 +337,19 @@ metadata:
   namespace: <your-namespace>
 spec:
   modelID: <your-model-id>
-  modelProfile:
-    accelerators:
-      - acc: "<accelerator-type>"  # e.g., A100
-        accCount: 1
-        perfParms:
-          decodeParms:
-            alpha: "<calculated-alpha>"  # e.g., "6.973"
-            beta: "<calculated-beta>"    # e.g., "0.027"
-          prefillParms:
-            gamma: "<calculated-gamma>"  # e.g., "14.825"
-            delta: "<calculated-delta>"  # e.g., "0.001364"
-        maxBatchSize: <max-batch-size>   # e.g., 64
+  # Note: modelProfile field is not currently supported in the CRD
+  # modelProfile:
+  #   accelerators:
+  #     - acc: "<accelerator-type>"  # e.g., A100
+  #       accCount: 1
+  #       perfParms:
+  #         decodeParms:
+  #           alpha: "<calculated-alpha>"  # e.g., "6.973"
+  #           beta: "<calculated-beta>"    # e.g., "0.027"
+  #         prefillParms:
+  #           gamma: "<calculated-gamma>"  # e.g., "14.825"
+  #           delta: "<calculated-delta>"  # e.g., "0.001364"
+  #       maxBatchSize: <max-batch-size>   # e.g., 64
 ```
 
 ---

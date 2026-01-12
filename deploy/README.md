@@ -500,37 +500,8 @@ metadata:
 spec:
   # Model identifier
   modelID: "unsloth/Meta-Llama-3.1-8B"
-
-  
-  # Model performance profile for different accelerators
-  modelProfile:
-    accelerators:
-      - acc: "A100"
-        accCount: 1
-        perfParms:
-          decodeParms:
-            # ITL equation: itl = alpha + beta * maxBatchSize
-            alpha: "7.470"
-            beta: "0.044"
-          prefillParms:
-            # TTFT equation: ttft = gamma + delta * tokens * maxBatchSize
-            gamma: "15.415"
-            delta: "0.000337"
-        maxBatchSize: 512
-      - acc: "H100"
-        accCount: 1
-        perfParms:
-          decodeParms:
-            alpha: "7.470"
-            beta: "0.044"
-          prefillParms:
-            gamma: "15.415"
-            delta: "0.000337"
-        maxBatchSize: 512
 EOF
 ```
-
-**Note**: The performance parameters (alpha, beta, gamma, delta) are model and accelerator-specific. These should be obtained through profiling your specific model on your hardware.
 
 #### Creating HPA Manually
 

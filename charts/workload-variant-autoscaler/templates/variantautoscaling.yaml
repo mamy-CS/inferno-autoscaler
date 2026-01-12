@@ -24,44 +24,4 @@ spec:
   modelID: {{ .Values.llmd.modelID | quote }}
   # Cost per replica for this variant (used in saturation analysis)
   variantCost: {{ .Values.va.variantCost | default "10.0" | quote }}
-  {{- if .Values.wva.experimentalHybridOptimization }}
-  # Static profiled benchmarked data for a variant running on different accelerators
-  modelProfile:
-    accelerators:
-      - acc: "L40S"
-        accCount: 1
-        perfParms: 
-          decodeParms:
-            alpha: "22.619"
-            beta: "0.181"
-          prefillParms:
-            gamma: "226.19"
-            delta: "0.018"
-        maxBatchSize: 512
-      - acc: "H100"
-        accCount: 1
-        perfParms: 
-          decodeParms:
-            # Decode parameters for ITL equation: itl = alpha + beta * maxBatchSize
-            alpha: "7.470"
-            beta: "0.044"
-          # Prefill parameters for TTFT equation: ttft = gamma + delta * tokens * maxBatchSize  
-          prefillParms:
-            gamma: "15.415"
-            delta: "0.000337"
-        maxBatchSize: 512
-      - acc: "A100"
-        accCount: 1
-        perfParms: 
-          decodeParms:
-            # Decode parameters for ITL equation: itl = alpha + beta * maxBatchSize
-            alpha: "20.58"
-            beta: "0.41"
-          # Prefill parameters for TTFT equation: ttft = gamma + delta * tokens * maxBatchSize  
-          prefillParms:
-            gamma: "5.2"
-            delta: "0.1"
-        maxBatchSize: 4
-  {{- end}} 
-   
 {{- end }}
