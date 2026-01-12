@@ -368,6 +368,9 @@ func main() {
 			os.Exit(1)
 		}
 
+		// Register scale-to-zero queries with the prometheus source
+		collectorv2.RegisterScaleToZeroQueries(sourceRegistry)
+
 		engine := saturation.NewEngine(
 			mgr.GetClient(),
 			mgr.GetScheme(),
