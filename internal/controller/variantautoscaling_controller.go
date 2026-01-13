@@ -38,6 +38,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/config"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/common"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
@@ -308,23 +309,32 @@ func (r *VariantAutoscalingReconciler) SetupWithManager(mgr ctrl.Manager) error 
 					configs := make(map[string]interfaces.SaturationScalingConfig)
 					count := 0
 					for key, yamlStr := range cm.Data {
-						var config interfaces.SaturationScalingConfig
-						if err := yaml.Unmarshal([]byte(yamlStr), &config); err != nil {
+						var satConfig interfaces.SaturationScalingConfig
+						if err := yaml.Unmarshal([]byte(yamlStr), &satConfig); err != nil {
 							logger.Error(err, "Failed to parse saturation scaling config entry", "key", key)
 							continue
 						}
 						// Validate
-						if err := config.Validate(); err != nil {
+						if err := satConfig.Validate(); err != nil {
 							logger.Error(err, "Invalid saturation scaling config entry", "key", key)
 							continue
 						}
-						configs[key] = config
+						configs[key] = satConfig
 						count++
 					}
 					common.Config.UpdateSaturationConfig(configs)
 					logger.Info("Updated global saturation config from ConfigMap", "entries", count)
 
 					// Global saturation config update is handled by the Engine loop.
+					// No need to trigger immediate reconciliation for individual VAs.
+					return nil
+				} else if name == config.DefaultScaleToZeroConfigMapName {
+					// Scale-to-Zero Config
+					scaleToZeroConfig := config.ParseScaleToZeroConfigMap(cm.Data)
+					common.Config.UpdateScaleToZeroConfig(scaleToZeroConfig)
+					logger.Info("Updated global scale-to-zero config from ConfigMap", "modelCount", len(scaleToZeroConfig))
+
+					// Global config update is handled by the Engine loop.
 					// No need to trigger immediate reconciliation for individual VAs.
 					return nil
 				}

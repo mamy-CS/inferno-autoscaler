@@ -4,6 +4,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/config"
 	interfaces "github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/event"
@@ -57,6 +58,7 @@ type GlobalConfig struct {
 	sync.RWMutex
 	OptimizationInterval string
 	SaturationConfig     map[string]interfaces.SaturationScalingConfig
+	ScaleToZeroConfig    config.ScaleToZeroConfigData
 }
 
 // UpdateOptimizationConfig updates the optimization interval.
@@ -88,6 +90,23 @@ func (c *GlobalConfig) GetSaturationConfig() map[string]interfaces.SaturationSca
 	// For efficiency, expecting caller to treat as read-only or we copy if needed.
 	// Returning map directly for now as readers are expected to be well-behaved.
 	return c.SaturationConfig
+}
+
+// UpdateScaleToZeroConfig updates the scale-to-zero configuration.
+func (c *GlobalConfig) UpdateScaleToZeroConfig(configData config.ScaleToZeroConfigData) {
+	c.Lock()
+	defer c.Unlock()
+	c.ScaleToZeroConfig = configData
+}
+
+// GetScaleToZeroConfig returns the current scale-to-zero configuration.
+func (c *GlobalConfig) GetScaleToZeroConfig() config.ScaleToZeroConfigData {
+	c.RLock()
+	defer c.RUnlock()
+	if c.ScaleToZeroConfig == nil {
+		return make(config.ScaleToZeroConfigData)
+	}
+	return c.ScaleToZeroConfig
 }
 
 // TransformationConfig is the global singleton for configuration.

@@ -44,6 +44,7 @@ import (
 
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
 	collectorv2 "github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/v2"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/v2/registration"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/config"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/controller"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/saturation"
@@ -367,6 +368,9 @@ func main() {
 			setupLog.Error(err, "failed to register prometheus source in v2 registry")
 			os.Exit(1)
 		}
+
+		// Register scale-to-zero queries with the prometheus source
+		registration.RegisterScaleToZeroQueries(sourceRegistry)
 
 		engine := saturation.NewEngine(
 			mgr.GetClient(),
