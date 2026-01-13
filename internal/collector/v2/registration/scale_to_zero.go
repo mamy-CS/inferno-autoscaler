@@ -47,23 +47,12 @@ func RegisterScaleToZeroQueries(sourceRegistry *collector.SourceRegistry) {
 	})
 }
 
-// ScaleToZeroCollector collects metrics for scale-to-zero decisions.
-type ScaleToZeroCollector struct {
-	source collector.MetricsSource
-}
-
-// NewScaleToZeroCollector creates a new scale-to-zero metrics collector.
-func NewScaleToZeroCollector(source collector.MetricsSource) *ScaleToZeroCollector {
-	return &ScaleToZeroCollector{
-		source: source,
-	}
-}
-
 // CollectModelRequestCount collects the total number of successful requests for a model
 // over the specified retention period. This is used for scale-to-zero decisions.
 //
 // Parameters:
 //   - ctx: Context for the operation
+//   - source: The metrics source to query
 //   - modelID: The model identifier
 //   - namespace: The namespace where the model is deployed
 //   - retentionPeriod: How far back to look for requests
@@ -71,8 +60,9 @@ func NewScaleToZeroCollector(source collector.MetricsSource) *ScaleToZeroCollect
 // Returns:
 //   - float64: Total request count over the retention period (0 if no requests or error)
 //   - error: Any error that occurred during collection
-func (c *ScaleToZeroCollector) CollectModelRequestCount(
+func CollectModelRequestCount(
 	ctx context.Context,
+	source collector.MetricsSource,
 	modelID string,
 	namespace string,
 	retentionPeriod time.Duration,
@@ -89,7 +79,7 @@ func (c *ScaleToZeroCollector) CollectModelRequestCount(
 	}
 
 	// Execute the query
-	results, err := c.source.Refresh(ctx, collector.RefreshSpec{
+	results, err := source.Refresh(ctx, collector.RefreshSpec{
 		Queries: []string{QueryModelRequestCount},
 		Params:  params,
 	})

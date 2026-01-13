@@ -93,13 +93,6 @@ func getSaturationConfigMapName() string {
 	return defaultSaturationConfigMapName
 }
 
-func getScaleToZeroConfigMapName() string {
-	if name := os.Getenv("SCALE_TO_ZERO_CONFIG_MAP_NAME"); name != "" {
-		return name
-	}
-	return config.DefaultScaleToZeroConfigMapName
-}
-
 var (
 	// ServiceMonitor GVK for watching controller's own metrics ServiceMonitor
 	serviceMonitorGVK = schema.GroupVersionKind{
@@ -335,7 +328,7 @@ func (r *VariantAutoscalingReconciler) SetupWithManager(mgr ctrl.Manager) error 
 					// Global saturation config update is handled by the Engine loop.
 					// No need to trigger immediate reconciliation for individual VAs.
 					return nil
-				} else if name == getScaleToZeroConfigMapName() {
+				} else if name == config.DefaultScaleToZeroConfigMapName {
 					// Scale-to-Zero Config
 					scaleToZeroConfig := config.ParseScaleToZeroConfigMap(cm.Data)
 					common.Config.UpdateScaleToZeroConfig(scaleToZeroConfig)

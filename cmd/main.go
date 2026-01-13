@@ -312,7 +312,6 @@ func main() {
 	if promConfig == nil {
 		setupLog.Error(nil, "no Prometheus configuration found - this should not happen")
 		os.Exit(1)
-		return // unreachable but helps staticcheck
 	}
 
 	// Always validate TLS configuration since HTTPS is required
