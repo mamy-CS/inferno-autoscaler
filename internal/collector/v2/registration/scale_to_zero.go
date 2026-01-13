@@ -29,7 +29,7 @@ const (
 func RegisterScaleToZeroQueries(sourceRegistry *collector.SourceRegistry) {
 	source := sourceRegistry.Get("prometheus")
 	if source == nil {
-		// Prometheus source not registered yet, skip registration
+		ctrl.Log.V(logging.DEBUG).Info("Prometheus source not registered, skipping scale-to-zero query registration")
 		return
 	}
 
