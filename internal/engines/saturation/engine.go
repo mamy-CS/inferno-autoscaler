@@ -47,9 +47,9 @@ import (
 
 // Constants for MetricsAvailable condition
 const (
-	MetricsReasonAvailable   = "MetricsAvailable"
-	MetricsReasonUnavailable = "MetricsUnavailable"
-	MetricsMessageAvailable  = "Saturation metrics data is available for scaling decisions"
+	MetricsReasonAvailable    = "MetricsAvailable"
+	MetricsReasonUnavailable  = "MetricsUnavailable"
+	MetricsMessageAvailable   = "Saturation metrics data is available for scaling decisions"
 	MetricsMessageUnavailable = "No saturation metrics available - pods may not be ready or metrics not yet scraped"
 )
 

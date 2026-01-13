@@ -7,8 +7,6 @@ import (
 
 	"github.com/prometheus/common/model"
 	"github.com/stretchr/testify/assert"
-
-	testutils "github.com/llm-d-incubation/workload-variant-autoscaler/test/utils"
 )
 
 func TestQueryPrometheusWithBackoff(t *testing.T) {
@@ -42,7 +40,7 @@ func TestQueryPrometheusWithBackoff(t *testing.T) {
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			mock := &testutils.MockPromAPI{
+			mock := &MockPromAPI{
 				QueryResults: map[string]model.Value{
 					query: model.Vector{
 						&model.Sample{

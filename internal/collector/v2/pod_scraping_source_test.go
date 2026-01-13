@@ -447,31 +447,43 @@ vllm_num_requests_waiting{namespace="test-ns"} 5
 				// Verify Authorization header
 				auth := r.Header.Get("Authorization")
 				Expect(auth).To(Equal("Bearer test-token"))
+				Expect(r.URL.Path).To(Equal("/metrics"))
 
 				w.Header().Set("Content-Type", "text/plain")
 				w.WriteHeader(http.StatusOK)
 				fmt.Fprint(w, `# HELP vllm_kv_cache_usage_perc KV cache usage
 # TYPE vllm_kv_cache_usage_perc gauge
-vllm_kv_cache_usage_perc 0.75
+vllm_kv_cache_usage_perc{namespace="test-ns"} 0.75
+# HELP vllm_num_requests_waiting Number of requests waiting
+# TYPE vllm_num_requests_waiting gauge
+vllm_num_requests_waiting{namespace="test-ns"} 5
 `)
 			}))
 
 			mockServer2 = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				auth := r.Header.Get("Authorization")
 				Expect(auth).To(Equal("Bearer test-token"))
+				Expect(r.URL.Path).To(Equal("/metrics"))
 
 				w.Header().Set("Content-Type", "text/plain")
 				w.WriteHeader(http.StatusOK)
 				fmt.Fprint(w, `# HELP vllm_kv_cache_usage_perc KV cache usage
 # TYPE vllm_kv_cache_usage_perc gauge
-vllm_kv_cache_usage_perc 0.50
+vllm_kv_cache_usage_perc{namespace="test-ns"} 0.50
+# HELP vllm_num_requests_waiting Number of requests waiting
+# TYPE vllm_num_requests_waiting gauge
+vllm_num_requests_waiting{namespace="test-ns"} 3
 `)
 			}))
 
-			// Extract IPs from mock servers
-			server1IP := mockServer1.URL[len("http://"):]
-			server2IP := mockServer2.URL[len("http://"):]
+			// Extract host and port from mock server URLs
+			// httptest.Server URL format: "http://127.0.0.1:PORT"
+			// We'll use localhost IP and extract the port
+			server1URL := mockServer1.URL
+			server2URL := mockServer2.URL
 
+			// Parse URLs to get host:port
+			// For testing, we'll use 127.0.0.1 as pod IP and extract port
 			readyPod1 = &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "epp-pod-1",
@@ -481,7 +493,7 @@ vllm_kv_cache_usage_perc 0.50
 					},
 				},
 				Status: corev1.PodStatus{
-					PodIP: server1IP,
+					PodIP: "127.0.0.1", // Will be overridden with actual server address
 					Conditions: []corev1.PodCondition{
 						{
 							Type:   corev1.PodReady,
@@ -500,7 +512,7 @@ vllm_kv_cache_usage_perc 0.50
 					},
 				},
 				Status: corev1.PodStatus{
-					PodIP: server2IP,
+					PodIP: "127.0.0.1", // Will be overridden with actual server address
 					Conditions: []corev1.PodCondition{
 						{
 							Type:   corev1.PodReady,
@@ -509,6 +521,10 @@ vllm_kv_cache_usage_perc 0.50
 					},
 				},
 			}
+
+			// Store server URLs for later use in tests
+			_ = server1URL
+			_ = server2URL
 		})
 
 		AfterEach(func() {
@@ -520,12 +536,76 @@ vllm_kv_cache_usage_perc 0.50
 			}
 		})
 
-		It("should scrape metrics from all Ready pods", func() {
-			// Note: This test is simplified - in real scenario, we'd need to
-			// extract port from mock server URL and set PodIP correctly
-			// For now, we'll test the aggregation logic separately
+		It("should scrape metrics from all Ready pods and aggregate results", func() {
+			// Parse server URLs to extract ports
+			server1URL := mockServer1.URL
+			server2URL := mockServer2.URL
+
+			// Extract port from URLs (format: http://127.0.0.1:PORT)
+			var port1, port2 int32
+			_, err := fmt.Sscanf(server1URL, "http://127.0.0.1:%d", &port1)
+			Expect(err).NotTo(HaveOccurred())
+			_, err = fmt.Sscanf(server2URL, "http://127.0.0.1:%d", &port2)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Update pods with correct IPs
+			readyPod1.Status.PodIP = "127.0.0.1"
+			readyPod2.Status.PodIP = "127.0.0.1"
+
+			// Create separate sources for each pod (since they use different ports)
+			// In real scenario, all pods use same port but different IPs
+			client1 := fakeClient.
+				WithObjects(service, secret, readyPod1).
+				Build()
+
+			config1 := PodScrapingSourceConfig{
+				InferencePoolName:      "test-pool",
+				InferencePoolNamespace: "test-ns",
+				ServiceName:            "test-pool-epp",
+				MetricsPort:            port1,
+				MetricsPath:            "/metrics",
+				MetricsScheme:          "http",
+				ScrapeTimeout:          5 * time.Second,
+				MaxConcurrentScrapes:   10,
+			}
+			source1, err := NewPodScrapingSource(ctx, client1, config1)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Test scraping from first pod
+			results1, err := source1.Refresh(ctx, RefreshSpec{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(results1).To(HaveKey("all_metrics"))
+			Expect(results1["all_metrics"].Values).To(HaveLen(2)) // 2 metrics from pod1
+
+			// Verify metrics have pod label
+			for _, value := range results1["all_metrics"].Values {
+				Expect(value.Labels["pod"]).To(Equal("epp-pod-1"))
+			}
+		})
+
+		It("should handle unreachable pods gracefully", func() {
+			// Create pod with invalid IP
+			unreachablePod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "epp-pod-unreachable",
+					Namespace: "test-ns",
+					Labels: map[string]string{
+						"inferencepool": "test-pool-epp",
+					},
+				},
+				Status: corev1.PodStatus{
+					PodIP: "192.0.2.1", // Invalid/unreachable IP (TEST-NET-1)
+					Conditions: []corev1.PodCondition{
+						{
+							Type:   corev1.PodReady,
+							Status: corev1.ConditionTrue,
+						},
+					},
+				},
+			}
+
 			client := fakeClient.
-				WithObjects(service, secret, readyPod1, readyPod2).
+				WithObjects(service, secret, unreachablePod).
 				Build()
 
 			config := PodScrapingSourceConfig{
@@ -533,18 +613,84 @@ vllm_kv_cache_usage_perc 0.50
 				InferencePoolNamespace: "test-ns",
 				ServiceName:            "test-pool-epp",
 				MetricsPort:            9090,
+				ScrapeTimeout:          1 * time.Second, // Short timeout
+			}
+			source, err := NewPodScrapingSource(ctx, client, config)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Should return empty results (not error) when pods are unreachable
+			results, err := source.Refresh(ctx, RefreshSpec{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(results).To(HaveKey("all_metrics"))
+			// Should have empty or no metrics due to unreachable pod
+			Expect(results["all_metrics"].Values).To(BeEmpty())
+		})
+
+		It("should handle authentication failures", func() {
+			// Create server that requires auth but we'll provide wrong token
+			authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				auth := r.Header.Get("Authorization")
+				if auth != "Bearer test-token" {
+					w.WriteHeader(http.StatusUnauthorized)
+					return
+				}
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer authServer.Close()
+
+			var port int32
+			fmt.Sscanf(authServer.URL, "http://127.0.0.1:%d", &port)
+
+			authPod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "epp-pod-auth",
+					Namespace: "test-ns",
+					Labels: map[string]string{
+						"inferencepool": "test-pool-epp",
+					},
+				},
+				Status: corev1.PodStatus{
+					PodIP: "127.0.0.1",
+					Conditions: []corev1.PodCondition{
+						{
+							Type:   corev1.PodReady,
+							Status: corev1.ConditionTrue,
+						},
+					},
+				},
+			}
+
+			// Use wrong token
+			wrongSecret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "inference-gateway-sa-metrics-reader-secret",
+					Namespace: "test-ns",
+				},
+				Data: map[string][]byte{
+					"token": []byte("wrong-token"),
+				},
+			}
+
+			client := fakeClient.
+				WithObjects(service, wrongSecret, authPod).
+				Build()
+
+			config := PodScrapingSourceConfig{
+				InferencePoolName:      "test-pool",
+				InferencePoolNamespace: "test-ns",
+				ServiceName:            "test-pool-epp",
+				MetricsPort:            port,
 				ScrapeTimeout:          1 * time.Second,
 			}
 			source, err := NewPodScrapingSource(ctx, client, config)
 			Expect(err).NotTo(HaveOccurred())
 
-			// This will fail because we can't easily mock HTTP calls to pod IPs
-			// We'll test aggregation separately
+			// Should handle auth failure gracefully (empty results, not error)
 			results, err := source.Refresh(ctx, RefreshSpec{})
-			// Expect error or empty results due to unreachable pods in test
-			// The actual scraping logic is tested via integration tests
-			_ = results
-			_ = err
+			Expect(err).NotTo(HaveOccurred())
+			Expect(results).To(HaveKey("all_metrics"))
+			// Should have no metrics due to auth failure
+			Expect(results["all_metrics"].Values).To(BeEmpty())
 		})
 	})
 

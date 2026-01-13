@@ -12,9 +12,9 @@ K8S_VERSION ?= v1.32.0
 CONTROLLER_NAMESPACE ?= workload-variant-autoscaler-system
 MONITORING_NAMESPACE ?= openshift-user-workload-monitoring
 LLMD_NAMESPACE       ?= llm-d-inference-scheduler
-GATEWAY_NAME         ?= infra-inference-scheduling-inference-gateway-istio
+GATEWAY_NAME         ?= # discovered automatically in e2es
 MODEL_ID             ?= unsloth/Meta-Llama-3.1-8B
-DEPLOYMENT           ?= ms-inference-scheduling-llm-d-modelservice-decode
+DEPLOYMENT           ?= # discovered automatically in e2es
 REQUEST_RATE         ?= 20
 NUM_PROMPTS          ?= 3000
 
