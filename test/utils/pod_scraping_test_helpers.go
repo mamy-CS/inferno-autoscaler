@@ -49,6 +49,7 @@ package utils
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 	"net/http"
 	"time"
@@ -63,6 +64,9 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+//go:embed scripts/in_cluster_scraping_test.sh
+var inClusterScrapingTestScript string
 
 // PodScrapingTestConfig holds environment-specific configuration for PodScrapingSource tests
 type PodScrapingTestConfig struct {
@@ -445,6 +449,10 @@ func TestInClusterScraping(ctx context.Context, config PodScrapingTestConfig, g 
 }
 
 // CreateInClusterScrapingTestJob creates a Job that runs inside the cluster and verifies metrics scraping works.
+//
+// TODO: Consider migrating to a ConfigMap-based approach where the test script is stored in a ConfigMap
+// and mounted as a volume. This would avoid embedding scripts as command-line arguments and improve
+// maintainability. The current approach embeds the script as a string for simplicity.
 func CreateInClusterScrapingTestJob(
 	ctx context.Context,
 	k8sClient *kubernetes.Clientset,
@@ -454,54 +462,9 @@ func CreateInClusterScrapingTestJob(
 ) (*batchv1.Job, error) {
 	url := fmt.Sprintf("%s://%s:%d%s", metricsScheme, podIP, metricsPort, metricsPath)
 
-	// Create a test script that verifies scraping works
-	// This script uses curl to verify the metrics endpoint is accessible and returns valid Prometheus metrics
-	testScript := fmt.Sprintf(`#!/bin/sh
-set -e
-echo "Testing metrics scraping from inside cluster..."
-echo "Target URL: %s"
-echo ""
-
-# Test 1: Verify endpoint is accessible
-echo "Test 1: Checking if metrics endpoint is accessible..."
-HTTP_CODE=$(curl -s -o /tmp/metrics.txt -w "%%{http_code}" --max-time 10 \
-  -H "Authorization: Bearer %s" \
-  "%s" || echo "000")
-
-if [ "$HTTP_CODE" != "200" ]; then
-  echo "ERROR: Metrics endpoint returned HTTP $HTTP_CODE"
-  echo "Response:"
-  cat /tmp/metrics.txt || true
-  exit 1
-fi
-
-echo "✓ Metrics endpoint is accessible (HTTP 200)"
-
-# Test 2: Verify response contains Prometheus metrics
-echo ""
-echo "Test 2: Verifying response contains Prometheus metrics..."
-METRICS_CONTENT=$(cat /tmp/metrics.txt)
-
-if [ -z "$METRICS_CONTENT" ]; then
-  echo "ERROR: Metrics response is empty"
-  exit 1
-fi
-
-# Check for Prometheus metric format (lines starting with # or metric_name)
-if ! echo "$METRICS_CONTENT" | grep -qE "^#|^[a-zA-Z_][a-zA-Z0-9_]*"; then
-  echo "ERROR: Response does not appear to be in Prometheus format"
-  echo "First 500 chars of response:"
-  echo "$METRICS_CONTENT" | head -c 500
-  exit 1
-fi
-
-echo "✓ Response contains Prometheus metrics"
-echo ""
-echo "Sample metrics (first 10 lines):"
-echo "$METRICS_CONTENT" | head -n 10
-echo ""
-echo "SUCCESS: Metrics scraping works from inside cluster!"
-`, url, bearerToken, url)
+	// Use the embedded test script with URL and token as environment variables
+	// The script is read from test/utils/scripts/in_cluster_scraping_test.sh at compile time
+	// TODO: Consider migrating to a ConfigMap-based approach for better maintainability
 
 	backoffLimit := int32(0) // Don't retry on failure
 	job := &batchv1.Job{
@@ -516,10 +479,20 @@ echo "SUCCESS: Metrics scraping works from inside cluster!"
 					RestartPolicy: corev1.RestartPolicyNever,
 					Containers: []corev1.Container{
 						{
-							Name:    "scraper",
-							Image:   "curlimages/curl:8.11.1", // Lightweight curl image
+							Name:  "scraper",
+							Image: "curlimages/curl:8.11.1", // Lightweight curl image
+							Env: []corev1.EnvVar{
+								{
+									Name:  "TARGET_URL",
+									Value: url,
+								},
+								{
+									Name:  "BEARER_TOKEN",
+									Value: bearerToken,
+								},
+							},
 							Command: []string{"/bin/sh", "-c"},
-							Args:    []string{testScript},
+							Args:    []string{inClusterScrapingTestScript},
 						},
 					},
 				},
