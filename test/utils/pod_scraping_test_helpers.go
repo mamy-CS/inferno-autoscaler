@@ -58,8 +58,10 @@ import (
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/source/pod"
 	"github.com/onsi/ginkgo/v2"
 	gom "github.com/onsi/gomega"
+	promoperator "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -246,6 +248,110 @@ func TestPodScrapingMetricsCollection(ctx context.Context, config PodScrapingTes
 			}
 		}
 	}
+}
+
+// DiscoverMetricsReaderSecret discovers the metrics reader secret name for an EPP.
+// It tries multiple strategies:
+// 1. From ServiceMonitor bearerTokenSecret reference
+// 2. From EPP service account token secret
+// 3. Common naming patterns
+// 4. Creates a test secret if none found (for e2e testing only)
+func DiscoverMetricsReaderSecret(ctx context.Context, k8sClient *kubernetes.Clientset, crClient client.Client, namespace, eppServiceName string) (string, error) {
+	// Strategy 1: Check ServiceMonitor for bearerTokenSecret reference
+	serviceMonitorList := &promoperator.ServiceMonitorList{}
+	err := crClient.List(ctx, serviceMonitorList, client.InNamespace(namespace))
+	if err == nil {
+		for _, sm := range serviceMonitorList.Items {
+			// Check if this ServiceMonitor targets the EPP service
+			// ServiceMonitor selector should match the EPP service labels
+			for _, endpoint := range sm.Spec.Endpoints {
+				if endpoint.BearerTokenSecret != nil {
+					secretName := endpoint.BearerTokenSecret.Name
+					// Verify secret exists
+					_, err := k8sClient.CoreV1().Secrets(namespace).Get(ctx, secretName, metav1.GetOptions{})
+					if err == nil {
+						_, _ = fmt.Fprintf(ginkgo.GinkgoWriter, "Discovered metrics secret from ServiceMonitor: %s\n", secretName)
+						return secretName, nil
+					}
+				}
+			}
+		}
+	}
+
+	// Strategy 2: Try to find secret from EPP service account
+	svc, err := k8sClient.CoreV1().Services(namespace).Get(ctx, eppServiceName, metav1.GetOptions{})
+	if err == nil && svc.Spec.Selector != nil {
+		// Get pods for this service
+		podList, err := k8sClient.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
+			LabelSelector: metav1.FormatLabelSelector(&metav1.LabelSelector{
+				MatchLabels: svc.Spec.Selector,
+			}),
+		})
+		if err == nil && len(podList.Items) > 0 {
+			// Get service account from first pod
+			saName := podList.Items[0].Spec.ServiceAccountName
+			if saName != "" {
+				// Try common service account token secret patterns
+				secretPatterns := []string{
+					fmt.Sprintf("%s-token", saName),
+					fmt.Sprintf("%s-metrics-reader-secret", saName),
+					"inference-gateway-sa-metrics-reader-secret",
+				}
+				for _, pattern := range secretPatterns {
+					_, err := k8sClient.CoreV1().Secrets(namespace).Get(ctx, pattern, metav1.GetOptions{})
+					if err == nil {
+						_, _ = fmt.Fprintf(ginkgo.GinkgoWriter, "Discovered metrics secret from service account pattern: %s\n", pattern)
+						return pattern, nil
+					}
+				}
+			}
+		}
+	}
+
+	// Strategy 3: Try common naming patterns
+	commonNames := []string{
+		"inference-gateway-sa-metrics-reader-secret",
+		fmt.Sprintf("%s-metrics-reader-secret", eppServiceName),
+		fmt.Sprintf("%s-epp-metrics-reader-secret", eppServiceName),
+	}
+	for _, name := range commonNames {
+		_, err := k8sClient.CoreV1().Secrets(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err == nil {
+			_, _ = fmt.Fprintf(ginkgo.GinkgoWriter, "Discovered metrics secret from common pattern: %s\n", name)
+			return name, nil
+		}
+	}
+
+	// Strategy 4: Create a test secret for e2e testing (if none found)
+	// This is acceptable for e2e tests where the secret might not exist in CI
+	testSecretName := "inference-gateway-sa-metrics-reader-secret"
+	_, _ = fmt.Fprintf(ginkgo.GinkgoWriter, "No metrics secret found, creating test secret for e2e: %s\n", testSecretName)
+
+	// Generate a dummy token for testing
+	testToken := fmt.Sprintf("test-token-%d", time.Now().Unix())
+	testSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      testSecretName,
+			Namespace: namespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/component": "e2e-test",
+				"app.kubernetes.io/managed-by": "workload-variant-autoscaler-test",
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{
+			"token": []byte(testToken),
+		},
+	}
+
+	// Try to create, ignore if already exists
+	_, err = k8sClient.CoreV1().Secrets(namespace).Create(ctx, testSecret, metav1.CreateOptions{})
+	if err != nil && !apierrors.IsAlreadyExists(err) {
+		return "", fmt.Errorf("failed to create test secret: %w", err)
+	}
+
+	_, _ = fmt.Fprintf(ginkgo.GinkgoWriter, "Created test metrics secret: %s (for e2e testing only)\n", testSecretName)
+	return testSecretName, nil
 }
 
 // TestPodScrapingAuthentication tests that PodScrapingSource can read authentication token

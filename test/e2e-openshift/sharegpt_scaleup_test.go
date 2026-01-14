@@ -816,6 +816,18 @@ var _ = Describe("PodScrapingSource - OpenShift Existing EPP Pods", Ordered, fun
 
 	// Run shared PodScrapingSource tests with OpenShift configuration
 	// Use a closure to capture k8sClient and crClient at runtime
+	var metricsSecretName string
+
+	BeforeAll(func() {
+		// Discover or create metrics reader secret
+		By("discovering metrics reader secret")
+		eppServiceName := fmt.Sprintf("%s-epp", testInferencePoolName)
+		var err error
+		metricsSecretName, err = utils.DiscoverMetricsReaderSecret(ctx, k8sClient, crClient, testNamespace, eppServiceName)
+		Expect(err).NotTo(HaveOccurred(), "Should be able to discover or create metrics secret")
+		_, _ = fmt.Fprintf(GinkgoWriter, "Using metrics secret: %s\n", metricsSecretName)
+	})
+
 	utils.DescribePodScrapingSourceTests(func() utils.PodScrapingTestConfig {
 		return utils.PodScrapingTestConfig{
 			Environment:             "openshift",
@@ -824,7 +836,7 @@ var _ = Describe("PodScrapingSource - OpenShift Existing EPP Pods", Ordered, fun
 			MetricsPort:             9090,
 			MetricsPath:             "/metrics",
 			MetricsScheme:           "http",
-			MetricsReaderSecretName: "inference-gateway-sa-metrics-reader-secret",
+			MetricsReaderSecretName: metricsSecretName,
 			MetricsReaderSecretKey:  "token",
 			K8sClient:               k8sClient,
 			CRClient:                crClient,

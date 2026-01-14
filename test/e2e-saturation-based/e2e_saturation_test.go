@@ -1105,6 +1105,18 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Multiple 
 		// Run shared PodScrapingSource tests with Kind/real EPP configuration
 		// Use a closure to capture k8sClient and crClient at runtime
 		Context("with real EPP pods", func() {
+			var metricsSecretName string
+
+			BeforeAll(func() {
+				// Discover or create metrics reader secret
+				By("discovering metrics reader secret")
+				eppServiceName := fmt.Sprintf("%s-epp", testInferencePoolName)
+				var err error
+				metricsSecretName, err = utils.DiscoverMetricsReaderSecret(ctx, k8sClient, crClient, testNamespace, eppServiceName)
+				Expect(err).NotTo(HaveOccurred(), "Should be able to discover or create metrics secret")
+				_, _ = fmt.Fprintf(GinkgoWriter, "Using metrics secret: %s\n", metricsSecretName)
+			})
+
 			utils.DescribePodScrapingSourceTests(func() utils.PodScrapingTestConfig {
 				return utils.PodScrapingTestConfig{
 					Environment:             "kind",
@@ -1113,7 +1125,7 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Multiple 
 					MetricsPort:             9090,
 					MetricsPath:             "/metrics",
 					MetricsScheme:           "http",
-					MetricsReaderSecretName: "inference-gateway-sa-metrics-reader-secret",
+					MetricsReaderSecretName: metricsSecretName,
 					MetricsReaderSecretKey:  "token",
 					K8sClient:               k8sClient,
 					CRClient:                crClient,
