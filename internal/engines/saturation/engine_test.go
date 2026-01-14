@@ -31,7 +31,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
-	collectorv2 "github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/v2"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/source"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/source/prometheus"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/config"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/common"
 	interfaces "github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
@@ -388,8 +389,8 @@ data:
 			}
 
 			// Initialize MetricsCollector with mock Prometheus API
-			sourceRegistry := collectorv2.NewSourceRegistry()
-			promSource := collectorv2.NewPrometheusSource(ctx, mockPromAPI, collectorv2.DefaultPrometheusSourceConfig())
+			sourceRegistry := source.NewSourceRegistry()
+			promSource := prometheus.NewPrometheusSource(ctx, mockPromAPI, prometheus.DefaultPrometheusSourceConfig())
 			sourceRegistry.Register("prometheus", promSource) // nolint:errcheck
 			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, sourceRegistry)
 
@@ -452,8 +453,8 @@ data:
 			}
 
 			By("Converting saturation targets to decisions")
-			sourceRegistry := collectorv2.NewSourceRegistry()
-			sourceRegistry.Register("prometheus", collectorv2.NewNoOpSource()) // nolint:errcheck
+			sourceRegistry := source.NewSourceRegistry()
+			sourceRegistry.Register("prometheus", source.NewNoOpSource()) // nolint:errcheck
 			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, sourceRegistry)
 			decisions := engine.convertSaturationTargetsToDecisions(context.Background(), saturationTargets, saturationAnalysis, variantStates)
 
@@ -477,7 +478,7 @@ data:
 		const totalVAs = 3
 		const configMapName = "workload-variant-autoscaler-variantautoscaling-config"
 		var configMapNamespace = getNamespace()
-		var sourceRegistry *collectorv2.SourceRegistry
+		var sourceRegistry *source.SourceRegistry
 		var mockPromAPI *testutils.MockPromAPI
 
 		BeforeEach(func() {
@@ -499,8 +500,8 @@ data:
 			}
 
 			By("creating the source registry with mock Prometheus API")
-			sourceRegistry = collectorv2.NewSourceRegistry()
-			promSource := collectorv2.NewPrometheusSource(ctx, mockPromAPI, collectorv2.DefaultPrometheusSourceConfig())
+			sourceRegistry = source.NewSourceRegistry()
+			promSource := prometheus.NewPrometheusSource(ctx, mockPromAPI, prometheus.DefaultPrometheusSourceConfig())
 			sourceRegistry.Register("prometheus", promSource) // nolint:errcheck
 
 			By("creating the required configmaps")

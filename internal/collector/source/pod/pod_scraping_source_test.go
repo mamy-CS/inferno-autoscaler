@@ -1,4 +1,4 @@
-package collector
+package pod
 
 import (
 	"context"
@@ -14,6 +14,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	sourcepkg "github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/source"
 )
 
 var _ = Describe("PodScrapingSource", func() {
@@ -572,7 +574,7 @@ vllm_num_requests_waiting{namespace="test-ns"} 3
 			Expect(err).NotTo(HaveOccurred())
 
 			// Test scraping from first pod
-			results1, err := source1.Refresh(ctx, RefreshSpec{})
+			results1, err := source1.Refresh(ctx, sourcepkg.RefreshSpec{})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(results1).To(HaveKey("all_metrics"))
 			Expect(results1["all_metrics"].Values).To(HaveLen(2)) // 2 metrics from pod1
@@ -619,7 +621,7 @@ vllm_num_requests_waiting{namespace="test-ns"} 3
 			Expect(err).NotTo(HaveOccurred())
 
 			// Should return empty results (not error) when pods are unreachable
-			results, err := source.Refresh(ctx, RefreshSpec{})
+			results, err := source.Refresh(ctx, sourcepkg.RefreshSpec{})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(results).To(HaveKey("all_metrics"))
 			// Should have empty or no metrics due to unreachable pod
@@ -639,7 +641,9 @@ vllm_num_requests_waiting{namespace="test-ns"} 3
 			defer authServer.Close()
 
 			var port int32
-			fmt.Sscanf(authServer.URL, "http://127.0.0.1:%d", &port)
+			if _, err := fmt.Sscanf(authServer.URL, "http://127.0.0.1:%d", &port); err != nil {
+				Fail(fmt.Sprintf("failed to parse port from auth server URL %q: %v", authServer.URL, err))
+			}
 
 			authPod := &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
@@ -686,7 +690,7 @@ vllm_num_requests_waiting{namespace="test-ns"} 3
 			Expect(err).NotTo(HaveOccurred())
 
 			// Should handle auth failure gracefully (empty results, not error)
-			results, err := source.Refresh(ctx, RefreshSpec{})
+			results, err := source.Refresh(ctx, sourcepkg.RefreshSpec{})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(results).To(HaveKey("all_metrics"))
 			// Should have no metrics due to auth failure
@@ -710,15 +714,15 @@ vllm_num_requests_waiting{namespace="test-ns"} 3
 
 		It("should combine metrics from all pods", func() {
 			now := time.Now()
-			results := map[string]*MetricResult{
+			results := map[string]*sourcepkg.MetricResult{
 				"pod-1": {
 					QueryName:   "all_metrics",
-					Values:      []MetricValue{{Value: 0.75, Labels: map[string]string{"pod": "pod-1"}}},
+					Values:      []sourcepkg.MetricValue{{Value: 0.75, Labels: map[string]string{"pod": "pod-1"}}},
 					CollectedAt: now.Add(-1 * time.Second),
 				},
 				"pod-2": {
 					QueryName:   "all_metrics",
-					Values:      []MetricValue{{Value: 0.50, Labels: map[string]string{"pod": "pod-2"}}},
+					Values:      []sourcepkg.MetricValue{{Value: 0.50, Labels: map[string]string{"pod": "pod-2"}}},
 					CollectedAt: now,
 				},
 			}
@@ -730,16 +734,16 @@ vllm_num_requests_waiting{namespace="test-ns"} 3
 		})
 
 		It("should handle empty results", func() {
-			aggregated := source.aggregateResults(map[string]*MetricResult{})
+			aggregated := source.aggregateResults(map[string]*sourcepkg.MetricResult{})
 			Expect(aggregated).NotTo(BeNil())
 			Expect(aggregated.Values).To(BeEmpty())
 		})
 
 		It("should skip nil results", func() {
-			results := map[string]*MetricResult{
+			results := map[string]*sourcepkg.MetricResult{
 				"pod-1": {
 					QueryName:   "all_metrics",
-					Values:      []MetricValue{{Value: 0.75}},
+					Values:      []sourcepkg.MetricValue{{Value: 0.75}},
 					CollectedAt: time.Now(),
 				},
 				"pod-2": nil,
@@ -773,13 +777,13 @@ vllm_num_requests_waiting{namespace="test-ns"} 3
 
 		It("should return cached value if fresh", func() {
 			// Manually set cache
-			cacheKey := BuildCacheKey("all_metrics", nil)
-			result := MetricResult{
+			cacheKey := sourcepkg.BuildCacheKey("all_metrics", nil)
+			result := sourcepkg.MetricResult{
 				QueryName:   "all_metrics",
-				Values:      []MetricValue{{Value: 1.0}},
+				Values:      []sourcepkg.MetricValue{{Value: 1.0}},
 				CollectedAt: time.Now(),
 			}
-			source.cache.set(cacheKey, result, 1*time.Hour)
+			source.cache.Set(cacheKey, result, 1*time.Hour)
 
 			cached := source.Get("all_metrics", nil)
 			Expect(cached).NotTo(BeNil())
@@ -789,13 +793,13 @@ vllm_num_requests_waiting{namespace="test-ns"} 3
 
 		It("should return nil for expired cache", func() {
 			// Manually set cache with expired TTL
-			cacheKey := BuildCacheKey("all_metrics", nil)
-			result := MetricResult{
+			cacheKey := sourcepkg.BuildCacheKey("all_metrics", nil)
+			result := sourcepkg.MetricResult{
 				QueryName:   "all_metrics",
-				Values:      []MetricValue{{Value: 1.0}},
+				Values:      []sourcepkg.MetricValue{{Value: 1.0}},
 				CollectedAt: time.Now().Add(-2 * time.Hour),
 			}
-			source.cache.set(cacheKey, result, 1*time.Second)
+			source.cache.Set(cacheKey, result, 1*time.Second)
 
 			// Wait for expiration
 			time.Sleep(2 * time.Second)

@@ -122,25 +122,6 @@ func deriveGatewayName(namespace string) string {
 	return fmt.Sprintf("infra-%s-inference-gateway-istio", pathName)
 }
 
-// deriveEPPServiceName discovers the EPP service name from existing deployments in the namespace.
-// Falls back to namespace suffix if discovery fails.
-func deriveEPPServiceName(namespace string) string {
-	// Try to discover from existing deployments
-	pathName := discoverPathNameFromDeployments(namespace)
-	if pathName != "" {
-		return fmt.Sprintf("gaie-%s-epp", pathName)
-	}
-
-	// Fallback: use namespace suffix
-	const prefix = "llm-d-"
-	if strings.HasPrefix(namespace, prefix) {
-		pathName = namespace[len(prefix):]
-	} else {
-		pathName = namespace
-	}
-	return fmt.Sprintf("gaie-%s-epp", pathName)
-}
-
 // getDeploymentName returns the deployment name, auto-deriving from namespace if not set
 func getDeploymentName() string {
 	if deployment != "" {

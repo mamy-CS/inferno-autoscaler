@@ -23,7 +23,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/v2"
+	sourcepkg "github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/source"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/source/pod"
 	. "github.com/onsi/ginkgo/v2"
 	gom "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
@@ -60,14 +61,14 @@ type PodScrapingTestConfig struct {
 }
 
 // CreatePodScrapingSource creates a PodScrapingSource instance with the given config
-func CreatePodScrapingSource(config PodScrapingTestConfig) (*collector.PodScrapingSource, error) {
+func CreatePodScrapingSource(config PodScrapingTestConfig) (*pod.PodScrapingSource, error) {
 	// Ensure context is set
 	ctx := config.Ctx
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
-	collectorConfig := collector.PodScrapingSourceConfig{
+	podConfig := pod.PodScrapingSourceConfig{
 		InferencePoolName:       config.InferencePoolName,
 		InferencePoolNamespace:  config.InferencePoolNamespace,
 		ServiceName:             fmt.Sprintf("%s-epp", config.InferencePoolName),
@@ -81,7 +82,7 @@ func CreatePodScrapingSource(config PodScrapingTestConfig) (*collector.PodScrapi
 		DefaultTTL:              30 * time.Second,
 	}
 
-	return collector.NewPodScrapingSource(ctx, config.CRClient, collectorConfig)
+	return pod.NewPodScrapingSource(ctx, config.CRClient, podConfig)
 }
 
 // TestPodScrapingServiceDiscovery tests that PodScrapingSource can discover the EPP service
@@ -148,7 +149,7 @@ func TestPodScrapingMetricsCollection(ctx context.Context, config PodScrapingTes
 
 	// Verify that Refresh can be called (even if it fails due to network)
 	// This validates that the source is properly configured
-	results, err := source.Refresh(ctx, collector.RefreshSpec{
+	results, err := source.Refresh(ctx, sourcepkg.RefreshSpec{
 		Queries: []string{"all_metrics"},
 	})
 
@@ -260,7 +261,7 @@ func TestPodScrapingCaching(ctx context.Context, config PodScrapingTestConfig, g
 	g.Expect(err).NotTo(gom.HaveOccurred(), "Should be able to create PodScrapingSource")
 
 	// First refresh to populate cache
-	_, err = source.Refresh(ctx, collector.RefreshSpec{
+	_, err = source.Refresh(ctx, sourcepkg.RefreshSpec{
 		Queries: []string{"all_metrics"},
 	})
 

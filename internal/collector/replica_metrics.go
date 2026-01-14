@@ -14,9 +14,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Package metrics provides metrics collection functionality for the saturation engine
-// using the v2 collector infrastructure.
-package metrics
+// Package collector provides replica metrics collection functionality.
+//
+// This package provides ReplicaMetricsCollector which collects replica-level
+// metrics for saturation analysis using the source infrastructure.
+package collector
 
 import (
 	"context"
@@ -28,7 +30,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
-	collector "github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/v2"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/registration"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/source"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/saturation"
@@ -42,30 +45,30 @@ const (
 )
 
 // ReplicaMetricsCollector collects replica-level metrics for saturation analysis
-// using the v2 collector infrastructure.
+// using the source infrastructure.
 type ReplicaMetricsCollector struct {
-	source             collector.MetricsSource
+	source             source.MetricsSource
 	k8sClient          client.Client
-	podVAMapper        *collector.PodVAMapper
+	podVAMapper        *source.PodVAMapper
 	stalenessThreshold time.Duration
 }
 
 // NewReplicaMetricsCollector creates a new replica metrics collector.
-func NewReplicaMetricsCollector(source collector.MetricsSource, k8sClient client.Client) *ReplicaMetricsCollector {
+func NewReplicaMetricsCollector(metricsSource source.MetricsSource, k8sClient client.Client) *ReplicaMetricsCollector {
 	return &ReplicaMetricsCollector{
-		source:             source,
+		source:             metricsSource,
 		k8sClient:          k8sClient,
-		podVAMapper:        collector.NewPodVAMapper(k8sClient),
+		podVAMapper:        source.NewPodVAMapper(k8sClient),
 		stalenessThreshold: DefaultMetricStalenessThreshold,
 	}
 }
 
 // NewReplicaMetricsCollectorWithThreshold creates a new replica metrics collector with a custom staleness threshold.
-func NewReplicaMetricsCollectorWithThreshold(source collector.MetricsSource, k8sClient client.Client, stalenessThreshold time.Duration) *ReplicaMetricsCollector {
+func NewReplicaMetricsCollectorWithThreshold(metricsSource source.MetricsSource, k8sClient client.Client, stalenessThreshold time.Duration) *ReplicaMetricsCollector {
 	return &ReplicaMetricsCollector{
-		source:             source,
+		source:             metricsSource,
 		k8sClient:          k8sClient,
-		podVAMapper:        collector.NewPodVAMapper(k8sClient),
+		podVAMapper:        source.NewPodVAMapper(k8sClient),
 		stalenessThreshold: stalenessThreshold,
 	}
 }
@@ -99,17 +102,17 @@ func (c *ReplicaMetricsCollector) CollectReplicaMetrics(
 	logger := ctrl.LoggerFrom(ctx)
 
 	params := map[string]string{
-		collector.ParamModelID:   modelID,
-		collector.ParamNamespace: namespace,
+		source.ParamModelID:   modelID,
+		source.ParamNamespace: namespace,
 	}
 
 	// Refresh saturation queries (KV cache and queue length)
 	queries := []string{
-		QueryKvCacheUsage,
-		QueryQueueLength,
+		registration.QueryKvCacheUsage,
+		registration.QueryQueueLength,
 	}
 
-	results, err := c.source.Refresh(ctx, collector.RefreshSpec{
+	results, err := c.source.Refresh(ctx, source.RefreshSpec{
 		Queries: queries,
 		Params:  params,
 	})
@@ -132,7 +135,7 @@ func (c *ReplicaMetricsCollector) CollectReplicaMetrics(
 	now := time.Now()
 
 	// Process KV cache results
-	if result := results[QueryKvCacheUsage]; result != nil {
+	if result := results[registration.QueryKvCacheUsage]; result != nil {
 		if result.HasError() {
 			return nil, fmt.Errorf("KV cache query failed: %w", result.Error)
 		}
@@ -172,7 +175,7 @@ func (c *ReplicaMetricsCollector) CollectReplicaMetrics(
 	}
 
 	// Process queue length results
-	if result := results[QueryQueueLength]; result != nil {
+	if result := results[registration.QueryQueueLength]; result != nil {
 		if result.HasError() {
 			return nil, fmt.Errorf("queue length query failed: %w", result.Error)
 		}

@@ -43,8 +43,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
-	collectorv2 "github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/v2"
-	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/v2/registration"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/registration"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/source"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/source/prometheus"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/config"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/controller"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/saturation"
@@ -349,8 +350,8 @@ func main() {
 
 	// Register optimization engine loops with the manager. Only start when leader.
 	err = mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
-		sourceRegistry := collectorv2.NewSourceRegistry()
-		setupLog.Info("Initializing v2 collector")
+		sourceRegistry := source.NewSourceRegistry()
+		setupLog.Info("Initializing metrics source registry")
 
 		// Read Prometheus cache configuration from ConfigMap
 		// TODO(LV): Uncomment and implement cache configuration reading
@@ -361,7 +362,7 @@ func main() {
 		// }
 
 		// Register PrometheusSource with default config
-		promSource := collectorv2.NewPrometheusSource(ctx, promAPI, collectorv2.DefaultPrometheusSourceConfig())
+		promSource := prometheus.NewPrometheusSource(ctx, promAPI, prometheus.DefaultPrometheusSourceConfig())
 
 		// Register in global source registry
 		if err := sourceRegistry.Register("prometheus", promSource); err != nil {

@@ -1,8 +1,8 @@
-// Package collector provides metrics collection functionality.
+// Package pod provides the Pod scraping metrics source implementation.
 //
-// This file implements the PodScrapingSource that scrapes metrics directly
+// This package implements the PodScrapingSource that scrapes metrics directly
 // from EPP pods via HTTP requests to their /metrics endpoints.
-package collector
+package pod
 
 import (
 	"context"
@@ -20,6 +20,7 @@ import (
 
 	"github.com/prometheus/common/expfmt"
 
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/source"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
 )
 
@@ -70,10 +71,10 @@ type PodScrapingSource struct {
 	config     PodScrapingSourceConfig
 	k8sClient  client.Client
 	httpClient *http.Client
-	registry   *QueryList
+	registry   *source.QueryList
 
 	mu    sync.RWMutex // protects the cache and refresh operations
-	cache *Cache
+	cache *source.Cache
 }
 
 // NewPodScrapingSource creates a new PodScrapingSource for an InferencePool.
@@ -115,24 +116,24 @@ func NewPodScrapingSource(
 		Timeout: config.ScrapeTimeout,
 	}
 
-	source := &PodScrapingSource{
+	podSource := &PodScrapingSource{
 		config:     config,
 		k8sClient:  k8sClient,
 		httpClient: httpClient,
-		registry:   newQueryList(),
-		cache:      newCache(ctx, config.DefaultTTL, 1*time.Second),
+		registry:   source.NewQueryList(),
+		cache:      source.NewCache(ctx, config.DefaultTTL, 1*time.Second),
 	}
 
 	// Register default query
-	source.registry.MustRegister(QueryTemplate{
+	podSource.registry.MustRegister(source.QueryTemplate{
 		Name:        "all_metrics",
-		Type:        QueryTypeMetricName,
+		Type:        source.QueryTypeMetricName,
 		Template:    "all_metrics",
 		Params:      []string{},
 		Description: "All metrics from EPP pods",
 	})
 
-	return source, nil
+	return podSource, nil
 }
 
 // discoverServiceName derives service name from InferencePool name.
@@ -144,13 +145,13 @@ func discoverServiceName(inferencePoolName string) string {
 }
 
 // QueryList returns the query registry for this source.
-func (p *PodScrapingSource) QueryList() *QueryList {
+func (p *PodScrapingSource) QueryList() *source.QueryList {
 	return p.registry
 }
 
 // Refresh executes queries and updates the cache.
 // Called by engine/reconciler on-demand.
-func (p *PodScrapingSource) Refresh(ctx context.Context, spec RefreshSpec) (map[string]*MetricResult, error) {
+func (p *PodScrapingSource) Refresh(ctx context.Context, spec source.RefreshSpec) (map[string]*source.MetricResult, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -164,10 +165,10 @@ func (p *PodScrapingSource) Refresh(ctx context.Context, spec RefreshSpec) (map[
 
 	if len(pods) == 0 {
 		logger.V(logging.DEBUG).Info("No ready pods found for scraping")
-		return map[string]*MetricResult{
+		return map[string]*source.MetricResult{
 			"all_metrics": {
 				QueryName:   "all_metrics",
-				Values:      []MetricValue{},
+				Values:      []source.MetricValue{},
 				CollectedAt: time.Now(),
 			},
 		}, nil
@@ -180,26 +181,26 @@ func (p *PodScrapingSource) Refresh(ctx context.Context, spec RefreshSpec) (map[
 	aggregated := p.aggregateResults(results)
 
 	// Cache the result
-	cacheKey := BuildCacheKey("all_metrics", nil)
-	p.cache.set(cacheKey, *aggregated, p.config.DefaultTTL)
+	cacheKey := source.BuildCacheKey("all_metrics", nil)
+	p.cache.Set(cacheKey, *aggregated, p.config.DefaultTTL)
 
 	logger.V(logging.DEBUG).Info("Scraped metrics from pods",
 		"podCount", len(pods),
 		"successCount", len(results),
 		"metricCount", len(aggregated.Values))
 
-	return map[string]*MetricResult{
+	return map[string]*source.MetricResult{
 		"all_metrics": aggregated,
 	}, nil
 }
 
 // Get retrieves cached metrics.
-func (p *PodScrapingSource) Get(queryName string, params map[string]string) *CachedValue {
+func (p *PodScrapingSource) Get(queryName string, params map[string]string) *source.CachedValue {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
-	cacheKey := BuildCacheKey(queryName, params)
-	cached, ok := p.cache.get(cacheKey)
+	cacheKey := source.BuildCacheKey(queryName, params)
+	cached, ok := p.cache.Get(cacheKey)
 	if !ok || cached.IsExpired() {
 		return nil
 	}
@@ -251,9 +252,9 @@ func isPodReady(pod *corev1.Pod) bool {
 }
 
 // scrapeAllPods scrapes metrics from all pods concurrently.
-func (p *PodScrapingSource) scrapeAllPods(ctx context.Context, pods []corev1.Pod) map[string]*MetricResult {
+func (p *PodScrapingSource) scrapeAllPods(ctx context.Context, pods []corev1.Pod) map[string]*source.MetricResult {
 	logger := ctrl.LoggerFrom(ctx)
-	results := make(map[string]*MetricResult)
+	results := make(map[string]*source.MetricResult)
 	var resultsMu sync.Mutex
 
 	// Semaphore for concurrency control
@@ -286,7 +287,7 @@ func (p *PodScrapingSource) scrapeAllPods(ctx context.Context, pods []corev1.Pod
 }
 
 // scrapePodMetrics scrapes metrics from a single pod.
-func (p *PodScrapingSource) scrapePodMetrics(ctx context.Context, pod *corev1.Pod) (*MetricResult, error) {
+func (p *PodScrapingSource) scrapePodMetrics(ctx context.Context, pod *corev1.Pod) (*source.MetricResult, error) {
 	// Build URL: {scheme}://{podIP}:{port}{path}
 	if pod.Status.PodIP == "" {
 		return nil, fmt.Errorf("pod %s has no IP address", pod.Name)
@@ -357,15 +358,15 @@ func (p *PodScrapingSource) getAuthToken(ctx context.Context) (string, error) {
 }
 
 // parsePrometheusMetrics parses Prometheus text format into MetricResult.
-func (p *PodScrapingSource) parsePrometheusMetrics(reader io.Reader, podName string) (*MetricResult, error) {
+func (p *PodScrapingSource) parsePrometheusMetrics(reader io.Reader, podName string) (*source.MetricResult, error) {
 	var parser expfmt.TextParser
 	metricFamilies, err := parser.TextToMetricFamilies(reader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse metrics: %w", err)
 	}
 
-	// Convert to MetricValue array
-	values := []MetricValue{}
+	// Convert to source.MetricValue array
+	values := []source.MetricValue{}
 	now := time.Now()
 
 	for name, family := range metricFamilies {
@@ -398,7 +399,7 @@ func (p *PodScrapingSource) parsePrometheusMetrics(reader io.Reader, podName str
 			// Add metric name as label for identification
 			labels["__name__"] = name
 
-			values = append(values, MetricValue{
+			values = append(values, source.MetricValue{
 				Value:     value,
 				Timestamp: now, // Use current time as scrape timestamp
 				Labels:    labels,
@@ -406,7 +407,7 @@ func (p *PodScrapingSource) parsePrometheusMetrics(reader io.Reader, podName str
 		}
 	}
 
-	return &MetricResult{
+	return &source.MetricResult{
 		QueryName:   "all_metrics",
 		Values:      values,
 		CollectedAt: now,
@@ -414,8 +415,8 @@ func (p *PodScrapingSource) parsePrometheusMetrics(reader io.Reader, podName str
 }
 
 // aggregateResults combines metrics from all pods.
-func (p *PodScrapingSource) aggregateResults(results map[string]*MetricResult) *MetricResult {
-	allValues := []MetricValue{}
+func (p *PodScrapingSource) aggregateResults(results map[string]*source.MetricResult) *source.MetricResult {
+	allValues := []source.MetricValue{}
 	var latestCollectedAt time.Time
 
 	for _, result := range results {
@@ -435,7 +436,7 @@ func (p *PodScrapingSource) aggregateResults(results map[string]*MetricResult) *
 		latestCollectedAt = time.Now()
 	}
 
-	return &MetricResult{
+	return &source.MetricResult{
 		QueryName:   "all_metrics",
 		Values:      allValues,
 		CollectedAt: latestCollectedAt,
