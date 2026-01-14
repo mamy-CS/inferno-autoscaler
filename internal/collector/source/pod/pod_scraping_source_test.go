@@ -451,9 +451,9 @@ vllm_num_requests_waiting{namespace="test-ns"} 5
 				Expect(auth).To(Equal("Bearer test-token"))
 				Expect(r.URL.Path).To(Equal("/metrics"))
 
-				w.Header().Set("Content-Type", "text/plain")
-				w.WriteHeader(http.StatusOK)
-				fmt.Fprint(w, `# HELP vllm_kv_cache_usage_perc KV cache usage
+			w.Header().Set("Content-Type", "text/plain")
+			w.WriteHeader(http.StatusOK)
+			_, _ = fmt.Fprint(w, `# HELP vllm_kv_cache_usage_perc KV cache usage
 # TYPE vllm_kv_cache_usage_perc gauge
 vllm_kv_cache_usage_perc{namespace="test-ns"} 0.75
 # HELP vllm_num_requests_waiting Number of requests waiting
@@ -467,9 +467,9 @@ vllm_num_requests_waiting{namespace="test-ns"} 5
 				Expect(auth).To(Equal("Bearer test-token"))
 				Expect(r.URL.Path).To(Equal("/metrics"))
 
-				w.Header().Set("Content-Type", "text/plain")
-				w.WriteHeader(http.StatusOK)
-				fmt.Fprint(w, `# HELP vllm_kv_cache_usage_perc KV cache usage
+			w.Header().Set("Content-Type", "text/plain")
+			w.WriteHeader(http.StatusOK)
+			_, _ = fmt.Fprint(w, `# HELP vllm_kv_cache_usage_perc KV cache usage
 # TYPE vllm_kv_cache_usage_perc gauge
 vllm_kv_cache_usage_perc{namespace="test-ns"} 0.50
 # HELP vllm_num_requests_waiting Number of requests waiting

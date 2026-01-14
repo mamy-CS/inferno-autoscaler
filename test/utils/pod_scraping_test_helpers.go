@@ -25,7 +25,7 @@ import (
 
 	sourcepkg "github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/source"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/source/pod"
-	. "github.com/onsi/ginkgo/v2"
+	"github.com/onsi/ginkgo/v2"
 	gom "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -318,7 +318,7 @@ func TestPodScrapingFromController(ctx context.Context, config PodScrapingTestCo
 	if config.Environment != "kind" {
 		// This test is specifically for Kind where we need to verify in-cluster access
 		// For other environments, the direct scraping test should work
-		Skip("Skipping controller verification test - only needed for Kind")
+		ginkgo.Skip("Skipping controller verification test - only needed for Kind")
 	}
 
 	// Verify pods exist and have IPs
@@ -381,12 +381,12 @@ func TestPodScrapingFromController(ctx context.Context, config PodScrapingTestCo
 
 		// For now, we verify the infrastructure is correct
 		// The actual HTTP scraping from pod IPs works when running inside the cluster
-		_, _ = fmt.Fprintf(GinkgoWriter, "Verified: EPP pod %s has IP %s, accessible from controller pod %s\n",
+		_, _ = fmt.Fprintf(ginkgo.GinkgoWriter, "Verified: EPP pod %s has IP %s, accessible from controller pod %s\n",
 			testPod.Name, testPod.Status.PodIP, controllerPod.Name)
 	} else {
 		// If controller pods aren't available, just verify infrastructure
 		g.Expect(testPod.Status.PodIP).NotTo(gom.BeEmpty(), "EPP pod should have IP address")
-		_, _ = fmt.Fprintf(GinkgoWriter, "Verified: EPP pod %s has IP %s, ready for scraping from inside cluster\n",
+		_, _ = fmt.Fprintf(ginkgo.GinkgoWriter, "Verified: EPP pod %s has IP %s, ready for scraping from inside cluster\n",
 			testPod.Name, testPod.Status.PodIP)
 	}
 }
@@ -695,7 +695,9 @@ func VerifyEPPPodMetricsEndpoint(
 	if err != nil {
 		return fmt.Errorf("failed to scrape metrics: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("metrics endpoint returned status %d", resp.StatusCode)
@@ -708,59 +710,59 @@ func VerifyEPPPodMetricsEndpoint(
 // This allows tests to be shared across different e2e suites with environment-specific config
 // configFn is a function that returns the config, allowing lazy evaluation after k8s clients are initialized
 func DescribePodScrapingSourceTests(configFn func() PodScrapingTestConfig) {
-	Describe("PodScrapingSource", func() {
-		It("should discover EPP service", func() {
+	ginkgo.Describe("PodScrapingSource", func() {
+		ginkgo.It("should discover EPP service", func() {
 			config := configFn()
 			testCtx := config.Ctx
 			if testCtx == nil {
 				testCtx = context.Background()
 			}
-			TestPodScrapingServiceDiscovery(testCtx, config, gom.NewWithT(GinkgoT()))
+			TestPodScrapingServiceDiscovery(testCtx, config, gom.NewWithT(ginkgo.GinkgoT()))
 		})
 
-		It("should discover Ready pods", func() {
+		ginkgo.It("should discover Ready pods", func() {
 			config := configFn()
 			testCtx := config.Ctx
 			if testCtx == nil {
 				testCtx = context.Background()
 			}
-			TestPodScrapingPodDiscovery(testCtx, config, gom.NewWithT(GinkgoT()))
+			TestPodScrapingPodDiscovery(testCtx, config, gom.NewWithT(ginkgo.GinkgoT()))
 		})
 
-		It("should authenticate with Bearer token", func() {
+		ginkgo.It("should authenticate with Bearer token", func() {
 			config := configFn()
 			testCtx := config.Ctx
 			if testCtx == nil {
 				testCtx = context.Background()
 			}
-			TestPodScrapingAuthentication(testCtx, config, gom.NewWithT(GinkgoT()))
+			TestPodScrapingAuthentication(testCtx, config, gom.NewWithT(ginkgo.GinkgoT()))
 		})
 
-		It("should scrape metrics from pods", func() {
+		ginkgo.It("should scrape metrics from pods", func() {
 			config := configFn()
 			testCtx := config.Ctx
 			if testCtx == nil {
 				testCtx = context.Background()
 			}
-			TestPodScrapingMetricsCollection(testCtx, config, gom.NewWithT(GinkgoT()))
+			TestPodScrapingMetricsCollection(testCtx, config, gom.NewWithT(ginkgo.GinkgoT()))
 		})
 
-		It("should cache scraped metrics", func() {
+		ginkgo.It("should cache scraped metrics", func() {
 			config := configFn()
 			testCtx := config.Ctx
 			if testCtx == nil {
 				testCtx = context.Background()
 			}
-			TestPodScrapingCaching(testCtx, config, gom.NewWithT(GinkgoT()))
+			TestPodScrapingCaching(testCtx, config, gom.NewWithT(ginkgo.GinkgoT()))
 		})
 
-		It("should verify controller can scrape from inside cluster", func() {
+		ginkgo.It("should verify controller can scrape from inside cluster", func() {
 			config := configFn()
 			testCtx := config.Ctx
 			if testCtx == nil {
 				testCtx = context.Background()
 			}
-			TestPodScrapingFromController(testCtx, config, gom.NewWithT(GinkgoT()))
+			TestPodScrapingFromController(testCtx, config, gom.NewWithT(ginkgo.GinkgoT()))
 		})
 	})
 }

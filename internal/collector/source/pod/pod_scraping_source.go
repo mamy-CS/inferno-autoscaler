@@ -321,7 +321,9 @@ func (p *PodScrapingSource) scrapePodMetrics(ctx context.Context, pod *corev1.Po
 	if err != nil {
 		return nil, fmt.Errorf("failed to scrape pod %s: %w", pod.Name, err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("pod %s returned status %d", pod.Name, resp.StatusCode)
