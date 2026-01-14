@@ -14,6 +14,37 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+// Package utils provides test utilities for PodScrapingSource e2e tests.
+//
+// Testing Approach:
+//
+// These e2e tests run outside the Kubernetes cluster (from the test runner host),
+// which creates network limitations:
+//
+//   - Kind: Pod IPs are not routable from outside the cluster. Scraping attempts
+//     from the test runner will fail, which is expected behavior.
+//
+//   - OpenShift: Pod IPs may or may not be accessible from outside the cluster
+//     depending on network configuration (SDN, OVN, etc.).
+//
+// What these e2e tests verify:
+//  1. Infrastructure readiness: Services, pods, secrets exist and are configured correctly
+//  2. Pod readiness: EPP pods are Ready and have IP addresses assigned
+//  3. Source functionality: PodScrapingSource can be created and configured
+//  4. Cache mechanism: Caching works even when scraping fails
+//
+// What unit tests verify (in internal/collector/source/pod/):
+//   - Actual scraping logic with mock HTTP servers
+//   - Metrics parsing and aggregation
+//   - Error handling and retries
+//
+// Controller behavior:
+//
+//	The controller runs inside the cluster and can successfully scrape metrics
+//	from pod IPs. This is verified through:
+//	- Unit tests with mock servers
+//	- Controller logs (when integrated)
+//	- Infrastructure verification in e2e tests
 package utils
 
 import (
@@ -139,37 +170,18 @@ func TestPodScrapingPodDiscovery(ctx context.Context, config PodScrapingTestConf
 	g.Expect(readyPods).To(gom.BeNumerically(">=", 1), "Should have at least one Ready pod")
 }
 
-// TestPodScrapingMetricsCollection tests that PodScrapingSource can scrape metrics from pods
-// Note: This test runs outside the cluster, so it cannot directly access pod IPs in Kind.
-// For e2e tests, we verify that the infrastructure is set up correctly and that
-// the controller (which runs inside the cluster) can access the pods.
+// TestPodScrapingMetricsCollection tests that PodScrapingSource can scrape metrics from pods.
 func TestPodScrapingMetricsCollection(ctx context.Context, config PodScrapingTestConfig, g gom.Gomega) {
 	source, err := CreatePodScrapingSource(config)
 	g.Expect(err).NotTo(gom.HaveOccurred(), "Should be able to create PodScrapingSource")
 
-	// Verify that Refresh can be called (even if it fails due to network)
-	// This validates that the source is properly configured
 	results, err := source.Refresh(ctx, sourcepkg.RefreshSpec{
 		Queries: []string{"all_metrics"},
 	})
 
-	// In Kind, pod IPs are not routable from outside the cluster, so scraping will fail.
-	// This is expected behavior. The actual scraping works when the controller runs
-	// inside the cluster. For e2e tests, we verify:
-	// 1. Source can be created
-	// 2. Infrastructure (pods, service, secret) exists
-	// 3. Controller can access pods (verified through controller logs or status)
-	//
-	// The unit tests verify the actual scraping logic with mock HTTP servers.
-	// Here we just verify the source is functional and infrastructure is ready.
-
 	if config.Environment == "kind" {
-		// In Kind, we expect scraping to fail from outside the cluster
-		// This is a known limitation - pod IPs are only accessible from within the cluster
-		// The controller (running inside the cluster) can successfully scrape metrics
 		if err != nil {
-			// Expected - pod IPs not accessible from outside cluster
-			// Verify that pods exist and are ready (infrastructure is correct)
+			// Expected failure from outside cluster - verify infrastructure is correct
 			podList, listErr := config.K8sClient.CoreV1().Pods(config.InferencePoolNamespace).List(ctx, metav1.ListOptions{
 				LabelSelector: fmt.Sprintf("inferencepool=%s-epp", config.InferencePoolName),
 			})
@@ -188,21 +200,14 @@ func TestPodScrapingMetricsCollection(ctx context.Context, config PodScrapingTes
 			}
 			g.Expect(readyCount).To(gom.BeNumerically(">=", 1), "Should have at least one ready pod")
 
-			// Verify source can query (even if scraping fails)
 			cached := source.Get("all_metrics", nil)
-			// Cache might be empty if Refresh failed, which is expected from outside cluster
-			_ = cached // Just verify Get doesn't panic
+			_ = cached // Verify Get doesn't panic
 		} else if results != nil {
-			// If scraping succeeded (unlikely from outside cluster), verify results
 			g.Expect(results).To(gom.HaveKey("all_metrics"), "Should have all_metrics result")
 		}
 	} else {
-		// For OpenShift, pod IPs may or may not be accessible from outside the cluster
-		// depending on network configuration. We verify infrastructure is correct
-		// and that scraping can be attempted. Actual scraping from pod IPs works
-		// when the controller runs inside the cluster.
 		if err != nil {
-			// If scraping fails (pod IPs not accessible from outside), verify infrastructure
+			// If scraping fails, verify infrastructure is correct
 			podList, listErr := config.K8sClient.CoreV1().Pods(config.InferencePoolNamespace).List(ctx, metav1.ListOptions{
 				LabelSelector: fmt.Sprintf("inferencepool=%s-epp", config.InferencePoolName),
 			})
@@ -221,17 +226,15 @@ func TestPodScrapingMetricsCollection(ctx context.Context, config PodScrapingTes
 			}
 			g.Expect(readyCount).To(gom.BeNumerically(">=", 1), "Should have at least one ready pod")
 
-			// Verify source can query (even if scraping fails)
 			cached := source.Get("all_metrics", nil)
-			_ = cached // Just verify Get doesn't panic
+			_ = cached // Verify Get doesn't panic
 		} else if results != nil {
-			// If scraping succeeded, verify results
 			g.Expect(results).To(gom.HaveKey("all_metrics"), "Should have all_metrics result")
 			result := results["all_metrics"]
 			if result != nil && len(result.Values) > 0 {
 				g.Expect(result.Values).NotTo(gom.BeEmpty(), "Should have collected metrics from pods")
 			} else {
-				// Even if no error, might have empty results - verify infrastructure instead
+				// Empty results - verify infrastructure instead
 				podList, listErr := config.K8sClient.CoreV1().Pods(config.InferencePoolNamespace).List(ctx, metav1.ListOptions{
 					LabelSelector: fmt.Sprintf("inferencepool=%s-epp", config.InferencePoolName),
 				})
@@ -266,43 +269,26 @@ func TestPodScrapingCaching(ctx context.Context, config PodScrapingTestConfig, g
 	})
 
 	if config.Environment == "kind" {
-		// In Kind, scraping from outside the cluster will fail due to network limitations
-		// Verify that the cache mechanism works (even if empty due to failed scraping)
 		cached := source.Get("all_metrics", nil)
-		// Cache might be nil or empty if scraping failed, which is expected from outside cluster
-		// The important thing is that Get() doesn't panic and the cache mechanism is functional
 		if cached != nil {
-			// If cache exists (even if empty), verify it's a valid cache entry
-			_ = cached.IsExpired() // Just verify IsExpired doesn't panic
+			_ = cached.IsExpired() // Verify IsExpired doesn't panic
 		}
-
-		// Verify infrastructure is correct (pods exist and are ready)
 		podList, listErr := config.K8sClient.CoreV1().Pods(config.InferencePoolNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: fmt.Sprintf("inferencepool=%s-epp", config.InferencePoolName),
 		})
 		g.Expect(listErr).NotTo(gom.HaveOccurred(), "Should be able to list pods")
 		g.Expect(podList.Items).NotTo(gom.BeEmpty(), "Should have EPP pods")
-
-		// The actual caching with real metrics is tested in unit tests and when the controller
-		// runs inside the cluster. Here we just verify the cache mechanism doesn't crash.
 	} else {
-		// For OpenShift or other environments, pod IPs may or may not be accessible from outside
-		// Verify cache structure exists, even if scraping failed
 		cached := source.Get("all_metrics", nil)
 		g.Expect(cached).NotTo(gom.BeNil(), "Cached result should exist")
 
 		if err == nil && cached != nil && len(cached.Result.Values) > 0 {
-			// If scraping succeeded, verify caching works
 			g.Expect(cached.Result.Values).NotTo(gom.BeEmpty(), "Cached result should have values")
 			g.Expect(cached.IsExpired()).To(gom.BeFalse(), "Cache should not be expired immediately")
 		} else {
-			// If scraping failed (pod IPs not accessible from outside), just verify cache structure
-			// The actual scraping works when the controller runs inside the cluster
 			if cached != nil {
-				// Cache exists but may be empty - verify it's not expired
 				g.Expect(cached.IsExpired()).To(gom.BeFalse(), "Cache should not be expired immediately")
 			}
-			// Verify infrastructure is correct (pods exist and are ready)
 			podList, listErr := config.K8sClient.CoreV1().Pods(config.InferencePoolNamespace).List(ctx, metav1.ListOptions{
 				LabelSelector: fmt.Sprintf("inferencepool=%s-epp", config.InferencePoolName),
 			})
@@ -312,12 +298,9 @@ func TestPodScrapingCaching(ctx context.Context, config PodScrapingTestConfig, g
 	}
 }
 
-// TestPodScrapingFromController verifies that PodScrapingSource can scrape metrics when running inside the cluster
-// This test creates a test pod that runs inside the cluster and can access pod IPs, simulating the controller behavior
+// TestPodScrapingFromController verifies that PodScrapingSource can scrape metrics when running inside the cluster.
 func TestPodScrapingFromController(ctx context.Context, config PodScrapingTestConfig, g gom.Gomega) {
 	if config.Environment != "kind" {
-		// This test is specifically for Kind where we need to verify in-cluster access
-		// For other environments, the direct scraping test should work
 		ginkgo.Skip("Skipping controller verification test - only needed for Kind")
 	}
 
@@ -353,46 +336,23 @@ func TestPodScrapingFromController(ctx context.Context, config PodScrapingTestCo
 	token := string(secret.Data[config.MetricsReaderSecretKey])
 	g.Expect(token).NotTo(gom.BeEmpty(), "Token should not be empty")
 
-	// Test connectivity from inside the cluster by exec'ing into a pod and curling the metrics endpoint
-	// We'll use one of the controller pods or create a test pod
 	controllerPods, err := config.K8sClient.CoreV1().Pods("workload-variant-autoscaler-system").List(ctx, metav1.ListOptions{
 		LabelSelector: "app.kubernetes.io/name=workload-variant-autoscaler",
 	})
 	if err == nil && len(controllerPods.Items) > 0 {
-		// Use controller pod to test scraping
 		controllerPod := controllerPods.Items[0]
-
-		// Verify that the controller pod can resolve the EPP pod IP
-		// This confirms network connectivity within the cluster
-		// The metrics endpoint URL would be:
-		// fmt.Sprintf("%s://%s:%d%s", config.MetricsScheme, testPod.Status.PodIP, config.MetricsPort, config.MetricsPath)
-		// But we can't test it directly from outside the cluster
-		// The actual scraping is verified through unit tests and controller logs
-
 		g.Expect(testPod.Status.PodIP).NotTo(gom.BeEmpty(), "EPP pod should have IP address")
 		g.Expect(controllerPod.Status.PodIP).NotTo(gom.BeEmpty(), "Controller pod should have IP address")
-
-		// The ERROR messages in logs are expected when testing from outside the cluster
-		// The controller (running inside the cluster) can successfully scrape metrics
-		// This is verified by:
-		// 1. Unit tests with mock HTTP servers (verify scraping logic)
-		// 2. Infrastructure verification (pods ready, IPs assigned, service exists)
-		// 3. Controller logs (when PodScrapingSource is integrated and used)
-
-		// For now, we verify the infrastructure is correct
-		// The actual HTTP scraping from pod IPs works when running inside the cluster
 		_, _ = fmt.Fprintf(ginkgo.GinkgoWriter, "Verified: EPP pod %s has IP %s, accessible from controller pod %s\n",
 			testPod.Name, testPod.Status.PodIP, controllerPod.Name)
 	} else {
-		// If controller pods aren't available, just verify infrastructure
 		g.Expect(testPod.Status.PodIP).NotTo(gom.BeEmpty(), "EPP pod should have IP address")
 		_, _ = fmt.Fprintf(ginkgo.GinkgoWriter, "Verified: EPP pod %s has IP %s, ready for scraping from inside cluster\n",
 			testPod.Name, testPod.Status.PodIP)
 	}
 }
 
-// CreateMockEPPPod creates a mock EPP pod with a simple HTTP server serving Prometheus metrics
-// This is used for Kind cluster tests
+// CreateMockEPPPod creates a mock EPP pod with a simple HTTP server serving Prometheus metrics.
 func CreateMockEPPPod(
 	ctx context.Context,
 	k8sClient *kubernetes.Clientset,
@@ -572,8 +532,7 @@ except Exception as e:
 	return createdPod, nil
 }
 
-// CreateMockEPPService creates a service for EPP pods
-// For e2e tests, we use NodePort to make pods accessible from outside the cluster
+// CreateMockEPPService creates a service for EPP pods.
 func CreateMockEPPService(
 	ctx context.Context,
 	k8sClient *kubernetes.Clientset,
@@ -585,7 +544,7 @@ func CreateMockEPPService(
 			Namespace: namespace,
 		},
 		Spec: corev1.ServiceSpec{
-			Type: corev1.ServiceTypeNodePort, // Use NodePort for e2e tests to access from host
+			Type: corev1.ServiceTypeNodePort,
 			Selector: map[string]string{
 				"inferencepool": fmt.Sprintf("%s-epp", inferencePoolName),
 			},
