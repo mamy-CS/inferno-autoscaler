@@ -257,7 +257,8 @@ func TestPodScrapingMetricsCollection(ctx context.Context, config PodScrapingTes
 // 3. Common naming patterns
 // 4. Creates a test secret if none found (for e2e testing only)
 func DiscoverMetricsReaderSecret(ctx context.Context, k8sClient *kubernetes.Clientset, crClient client.Client, namespace, eppServiceName string) (string, error) {
-	// Strategy 1: Check ServiceMonitor for bearerTokenSecret reference
+	// Strategy 1: Check ServiceMonitor for authorization credentials
+	// Supports both deprecated BearerTokenSecret and new Authorization.Credentials
 	serviceMonitorList := &promoperator.ServiceMonitorList{}
 	err := crClient.List(ctx, serviceMonitorList, client.InNamespace(namespace))
 	if err == nil {
@@ -265,12 +266,24 @@ func DiscoverMetricsReaderSecret(ctx context.Context, k8sClient *kubernetes.Clie
 			// Check if this ServiceMonitor targets the EPP service
 			// ServiceMonitor selector should match the EPP service labels
 			for _, endpoint := range sm.Spec.Endpoints {
+				// Check new Authorization API first (preferred)
+				if endpoint.Authorization != nil && endpoint.Authorization.Credentials != nil {
+					secretName := endpoint.Authorization.Credentials.Name
+					// Verify secret exists
+					_, err := k8sClient.CoreV1().Secrets(namespace).Get(ctx, secretName, metav1.GetOptions{})
+					if err == nil {
+						_, _ = fmt.Fprintf(ginkgo.GinkgoWriter, "Discovered metrics secret from ServiceMonitor Authorization: %s\n", secretName)
+						return secretName, nil
+					}
+				}
+				// Fallback to deprecated BearerTokenSecret (for backward compatibility)
+				//nolint:staticcheck // SA1019: BearerTokenSecret is deprecated but still used in some deployments
 				if endpoint.BearerTokenSecret != nil {
 					secretName := endpoint.BearerTokenSecret.Name
 					// Verify secret exists
 					_, err := k8sClient.CoreV1().Secrets(namespace).Get(ctx, secretName, metav1.GetOptions{})
 					if err == nil {
-						_, _ = fmt.Fprintf(ginkgo.GinkgoWriter, "Discovered metrics secret from ServiceMonitor: %s\n", secretName)
+						_, _ = fmt.Fprintf(ginkgo.GinkgoWriter, "Discovered metrics secret from ServiceMonitor BearerTokenSecret: %s\n", secretName)
 						return secretName, nil
 					}
 				}
@@ -334,7 +347,7 @@ func DiscoverMetricsReaderSecret(ctx context.Context, k8sClient *kubernetes.Clie
 			Name:      testSecretName,
 			Namespace: namespace,
 			Labels: map[string]string{
-				"app.kubernetes.io/component": "e2e-test",
+				"app.kubernetes.io/component":  "e2e-test",
 				"app.kubernetes.io/managed-by": "workload-variant-autoscaler-test",
 			},
 		},
