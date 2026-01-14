@@ -49,7 +49,6 @@ package utils
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"net/http"
 	"time"
@@ -58,9 +57,9 @@ import (
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/source/pod"
 	"github.com/onsi/ginkgo/v2"
 	gom "github.com/onsi/gomega"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -352,34 +351,175 @@ func TestPodScrapingFromController(ctx context.Context, config PodScrapingTestCo
 	}
 }
 
-// CreateMockEPPPod creates a mock EPP pod with a simple HTTP server serving Prometheus metrics.
-func CreateMockEPPPod(
+// TestInClusterScraping verifies that metrics can actually be scraped from EPP pods when running inside the cluster.
+// This test creates a Job that runs inside the cluster and verifies end-to-end scraping works.
+func TestInClusterScraping(ctx context.Context, config PodScrapingTestConfig, g gom.Gomega) {
+	// Find EPP pods
+	pods, err := FindExistingEPPPods(ctx, config.K8sClient, config.InferencePoolNamespace, config.InferencePoolName)
+	g.Expect(err).NotTo(gom.HaveOccurred(), "Should be able to find EPP pods")
+	g.Expect(pods).NotTo(gom.BeEmpty(), "Should have at least one EPP pod")
+
+	// Get the first ready pod
+	var testPod *corev1.Pod
+	for i := range pods {
+		for _, condition := range pods[i].Status.Conditions {
+			if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue && pods[i].Status.PodIP != "" {
+				testPod = &pods[i]
+				break
+			}
+		}
+		if testPod != nil {
+			break
+		}
+	}
+	g.Expect(testPod).NotTo(gom.BeNil(), "Should have at least one ready pod with IP")
+
+	// Get the Bearer token from the secret
+	secret, err := config.K8sClient.CoreV1().Secrets(config.InferencePoolNamespace).Get(
+		ctx,
+		config.MetricsReaderSecretName,
+		metav1.GetOptions{},
+	)
+	g.Expect(err).NotTo(gom.HaveOccurred(), "Should be able to get metrics secret")
+	token := string(secret.Data[config.MetricsReaderSecretKey])
+	g.Expect(token).NotTo(gom.BeEmpty(), "Token should not be empty")
+
+	// Create a test Job that runs inside the cluster and verifies scraping works
+	jobName := fmt.Sprintf("pod-scraping-test-%d", time.Now().Unix())
+	_, err = CreateInClusterScrapingTestJob(
+		ctx,
+		config.K8sClient,
+		config.InferencePoolNamespace,
+		jobName,
+		testPod.Status.PodIP,
+		config.MetricsPort,
+		config.MetricsPath,
+		config.MetricsScheme,
+		token,
+	)
+	g.Expect(err).NotTo(gom.HaveOccurred(), "Should be able to create test job")
+
+	// Cleanup job after test
+	defer func() {
+		_ = config.K8sClient.BatchV1().Jobs(config.InferencePoolNamespace).Delete(ctx, jobName, metav1.DeleteOptions{
+			PropagationPolicy: func() *metav1.DeletionPropagation {
+				p := metav1.DeletePropagationForeground
+				return &p
+			}(),
+		})
+	}()
+
+	// Wait for job to complete
+	_, _ = fmt.Fprintf(ginkgo.GinkgoWriter, "Waiting for in-cluster scraping test job to complete...\n")
+	gom.Eventually(func(g gom.Gomega) {
+		currentJob, err := config.K8sClient.BatchV1().Jobs(config.InferencePoolNamespace).Get(ctx, jobName, metav1.GetOptions{})
+		g.Expect(err).NotTo(gom.HaveOccurred(), "Should be able to get job")
+		g.Expect(currentJob.Status.Succeeded+currentJob.Status.Failed).To(gom.BeNumerically(">", 0), "Job should complete")
+	}, 2*time.Minute, 5*time.Second).Should(gom.Succeed())
+
+	// Verify job succeeded
+	finalJob, err := config.K8sClient.BatchV1().Jobs(config.InferencePoolNamespace).Get(ctx, jobName, metav1.GetOptions{})
+	g.Expect(err).NotTo(gom.HaveOccurred(), "Should be able to get final job status")
+	g.Expect(finalJob.Status.Succeeded).To(gom.BeNumerically(">=", 1), "Job should succeed")
+
+	// Get job logs to verify scraping worked
+	podList, err := config.K8sClient.CoreV1().Pods(config.InferencePoolNamespace).List(ctx, metav1.ListOptions{
+		LabelSelector: fmt.Sprintf("job-name=%s", jobName),
+	})
+	g.Expect(err).NotTo(gom.HaveOccurred(), "Should be able to list job pods")
+	g.Expect(podList.Items).NotTo(gom.BeEmpty(), "Should have job pod")
+
+	testPodName := podList.Items[0].Name
+	logsReq := config.K8sClient.CoreV1().Pods(config.InferencePoolNamespace).GetLogs(testPodName, &corev1.PodLogOptions{
+		Container: "scraper",
+	})
+	logBytes, err := logsReq.DoRaw(ctx)
+	g.Expect(err).NotTo(gom.HaveOccurred(), "Should be able to get job logs")
+
+	logOutput := string(logBytes)
+	_, _ = fmt.Fprintf(ginkgo.GinkgoWriter, "Job logs:\n%s\n", logOutput)
+
+	// Verify logs indicate successful scraping
+	g.Expect(logOutput).To(gom.ContainSubstring("SUCCESS"), "Job logs should indicate success")
+	g.Expect(logOutput).To(gom.ContainSubstring("metrics"), "Job logs should mention metrics")
+}
+
+// CreateInClusterScrapingTestJob creates a Job that runs inside the cluster and verifies metrics scraping works.
+func CreateInClusterScrapingTestJob(
 	ctx context.Context,
 	k8sClient *kubernetes.Clientset,
-	namespace, podName, serviceName string,
+	namespace, jobName, podIP string,
 	metricsPort int32,
-) (*corev1.Pod, error) {
-	// Create a simple pod that serves metrics
-	// In a real implementation, this would use a container image that serves metrics
-	// For now, we'll create the pod structure - the actual metrics server would be deployed separately
-	pod := &corev1.Pod{
+	metricsPath, metricsScheme, bearerToken string,
+) (*batchv1.Job, error) {
+	url := fmt.Sprintf("%s://%s:%d%s", metricsScheme, podIP, metricsPort, metricsPath)
+
+	// Create a test script that verifies scraping works
+	// This script uses curl to verify the metrics endpoint is accessible and returns valid Prometheus metrics
+	testScript := fmt.Sprintf(`#!/bin/sh
+set -e
+echo "Testing metrics scraping from inside cluster..."
+echo "Target URL: %s"
+echo ""
+
+# Test 1: Verify endpoint is accessible
+echo "Test 1: Checking if metrics endpoint is accessible..."
+HTTP_CODE=$(curl -s -o /tmp/metrics.txt -w "%%{http_code}" --max-time 10 \
+  -H "Authorization: Bearer %s" \
+  "%s" || echo "000")
+
+if [ "$HTTP_CODE" != "200" ]; then
+  echo "ERROR: Metrics endpoint returned HTTP $HTTP_CODE"
+  echo "Response:"
+  cat /tmp/metrics.txt || true
+  exit 1
+fi
+
+echo "✓ Metrics endpoint is accessible (HTTP 200)"
+
+# Test 2: Verify response contains Prometheus metrics
+echo ""
+echo "Test 2: Verifying response contains Prometheus metrics..."
+METRICS_CONTENT=$(cat /tmp/metrics.txt)
+
+if [ -z "$METRICS_CONTENT" ]; then
+  echo "ERROR: Metrics response is empty"
+  exit 1
+fi
+
+# Check for Prometheus metric format (lines starting with # or metric_name)
+if ! echo "$METRICS_CONTENT" | grep -qE "^#|^[a-zA-Z_][a-zA-Z0-9_]*"; then
+  echo "ERROR: Response does not appear to be in Prometheus format"
+  echo "First 500 chars of response:"
+  echo "$METRICS_CONTENT" | head -c 500
+  exit 1
+fi
+
+echo "✓ Response contains Prometheus metrics"
+echo ""
+echo "Sample metrics (first 10 lines):"
+echo "$METRICS_CONTENT" | head -n 10
+echo ""
+echo "SUCCESS: Metrics scraping works from inside cluster!"
+`, url, bearerToken, url)
+
+	backoffLimit := int32(0) // Don't retry on failure
+	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      podName,
+			Name:      jobName,
 			Namespace: namespace,
-			Labels: map[string]string{
-				"inferencepool": serviceName,
-			},
 		},
-		Spec: corev1.PodSpec{
-			Containers: []corev1.Container{
-				{
-					Name:  "metrics-server",
-					Image: "nginx:alpine", // Placeholder - would use actual metrics server image
-					Ports: []corev1.ContainerPort{
+		Spec: batchv1.JobSpec{
+			BackoffLimit: &backoffLimit,
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					RestartPolicy: corev1.RestartPolicyNever,
+					Containers: []corev1.Container{
 						{
-							Name:          "metrics",
-							ContainerPort: metricsPort,
-							Protocol:      corev1.ProtocolTCP,
+							Name:    "scraper",
+							Image:   "curlimages/curl:8.11.1", // Lightweight curl image
+							Command: []string{"/bin/sh", "-c"},
+							Args:    []string{testScript},
 						},
 					},
 				},
@@ -387,212 +527,15 @@ func CreateMockEPPPod(
 		},
 	}
 
-	createdPod, err := k8sClient.CoreV1().Pods(namespace).Create(ctx, pod, metav1.CreateOptions{})
+	createdJob, err := k8sClient.BatchV1().Jobs(namespace).Create(ctx, job, metav1.CreateOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create mock EPP pod: %w", err)
+		return nil, fmt.Errorf("failed to create in-cluster scraping test job: %w", err)
 	}
 
-	return createdPod, nil
+	return createdJob, nil
 }
 
-// CreateMockEPPPodWithMetrics creates a mock EPP pod with an HTTP server that serves Prometheus metrics
-// Uses a simple Python HTTP server to serve metrics with authentication
-func CreateMockEPPPodWithMetrics(
-	ctx context.Context,
-	k8sClient *kubernetes.Clientset,
-	namespace, podName, serviceName string,
-	metricsPort int32,
-	bearerToken string,
-) (*corev1.Pod, error) {
-	// Sample Prometheus metrics content
-	metricsContent := `# HELP vllm_kv_cache_usage_perc KV cache usage percentage
-# TYPE vllm_kv_cache_usage_perc gauge
-vllm_kv_cache_usage_perc 0.75
-# HELP vllm_queue_length Queue length
-# TYPE vllm_queue_length gauge
-vllm_queue_length 5.0
-`
-	// Encode metrics content as base64
-	metricsBase64 := base64.StdEncoding.EncodeToString([]byte(metricsContent))
-
-	// Create a pod with a Python HTTP server that serves metrics
-	// Using python:3.11-alpine for a lightweight image
-	pod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      podName,
-			Namespace: namespace,
-			Labels: map[string]string{
-				"inferencepool": serviceName,
-			},
-		},
-		Spec: corev1.PodSpec{
-			Containers: []corev1.Container{
-				{
-					Name:  "metrics-server",
-					Image: "python:3.11-alpine",
-					Command: []string{
-						"sh",
-						"-c",
-						fmt.Sprintf(`python3 -c "
-import http.server
-import socketserver
-import base64
-
-class MetricsHandler(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
-        if self.path != '/metrics':
-            self.send_response(404)
-            self.end_headers()
-            return
-        
-        # Check authentication
-        auth_header = self.headers.get('Authorization', '')
-        expected_token = '%s'
-        if not auth_header.startswith('Bearer ') or auth_header[7:] != expected_token:
-            self.send_response(401)
-            self.end_headers()
-            self.wfile.write(b'Unauthorized')
-            return
-        
-        # Serve metrics
-        metrics = base64.b64decode('%s').decode('utf-8')
-        self.send_response(200)
-        self.send_header('Content-Type', 'text/plain')
-        self.end_headers()
-        self.wfile.write(metrics.encode('utf-8'))
-    
-    def log_message(self, format, *args):
-        pass  # Suppress logging
-
-PORT = %d
-import sys
-print(f'Starting metrics server on port {PORT}', file=sys.stderr, flush=True)
-try:
-    with socketserver.TCPServer(('', PORT), MetricsHandler) as httpd:
-        print(f'Metrics server listening on port {PORT}', file=sys.stderr, flush=True)
-        httpd.serve_forever()
-except Exception as e:
-    print(f'Error starting server: {e}', file=sys.stderr, flush=True)
-    raise
-"`, bearerToken, metricsBase64, metricsPort),
-					},
-					Ports: []corev1.ContainerPort{
-						{
-							Name:          "metrics",
-							ContainerPort: metricsPort,
-							Protocol:      corev1.ProtocolTCP,
-						},
-					},
-					ReadinessProbe: &corev1.Probe{
-						ProbeHandler: corev1.ProbeHandler{
-							HTTPGet: &corev1.HTTPGetAction{
-								Path: "/metrics",
-								Port: intstr.FromInt32(metricsPort),
-								HTTPHeaders: []corev1.HTTPHeader{
-									{
-										Name:  "Authorization",
-										Value: fmt.Sprintf("Bearer %s", bearerToken),
-									},
-								},
-							},
-						},
-						InitialDelaySeconds: 5, // Give Python server more time to start
-						PeriodSeconds:       5,
-						TimeoutSeconds:      3,
-						FailureThreshold:    3,
-					},
-					StartupProbe: &corev1.Probe{
-						ProbeHandler: corev1.ProbeHandler{
-							HTTPGet: &corev1.HTTPGetAction{
-								Path: "/metrics",
-								Port: intstr.FromInt32(metricsPort),
-								HTTPHeaders: []corev1.HTTPHeader{
-									{
-										Name:  "Authorization",
-										Value: fmt.Sprintf("Bearer %s", bearerToken),
-									},
-								},
-							},
-						},
-						InitialDelaySeconds: 2,
-						PeriodSeconds:       2,
-						TimeoutSeconds:      2,
-						FailureThreshold:    10, // Allow up to 20 seconds for startup
-					},
-				},
-			},
-		},
-	}
-
-	createdPod, err := k8sClient.CoreV1().Pods(namespace).Create(ctx, pod, metav1.CreateOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create mock EPP pod with metrics: %w", err)
-	}
-
-	return createdPod, nil
-}
-
-// CreateMockEPPService creates a service for EPP pods.
-func CreateMockEPPService(
-	ctx context.Context,
-	k8sClient *kubernetes.Clientset,
-	namespace, serviceName, inferencePoolName string,
-) (*corev1.Service, error) {
-	service := &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      serviceName,
-			Namespace: namespace,
-		},
-		Spec: corev1.ServiceSpec{
-			Type: corev1.ServiceTypeNodePort,
-			Selector: map[string]string{
-				"inferencepool": fmt.Sprintf("%s-epp", inferencePoolName),
-			},
-			Ports: []corev1.ServicePort{
-				{
-					Name:       "metrics",
-					Port:       9090,
-					TargetPort: intstr.FromInt32(9090),
-					Protocol:   corev1.ProtocolTCP,
-				},
-			},
-		},
-	}
-
-	createdService, err := k8sClient.CoreV1().Services(namespace).Create(ctx, service, metav1.CreateOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create EPP service: %w", err)
-	}
-
-	return createdService, nil
-}
-
-// CreateMockMetricsSecret creates a secret with Bearer token for metrics authentication
-func CreateMockMetricsSecret(
-	ctx context.Context,
-	k8sClient *kubernetes.Clientset,
-	namespace, secretName, secretKey, tokenValue string,
-) (*corev1.Secret, error) {
-	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      secretName,
-			Namespace: namespace,
-		},
-		Data: map[string][]byte{
-			secretKey: []byte(tokenValue),
-		},
-		Type: corev1.SecretTypeOpaque,
-	}
-
-	createdSecret, err := k8sClient.CoreV1().Secrets(namespace).Create(ctx, secret, metav1.CreateOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create metrics secret: %w", err)
-	}
-
-	return createdSecret, nil
-}
-
-// FindExistingEPPPods finds existing EPP pods in OpenShift cluster
+// FindExistingEPPPods finds existing EPP pods in the cluster
 func FindExistingEPPPods(
 	ctx context.Context,
 	k8sClient *kubernetes.Clientset,
@@ -722,6 +665,15 @@ func DescribePodScrapingSourceTests(configFn func() PodScrapingTestConfig) {
 				testCtx = context.Background()
 			}
 			TestPodScrapingFromController(testCtx, config, gom.NewWithT(ginkgo.GinkgoT()))
+		})
+
+		ginkgo.It("should successfully scrape metrics from inside cluster", func() {
+			config := configFn()
+			testCtx := config.Ctx
+			if testCtx == nil {
+				testCtx = context.Background()
+			}
+			TestInClusterScraping(testCtx, config, gom.NewWithT(ginkgo.GinkgoT()))
 		})
 	})
 }

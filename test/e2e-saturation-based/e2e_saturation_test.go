@@ -1048,15 +1048,12 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Multiple 
 		_, _ = fmt.Fprintf(GinkgoWriter, "Cleanup completed for multiple VAs Saturation-based E2E tests\n")
 	})
 
-	// PodScrapingSource tests using mock EPP pods for Kind cluster
-	var _ = Describe("PodScrapingSource - Mock EPP Pods", Ordered, func() {
+	// PodScrapingSource tests using real EPP pods from llm-d-sim deployment
+	var _ = Describe("PodScrapingSource - Real EPP Pods", Ordered, func() {
 		var (
-			testInferencePoolName = "test-pool"
+			testInferencePoolName string
 			testNamespace         = llmDNamespace
 			ctx                   context.Context
-			mockPods              []*corev1.Pod
-			mockService           *corev1.Service
-			mockSecret            *corev1.Secret
 		)
 
 		BeforeAll(func() {
@@ -1067,55 +1064,33 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Multiple 
 			initializeK8sClient()
 			ctx = context.Background()
 
-			// Create mock EPP infrastructure for Kind tests
-			By("creating mock EPP service")
-			serviceName := fmt.Sprintf("%s-epp", testInferencePoolName)
-			var err error
-			// Check if service already exists, delete it first if it does
-			existingService, err := k8sClient.CoreV1().Services(testNamespace).Get(ctx, serviceName, metav1.GetOptions{})
-			if err == nil && existingService != nil {
-				By(fmt.Sprintf("deleting existing service %s", serviceName))
-				err = k8sClient.CoreV1().Services(testNamespace).Delete(ctx, serviceName, metav1.DeleteOptions{})
-				Expect(err).NotTo(HaveOccurred(), "Should be able to delete existing service")
-				// Wait a moment for deletion to complete
-				time.Sleep(1 * time.Second)
-			}
-			mockService, err = utils.CreateMockEPPService(ctx, k8sClient, testNamespace, serviceName, testInferencePoolName)
-			Expect(err).NotTo(HaveOccurred(), "Should be able to create mock EPP service")
+			// Discover existing EPP pods by finding services with "-epp" suffix
+			By("discovering existing EPP service")
+			serviceList, err := k8sClient.CoreV1().Services(testNamespace).List(ctx, metav1.ListOptions{})
+			Expect(err).NotTo(HaveOccurred(), "Should be able to list services")
 
-			By("creating mock metrics authentication secret")
-			secretName := "inference-gateway-sa-metrics-reader-secret"
-			testToken := "test-token-12345"
-			// Check if secret already exists, delete it first if it does
-			existingSecret, err := k8sClient.CoreV1().Secrets(testNamespace).Get(ctx, secretName, metav1.GetOptions{})
-			if err == nil && existingSecret != nil {
-				By(fmt.Sprintf("deleting existing secret %s", secretName))
-				err = k8sClient.CoreV1().Secrets(testNamespace).Delete(ctx, secretName, metav1.DeleteOptions{})
-				Expect(err).NotTo(HaveOccurred(), "Should be able to delete existing secret")
-				// Wait a moment for deletion to complete
-				time.Sleep(1 * time.Second)
-			}
-			mockSecret, err = utils.CreateMockMetricsSecret(ctx, k8sClient, testNamespace, secretName, "token", testToken)
-			Expect(err).NotTo(HaveOccurred(), "Should be able to create mock metrics secret")
-
-			By("creating mock EPP pods with metrics servers")
-			// Create 2 mock pods to test aggregation
-			mockPods = make([]*corev1.Pod, 2)
-			for i := 0; i < 2; i++ {
-				podName := fmt.Sprintf("%s-pod-%d", serviceName, i+1)
-				// Create pod with a simple HTTP server that serves Prometheus metrics
-				pod, err := utils.CreateMockEPPPodWithMetrics(ctx, k8sClient, testNamespace, podName, serviceName, 9090, testToken)
-				Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to create mock EPP pod %d", i+1))
-				mockPods[i] = pod
+			// Find first EPP service (service name ends with "-epp")
+			for _, svc := range serviceList.Items {
+				if len(svc.Name) > 4 && svc.Name[len(svc.Name)-4:] == "-epp" {
+					// Extract InferencePool name from service name (remove "-epp" suffix)
+					testInferencePoolName = svc.Name[:len(svc.Name)-4]
+					_, _ = fmt.Fprintf(GinkgoWriter, "Found EPP service: %s, InferencePool: %s\n", svc.Name, testInferencePoolName)
+					break
+				}
 			}
 
-			// Wait for pods to be ready
-			By("waiting for mock EPP pods to be ready")
+			if testInferencePoolName == "" {
+				Skip("No EPP service found in namespace; skipping PodScrapingSource test. Ensure llm-d-sim is deployed with EPP.")
+			}
+
+			// Verify EPP pods exist and are Ready
+			By("verifying EPP pods are Ready")
 			Eventually(func(g Gomega) {
+				pods, err := utils.FindExistingEPPPods(ctx, k8sClient, testNamespace, testInferencePoolName)
+				g.Expect(err).NotTo(HaveOccurred(), "Should be able to find EPP pods")
+
 				readyCount := 0
-				for _, pod := range mockPods {
-					pod, err := k8sClient.CoreV1().Pods(testNamespace).Get(ctx, pod.Name, metav1.GetOptions{})
-					g.Expect(err).NotTo(HaveOccurred(), "Should be able to get pod")
+				for _, pod := range pods {
 					for _, condition := range pod.Status.Conditions {
 						if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
 							readyCount++
@@ -1123,28 +1098,13 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Multiple 
 						}
 					}
 				}
-				g.Expect(readyCount).To(Equal(2), "Should have 2 ready mock EPP pods")
-			}, 2*time.Minute, 5*time.Second).Should(Succeed())
+				g.Expect(readyCount).To(BeNumerically(">=", 1), "Should have at least one Ready EPP pod")
+			}, 5*time.Minute, 10*time.Second).Should(Succeed())
 		})
 
-		AfterAll(func() {
-			// Cleanup mock resources
-			if mockService != nil {
-				_ = k8sClient.CoreV1().Services(testNamespace).Delete(ctx, mockService.Name, metav1.DeleteOptions{})
-			}
-			if mockSecret != nil {
-				_ = k8sClient.CoreV1().Secrets(testNamespace).Delete(ctx, mockSecret.Name, metav1.DeleteOptions{})
-			}
-			for _, pod := range mockPods {
-				if pod != nil {
-					_ = k8sClient.CoreV1().Pods(testNamespace).Delete(ctx, pod.Name, metav1.DeleteOptions{})
-				}
-			}
-		})
-
-		// Run shared PodScrapingSource tests with Kind/mock configuration
+		// Run shared PodScrapingSource tests with Kind/real EPP configuration
 		// Use a closure to capture k8sClient and crClient at runtime
-		Context("with mock EPP pods", func() {
+		Context("with real EPP pods", func() {
 			utils.DescribePodScrapingSourceTests(func() utils.PodScrapingTestConfig {
 				return utils.PodScrapingTestConfig{
 					Environment:             "kind",
