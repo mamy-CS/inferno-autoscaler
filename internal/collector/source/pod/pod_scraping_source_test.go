@@ -75,10 +75,16 @@ var _ = Describe("PodScrapingSource", func() {
 		})
 	})
 
-	Describe("discoverServiceName", func() {
-		It("should derive service name from InferencePool name", func() {
-			Expect(discoverServiceName("gaie-workload-autoscaler")).To(Equal("gaie-workload-autoscaler-epp"))
-			Expect(discoverServiceName("test-pool")).To(Equal("test-pool-epp"))
+	Describe("service name discovery", func() {
+		It("should auto-discover service name when not provided", func() {
+			config := PodScrapingSourceConfig{
+				InferencePoolName:      "gaie-workload-autoscaler",
+				InferencePoolNamespace: "test-ns",
+				MetricsPort:            9090,
+			}
+			source, err := NewPodScrapingSource(ctx, fakeClient.Build(), config)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(source.config.ServiceName).To(Equal("gaie-workload-autoscaler-epp"))
 		})
 	})
 
