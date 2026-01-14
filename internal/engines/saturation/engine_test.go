@@ -474,7 +474,7 @@ data:
 		})
 	})
 
-	Context("Collector V2 Optimization Tests", func() {
+	Context("Source Infrastructure Optimization Tests", func() {
 		const totalVAs = 3
 		const configMapName = "workload-variant-autoscaler-variantautoscaling-config"
 		var configMapNamespace = getNamespace()
@@ -519,7 +519,7 @@ data:
 			configMap = testutils.CreateVariantAutoscalingConfigMap(configMapName, ns.Name)
 			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
 
-			By("Creating VariantAutoscaling resources and Deployments for v2 collector tests")
+			By("Creating VariantAutoscaling resources and Deployments for source infrastructure tests")
 			for i := range totalVAs {
 				modelID := fmt.Sprintf("v2-model-%d-model-%d", i, i)
 				name := fmt.Sprintf("v2-test-resource-%d", i)
@@ -629,7 +629,7 @@ data:
 
 		})
 
-		It("should successfully run optimization with v2 collector", func() {
+		It("should successfully run optimization with source infrastructure", func() {
 
 			// Initialize legacy MetricsCollector for non-saturation metrics
 			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, sourceRegistry)
@@ -639,7 +639,7 @@ data:
 				"default": {},
 			})
 
-			By("Performing optimization loop with v2 collector")
+			By("Performing optimization loop with source infrastructure")
 			err := engine.optimize(ctx)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -649,13 +649,13 @@ data:
 			Expect(err).NotTo(HaveOccurred())
 
 			// Verify VAs were processed
-			v2VAs := 0
+			testVAs := 0
 			for _, va := range variantAutoscalingList.Items {
 				if strings.HasPrefix(va.Name, "v2-test-resource") && va.DeletionTimestamp.IsZero() {
-					v2VAs++
+					testVAs++
 				}
 			}
-			Expect(v2VAs).To(Equal(totalVAs), "Expected all v2 test VAs to be present")
+			Expect(testVAs).To(Equal(totalVAs), "Expected all test VAs to be present")
 		})
 
 	})

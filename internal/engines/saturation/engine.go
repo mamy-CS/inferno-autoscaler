@@ -60,8 +60,8 @@ type Engine struct {
 
 	Recorder record.EventRecorder
 
-	// ReplicaMetricsCollectorV2 is the collector for replica metrics
-	ReplicaMetricsCollectorV2 *collector.ReplicaMetricsCollector
+	// ReplicaMetricsCollector is the collector for replica metrics using the source infrastructure
+	ReplicaMetricsCollector *collector.ReplicaMetricsCollector
 }
 
 // getVariantKey returns a unique key for a variant combining namespace and name.
@@ -75,10 +75,10 @@ func NewEngine(client client.Client, scheme *runtime.Scheme, recorder record.Eve
 	promSource := metricsRegistry.Get("prometheus") // assume prometheus source is registered
 
 	engine := Engine{
-		client:                    client,
-		scheme:                    scheme,
-		Recorder:                  recorder,
-		ReplicaMetricsCollectorV2: collector.NewReplicaMetricsCollector(promSource, client),
+		client:                  client,
+		scheme:                  scheme,
+		Recorder:                recorder,
+		ReplicaMetricsCollector: collector.NewReplicaMetricsCollector(promSource, client),
 	}
 
 	engine.executor = executor.NewPollingExecutor(executor.PollingConfig{
@@ -420,11 +420,11 @@ func (e *Engine) RunSaturationAnalysis(
 		variantCosts[deploy.Name] = cost
 	}
 
-	// Collect Saturation metrics using v2 collector
-	logger.V(logging.DEBUG).Info("Using v2 collector for replica metrics",
+	// Collect Saturation metrics using source infrastructure
+	logger.V(logging.DEBUG).Info("Using source infrastructure for replica metrics",
 		"modelID", modelID,
 		"namespace", namespace)
-	replicaMetrics, err := e.ReplicaMetricsCollectorV2.CollectReplicaMetrics(ctx, modelID, namespace, deployments, variantAutoscalings, variantCosts)
+	replicaMetrics, err := e.ReplicaMetricsCollector.CollectReplicaMetrics(ctx, modelID, namespace, deployments, variantAutoscalings, variantCosts)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to collect Saturation metrics for model %s: %w", modelID, err)
 	}

@@ -366,7 +366,7 @@ func main() {
 
 		// Register in global source registry
 		if err := sourceRegistry.Register("prometheus", promSource); err != nil {
-			setupLog.Error(err, "failed to register prometheus source in v2 registry")
+			setupLog.Error(err, "failed to register prometheus source in source registry")
 			os.Exit(1)
 		}
 
