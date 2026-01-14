@@ -65,8 +65,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-//go:embed scripts/in_cluster_scraping_test.sh
-var inClusterScrapingTestScript string
+//go:embed scripts/in_cluster_pod_scraping_test.sh
+var inClusterPodScrapingTestScript string
 
 // PodScrapingTestConfig holds environment-specific configuration for PodScrapingSource tests
 type PodScrapingTestConfig struct {
@@ -448,7 +448,13 @@ func TestInClusterScraping(ctx context.Context, config PodScrapingTestConfig, g 
 	g.Expect(logOutput).To(gom.ContainSubstring("metrics"), "Job logs should mention metrics")
 }
 
-// CreateInClusterScrapingTestJob creates a Job that runs inside the cluster and verifies metrics scraping works.
+// CreateInClusterScrapingTestJob creates a Job that runs inside the cluster and verifies
+// that PodScrapingSource can successfully scrape metrics from EPP pods.
+//
+// This test verifies end-to-end scraping functionality by:
+// 1. Creating a Job pod that runs inside the cluster (can access pod IPs)
+// 2. Using curl to verify the metrics endpoint is accessible
+// 3. Validating that the response contains valid Prometheus-format metrics
 //
 // TODO: Consider migrating to a ConfigMap-based approach where the test script is stored in a ConfigMap
 // and mounted as a volume. This would avoid embedding scripts as command-line arguments and improve
@@ -463,8 +469,8 @@ func CreateInClusterScrapingTestJob(
 	url := fmt.Sprintf("%s://%s:%d%s", metricsScheme, podIP, metricsPort, metricsPath)
 
 	// Use the embedded test script with URL and token as environment variables
-	// The script is read from test/utils/scripts/in_cluster_scraping_test.sh at compile time
-	// TODO: Consider migrating to a ConfigMap-based approach for better maintainability
+	// The script is read from test/utils/scripts/in_cluster_pod_scraping_test.sh at compile time
+	// via the //go:embed directive
 
 	backoffLimit := int32(0) // Don't retry on failure
 	job := &batchv1.Job{
@@ -492,7 +498,7 @@ func CreateInClusterScrapingTestJob(
 								},
 							},
 							Command: []string{"/bin/sh", "-c"},
-							Args:    []string{inClusterScrapingTestScript},
+							Args:    []string{inClusterPodScrapingTestScript},
 						},
 					},
 				},

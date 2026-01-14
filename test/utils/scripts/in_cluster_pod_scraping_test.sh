@@ -1,7 +1,12 @@
-# Script to verify metrics scraping from inside the cluster.
-# This script is embedded in the test Job and verifies that:
-# 1. The metrics endpoint is accessible (HTTP 200)
-# 2. The response contains valid Prometheus-format metrics
+# Script to verify PodScrapingSource metrics scraping from inside the cluster.
+#
+# This script is embedded in the test Job (via //go:embed) and verifies that:
+# 1. The EPP pod metrics endpoint is accessible (HTTP 200)
+# 2. Bearer token authentication works correctly
+# 3. The response contains valid Prometheus-format metrics
+#
+# This is used by TestInClusterScraping to verify end-to-end scraping functionality
+# when running inside the Kubernetes cluster (where pod IPs are accessible).
 #
 # TODO: Consider migrating to a ConfigMap-based approach for better maintainability
 # and to avoid embedding scripts as command-line arguments.
