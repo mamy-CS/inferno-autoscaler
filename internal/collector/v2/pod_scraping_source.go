@@ -29,8 +29,10 @@ type PodScrapingSourceConfig struct {
 	InferencePoolName      string
 	InferencePoolNamespace string
 
-	// Service discovery (auto: {poolName}-epp)
-	ServiceName string // auto-discovered if empty
+	// Service discovery
+	// The scale-from-zero engine should provide ServiceName explicitly.
+	// If empty, falls back to pattern-based discovery: {poolName}-epp
+	ServiceName string
 
 	// Metrics endpoint (provided by client/engine)
 	MetricsPort   int32  // provided by client
@@ -134,6 +136,9 @@ func NewPodScrapingSource(
 }
 
 // discoverServiceName derives service name from InferencePool name.
+// NOTE: This is a fallback mechanism. The scale-from-zero engine should provide
+// the ServiceName directly in PodScrapingSourceConfig. This pattern-based
+// discovery is only used if ServiceName is not explicitly set by the engine.
 func discoverServiceName(inferencePoolName string) string {
 	return fmt.Sprintf("%s-epp", inferencePoolName)
 }
