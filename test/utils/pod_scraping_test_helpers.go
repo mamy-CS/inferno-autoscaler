@@ -75,9 +75,9 @@ type PodScrapingTestConfig struct {
 	// Environment identification
 	Environment string // "kind" or "openshift"
 
-	// InferencePool configuration
-	InferencePoolName      string
-	InferencePoolNamespace string
+	// Service configuration (required)
+	ServiceName      string
+	ServiceNamespace string
 
 	// Metrics endpoint configuration
 	MetricsPort   int32
@@ -105,9 +105,8 @@ func CreatePodScrapingSource(config PodScrapingTestConfig) (*pod.PodScrapingSour
 	}
 
 	podConfig := pod.PodScrapingSourceConfig{
-		InferencePoolName:       config.InferencePoolName,
-		InferencePoolNamespace:  config.InferencePoolNamespace,
-		ServiceName:             fmt.Sprintf("%s-epp", config.InferencePoolName),
+		ServiceName:             config.ServiceName,
+		ServiceNamespace:        config.ServiceNamespace,
 		MetricsPort:             config.MetricsPort,
 		MetricsPath:             config.MetricsPath,
 		MetricsScheme:           config.MetricsScheme,
@@ -127,9 +126,9 @@ func TestPodScrapingServiceDiscovery(ctx context.Context, config PodScrapingTest
 	g.Expect(err).NotTo(gom.HaveOccurred(), "Should be able to create PodScrapingSource")
 
 	// Verify service exists
-	service, err := config.K8sClient.CoreV1().Services(config.InferencePoolNamespace).Get(
+	service, err := config.K8sClient.CoreV1().Services(config.ServiceNamespace).Get(
 		ctx,
-		fmt.Sprintf("%s-epp", config.InferencePoolName),
+		config.ServiceName,
 		metav1.GetOptions{},
 	)
 	g.Expect(err).NotTo(gom.HaveOccurred(), "EPP service should exist")
@@ -143,15 +142,15 @@ func TestPodScrapingPodDiscovery(ctx context.Context, config PodScrapingTestConf
 	g.Expect(err).NotTo(gom.HaveOccurred(), "Should be able to create PodScrapingSource")
 
 	// Get service to find pods
-	service, err := config.K8sClient.CoreV1().Services(config.InferencePoolNamespace).Get(
+	service, err := config.K8sClient.CoreV1().Services(config.ServiceNamespace).Get(
 		ctx,
-		fmt.Sprintf("%s-epp", config.InferencePoolName),
+		config.ServiceName,
 		metav1.GetOptions{},
 	)
 	g.Expect(err).NotTo(gom.HaveOccurred(), "EPP service should exist")
 
 	// List pods using service selector
-	podList, err := config.K8sClient.CoreV1().Pods(config.InferencePoolNamespace).List(
+	podList, err := config.K8sClient.CoreV1().Pods(config.ServiceNamespace).List(
 		ctx,
 		metav1.ListOptions{
 			LabelSelector: metav1.FormatLabelSelector(&metav1.LabelSelector{
@@ -184,11 +183,19 @@ func TestPodScrapingMetricsCollection(ctx context.Context, config PodScrapingTes
 		Queries: []string{"all_metrics"},
 	})
 
+	// Get service to find selector
+	service, svcErr := config.K8sClient.CoreV1().Services(config.ServiceNamespace).Get(
+		ctx,
+		config.ServiceName,
+		metav1.GetOptions{},
+	)
+	g.Expect(svcErr).NotTo(gom.HaveOccurred(), "Service should exist")
+
 	if config.Environment == "kind" {
 		if err != nil {
 			// Expected failure from outside cluster - verify infrastructure is correct
-			podList, listErr := config.K8sClient.CoreV1().Pods(config.InferencePoolNamespace).List(ctx, metav1.ListOptions{
-				LabelSelector: fmt.Sprintf("inferencepool=%s-epp", config.InferencePoolName),
+			podList, listErr := config.K8sClient.CoreV1().Pods(config.ServiceNamespace).List(ctx, metav1.ListOptions{
+				LabelSelector: metav1.FormatLabelSelector(&metav1.LabelSelector{MatchLabels: service.Spec.Selector}),
 			})
 			g.Expect(listErr).NotTo(gom.HaveOccurred(), "Should be able to list pods")
 			g.Expect(podList.Items).NotTo(gom.BeEmpty(), "Should have EPP pods")
@@ -213,8 +220,8 @@ func TestPodScrapingMetricsCollection(ctx context.Context, config PodScrapingTes
 	} else {
 		if err != nil {
 			// If scraping fails, verify infrastructure is correct
-			podList, listErr := config.K8sClient.CoreV1().Pods(config.InferencePoolNamespace).List(ctx, metav1.ListOptions{
-				LabelSelector: fmt.Sprintf("inferencepool=%s-epp", config.InferencePoolName),
+			podList, listErr := config.K8sClient.CoreV1().Pods(config.ServiceNamespace).List(ctx, metav1.ListOptions{
+				LabelSelector: metav1.FormatLabelSelector(&metav1.LabelSelector{MatchLabels: service.Spec.Selector}),
 			})
 			g.Expect(listErr).NotTo(gom.HaveOccurred(), "Should be able to list pods")
 			g.Expect(podList.Items).NotTo(gom.BeEmpty(), "Should have EPP pods")
@@ -240,8 +247,8 @@ func TestPodScrapingMetricsCollection(ctx context.Context, config PodScrapingTes
 				g.Expect(result.Values).NotTo(gom.BeEmpty(), "Should have collected metrics from pods")
 			} else {
 				// Empty results - verify infrastructure instead
-				podList, listErr := config.K8sClient.CoreV1().Pods(config.InferencePoolNamespace).List(ctx, metav1.ListOptions{
-					LabelSelector: fmt.Sprintf("inferencepool=%s-epp", config.InferencePoolName),
+				podList, listErr := config.K8sClient.CoreV1().Pods(config.ServiceNamespace).List(ctx, metav1.ListOptions{
+					LabelSelector: metav1.FormatLabelSelector(&metav1.LabelSelector{MatchLabels: service.Spec.Selector}),
 				})
 				g.Expect(listErr).NotTo(gom.HaveOccurred(), "Should be able to list pods")
 				g.Expect(podList.Items).NotTo(gom.BeEmpty(), "Should have EPP pods")
@@ -370,7 +377,7 @@ func DiscoverMetricsReaderSecret(ctx context.Context, k8sClient *kubernetes.Clie
 // TestPodScrapingAuthentication tests that PodScrapingSource can read authentication token
 func TestPodScrapingAuthentication(ctx context.Context, config PodScrapingTestConfig, g gom.Gomega) {
 	// Verify secret exists
-	secret, err := config.K8sClient.CoreV1().Secrets(config.InferencePoolNamespace).Get(
+	secret, err := config.K8sClient.CoreV1().Secrets(config.ServiceNamespace).Get(
 		ctx,
 		config.MetricsReaderSecretName,
 		metav1.GetOptions{},
@@ -385,6 +392,14 @@ func TestPodScrapingCaching(ctx context.Context, config PodScrapingTestConfig, g
 	source, err := CreatePodScrapingSource(config)
 	g.Expect(err).NotTo(gom.HaveOccurred(), "Should be able to create PodScrapingSource")
 
+	// Get service to find selector
+	service, svcErr := config.K8sClient.CoreV1().Services(config.ServiceNamespace).Get(
+		ctx,
+		config.ServiceName,
+		metav1.GetOptions{},
+	)
+	g.Expect(svcErr).NotTo(gom.HaveOccurred(), "Service should exist")
+
 	// First refresh to populate cache
 	_, err = source.Refresh(ctx, sourcepkg.RefreshSpec{
 		Queries: []string{"all_metrics"},
@@ -395,8 +410,8 @@ func TestPodScrapingCaching(ctx context.Context, config PodScrapingTestConfig, g
 		if cached != nil {
 			_ = cached.IsExpired() // Verify IsExpired doesn't panic
 		}
-		podList, listErr := config.K8sClient.CoreV1().Pods(config.InferencePoolNamespace).List(ctx, metav1.ListOptions{
-			LabelSelector: fmt.Sprintf("inferencepool=%s-epp", config.InferencePoolName),
+		podList, listErr := config.K8sClient.CoreV1().Pods(config.ServiceNamespace).List(ctx, metav1.ListOptions{
+			LabelSelector: metav1.FormatLabelSelector(&metav1.LabelSelector{MatchLabels: service.Spec.Selector}),
 		})
 		g.Expect(listErr).NotTo(gom.HaveOccurred(), "Should be able to list pods")
 		g.Expect(podList.Items).NotTo(gom.BeEmpty(), "Should have EPP pods")
@@ -411,8 +426,8 @@ func TestPodScrapingCaching(ctx context.Context, config PodScrapingTestConfig, g
 			if cached != nil {
 				g.Expect(cached.IsExpired()).To(gom.BeFalse(), "Cache should not be expired immediately")
 			}
-			podList, listErr := config.K8sClient.CoreV1().Pods(config.InferencePoolNamespace).List(ctx, metav1.ListOptions{
-				LabelSelector: fmt.Sprintf("inferencepool=%s-epp", config.InferencePoolName),
+			podList, listErr := config.K8sClient.CoreV1().Pods(config.ServiceNamespace).List(ctx, metav1.ListOptions{
+				LabelSelector: metav1.FormatLabelSelector(&metav1.LabelSelector{MatchLabels: service.Spec.Selector}),
 			})
 			g.Expect(listErr).NotTo(gom.HaveOccurred(), "Should be able to list pods")
 			g.Expect(podList.Items).NotTo(gom.BeEmpty(), "Should have EPP pods")
@@ -426,9 +441,17 @@ func TestPodScrapingFromController(ctx context.Context, config PodScrapingTestCo
 		ginkgo.Skip("Skipping controller verification test - only needed for Kind")
 	}
 
+	// Get service to find selector
+	service, err := config.K8sClient.CoreV1().Services(config.ServiceNamespace).Get(
+		ctx,
+		config.ServiceName,
+		metav1.GetOptions{},
+	)
+	g.Expect(err).NotTo(gom.HaveOccurred(), "Service should exist")
+
 	// Verify pods exist and have IPs
-	podList, err := config.K8sClient.CoreV1().Pods(config.InferencePoolNamespace).List(ctx, metav1.ListOptions{
-		LabelSelector: fmt.Sprintf("inferencepool=%s-epp", config.InferencePoolName),
+	podList, err := config.K8sClient.CoreV1().Pods(config.ServiceNamespace).List(ctx, metav1.ListOptions{
+		LabelSelector: metav1.FormatLabelSelector(&metav1.LabelSelector{MatchLabels: service.Spec.Selector}),
 	})
 	g.Expect(err).NotTo(gom.HaveOccurred(), "Should be able to list pods")
 	g.Expect(podList.Items).NotTo(gom.BeEmpty(), "Should have EPP pods")
@@ -449,7 +472,7 @@ func TestPodScrapingFromController(ctx context.Context, config PodScrapingTestCo
 	g.Expect(testPod).NotTo(gom.BeNil(), "Should have at least one ready pod with IP")
 
 	// Get the Bearer token from the secret
-	secret, err := config.K8sClient.CoreV1().Secrets(config.InferencePoolNamespace).Get(
+	secret, err := config.K8sClient.CoreV1().Secrets(config.ServiceNamespace).Get(
 		ctx,
 		config.MetricsReaderSecretName,
 		metav1.GetOptions{},
@@ -477,8 +500,8 @@ func TestPodScrapingFromController(ctx context.Context, config PodScrapingTestCo
 // TestInClusterScraping verifies that metrics can actually be scraped from EPP pods when running inside the cluster.
 // This test creates a Job that runs inside the cluster and verifies end-to-end scraping works.
 func TestInClusterScraping(ctx context.Context, config PodScrapingTestConfig, g gom.Gomega) {
-	// Find EPP pods
-	pods, err := FindExistingEPPPods(ctx, config.K8sClient, config.InferencePoolNamespace, config.InferencePoolName)
+	// Find pods for the service
+	pods, err := FindExistingEPPPods(ctx, config.K8sClient, config.ServiceNamespace, config.ServiceName)
 	g.Expect(err).NotTo(gom.HaveOccurred(), "Should be able to find EPP pods")
 	g.Expect(pods).NotTo(gom.BeEmpty(), "Should have at least one EPP pod")
 
@@ -498,7 +521,7 @@ func TestInClusterScraping(ctx context.Context, config PodScrapingTestConfig, g 
 	g.Expect(testPod).NotTo(gom.BeNil(), "Should have at least one ready pod with IP")
 
 	// Get the Bearer token from the secret
-	secret, err := config.K8sClient.CoreV1().Secrets(config.InferencePoolNamespace).Get(
+	secret, err := config.K8sClient.CoreV1().Secrets(config.ServiceNamespace).Get(
 		ctx,
 		config.MetricsReaderSecretName,
 		metav1.GetOptions{},
@@ -512,7 +535,7 @@ func TestInClusterScraping(ctx context.Context, config PodScrapingTestConfig, g 
 	_, err = CreateInClusterScrapingTestJob(
 		ctx,
 		config.K8sClient,
-		config.InferencePoolNamespace,
+		config.ServiceNamespace,
 		jobName,
 		testPod.Status.PodIP,
 		config.MetricsPort,
@@ -524,7 +547,7 @@ func TestInClusterScraping(ctx context.Context, config PodScrapingTestConfig, g 
 
 	// Cleanup job after test
 	defer func() {
-		_ = config.K8sClient.BatchV1().Jobs(config.InferencePoolNamespace).Delete(ctx, jobName, metav1.DeleteOptions{
+		_ = config.K8sClient.BatchV1().Jobs(config.ServiceNamespace).Delete(ctx, jobName, metav1.DeleteOptions{
 			PropagationPolicy: func() *metav1.DeletionPropagation {
 				p := metav1.DeletePropagationForeground
 				return &p
@@ -535,25 +558,25 @@ func TestInClusterScraping(ctx context.Context, config PodScrapingTestConfig, g 
 	// Wait for job to complete
 	_, _ = fmt.Fprintf(ginkgo.GinkgoWriter, "Waiting for in-cluster scraping test job to complete...\n")
 	gom.Eventually(func(g gom.Gomega) {
-		currentJob, err := config.K8sClient.BatchV1().Jobs(config.InferencePoolNamespace).Get(ctx, jobName, metav1.GetOptions{})
+		currentJob, err := config.K8sClient.BatchV1().Jobs(config.ServiceNamespace).Get(ctx, jobName, metav1.GetOptions{})
 		g.Expect(err).NotTo(gom.HaveOccurred(), "Should be able to get job")
 		g.Expect(currentJob.Status.Succeeded+currentJob.Status.Failed).To(gom.BeNumerically(">", 0), "Job should complete")
 	}, 2*time.Minute, 5*time.Second).Should(gom.Succeed())
 
 	// Verify job succeeded
-	finalJob, err := config.K8sClient.BatchV1().Jobs(config.InferencePoolNamespace).Get(ctx, jobName, metav1.GetOptions{})
+	finalJob, err := config.K8sClient.BatchV1().Jobs(config.ServiceNamespace).Get(ctx, jobName, metav1.GetOptions{})
 	g.Expect(err).NotTo(gom.HaveOccurred(), "Should be able to get final job status")
 	g.Expect(finalJob.Status.Succeeded).To(gom.BeNumerically(">=", 1), "Job should succeed")
 
 	// Get job logs to verify scraping worked
-	podList, err := config.K8sClient.CoreV1().Pods(config.InferencePoolNamespace).List(ctx, metav1.ListOptions{
+	podList, err := config.K8sClient.CoreV1().Pods(config.ServiceNamespace).List(ctx, metav1.ListOptions{
 		LabelSelector: fmt.Sprintf("job-name=%s", jobName),
 	})
 	g.Expect(err).NotTo(gom.HaveOccurred(), "Should be able to list job pods")
 	g.Expect(podList.Items).NotTo(gom.BeEmpty(), "Should have job pod")
 
 	testPodName := podList.Items[0].Name
-	logsReq := config.K8sClient.CoreV1().Pods(config.InferencePoolNamespace).GetLogs(testPodName, &corev1.PodLogOptions{
+	logsReq := config.K8sClient.CoreV1().Pods(config.ServiceNamespace).GetLogs(testPodName, &corev1.PodLogOptions{
 		Container: "scraper",
 	})
 	logBytes, err := logsReq.DoRaw(ctx)
@@ -633,18 +656,16 @@ func CreateInClusterScrapingTestJob(
 	return createdJob, nil
 }
 
-// FindExistingEPPPods finds existing EPP pods in the cluster
+// FindExistingEPPPods finds existing pods for a service in the cluster
 func FindExistingEPPPods(
 	ctx context.Context,
 	k8sClient *kubernetes.Clientset,
-	namespace, inferencePoolName string,
+	namespace, serviceName string,
 ) ([]corev1.Pod, error) {
-	serviceName := fmt.Sprintf("%s-epp", inferencePoolName)
-
 	// Get service to find selector
 	service, err := k8sClient.CoreV1().Services(namespace).Get(ctx, serviceName, metav1.GetOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get EPP service: %w", err)
+		return nil, fmt.Errorf("failed to get service: %w", err)
 	}
 
 	// List pods using service selector

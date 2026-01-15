@@ -1,7 +1,7 @@
 // Package pod provides the Pod scraping metrics source implementation.
 //
 // This package implements the PodScrapingSource that scrapes metrics directly
-// from EPP pods via HTTP requests to their /metrics endpoints.
+// from pods via HTTP requests to their /metrics endpoints.
 package pod
 
 import (
@@ -24,7 +24,7 @@ import (
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
 )
 
-// PodScrapingSource implements MetricsSource for direct EPP pod scraping.
+// PodScrapingSource implements MetricsSource for direct pod scraping.
 type PodScrapingSource struct {
 	config     PodScrapingSourceConfig
 	k8sClient  client.Client
@@ -41,9 +41,12 @@ func NewPodScrapingSource(
 	k8sClient client.Client,
 	config PodScrapingSourceConfig,
 ) (*PodScrapingSource, error) {
-	// Auto-discover service name if not provided
+	// Validate required fields
 	if config.ServiceName == "" {
-		config.ServiceName = discoverServiceName(config.InferencePoolName)
+		return nil, fmt.Errorf("ServiceName is required")
+	}
+	if config.ServiceNamespace == "" {
+		return nil, fmt.Errorf("ServiceNamespace is required")
 	}
 
 	// Set defaults
@@ -52,9 +55,6 @@ func NewPodScrapingSource(
 	}
 	if config.MetricsScheme == "" {
 		config.MetricsScheme = "http"
-	}
-	if config.MetricsReaderSecretName == "" {
-		config.MetricsReaderSecretName = "inference-gateway-sa-metrics-reader-secret"
 	}
 	if config.MetricsReaderSecretKey == "" {
 		config.MetricsReaderSecretKey = "token"
@@ -88,18 +88,10 @@ func NewPodScrapingSource(
 		Type:        source.QueryTypeMetricName,
 		Template:    "all_metrics",
 		Params:      []string{},
-		Description: "All metrics from EPP pods",
+		Description: "All metrics from pods scraped",
 	})
 
 	return podSource, nil
-}
-
-// discoverServiceName derives service name from InferencePool name.
-// NOTE: This is a fallback mechanism. The scale-from-zero engine should provide
-// the ServiceName directly in PodScrapingSourceConfig. This pattern-based
-// discovery is only used if ServiceName is not explicitly set by the engine.
-func discoverServiceName(inferencePoolName string) string {
-	return fmt.Sprintf("%s-epp", inferencePoolName)
 }
 
 // QueryList returns the query registry for this source.
@@ -166,32 +158,40 @@ func (p *PodScrapingSource) Get(queryName string, params map[string]string) *sou
 	return cached
 }
 
-// discoverPods finds all Ready pods for the EPP service.
-func (p *PodScrapingSource) discoverPods(ctx context.Context) ([]corev1.Pod, error) {
+// discoverPods finds all Ready pods for the service.
+func (p *PodScrapingSource) discoverPods(ctx context.Context) ([]*corev1.Pod, error) {
 	// Get Service
 	svc := &corev1.Service{}
 	svcKey := types.NamespacedName{
 		Name:      p.config.ServiceName,
-		Namespace: p.config.InferencePoolNamespace,
+		Namespace: p.config.ServiceNamespace,
 	}
 	if err := p.k8sClient.Get(ctx, svcKey, svc); err != nil {
 		return nil, fmt.Errorf("failed to get service %s: %w", svcKey, err)
+	}
+
+	// Check if service has a selector (headless services may not have one)
+	if len(svc.Spec.Selector) == 0 {
+		// Service has no selector - cannot discover pods via selector
+		// Return empty list (no error) as this is a valid configuration
+		return []*corev1.Pod{}, nil
 	}
 
 	// List pods using Service selector
 	podList := &corev1.PodList{}
 	selector := labels.SelectorFromSet(svc.Spec.Selector)
 	if err := p.k8sClient.List(ctx, podList, &client.ListOptions{
-		Namespace:     p.config.InferencePoolNamespace,
+		Namespace:     p.config.ServiceNamespace,
 		LabelSelector: selector,
 	}); err != nil {
 		return nil, fmt.Errorf("failed to list pods: %w", err)
 	}
 
 	// Filter to Ready pods only
-	readyPods := []corev1.Pod{}
-	for _, pod := range podList.Items {
-		if isPodReady(&pod) {
+	readyPods := []*corev1.Pod{}
+	for i := range podList.Items {
+		pod := &podList.Items[i]
+		if isPodReady(pod) {
 			readyPods = append(readyPods, pod)
 		}
 	}
@@ -210,7 +210,7 @@ func isPodReady(pod *corev1.Pod) bool {
 }
 
 // scrapeAllPods scrapes metrics from all pods concurrently.
-func (p *PodScrapingSource) scrapeAllPods(ctx context.Context, pods []corev1.Pod) map[string]*source.MetricResult {
+func (p *PodScrapingSource) scrapeAllPods(ctx context.Context, pods []*corev1.Pod) map[string]*source.MetricResult {
 	logger := ctrl.LoggerFrom(ctx)
 	results := make(map[string]*source.MetricResult)
 	var resultsMu sync.Mutex
@@ -221,13 +221,13 @@ func (p *PodScrapingSource) scrapeAllPods(ctx context.Context, pods []corev1.Pod
 
 	for _, pod := range pods {
 		wg.Add(1)
-		go func(pod corev1.Pod) {
+		go func(pod *corev1.Pod) {
 			defer wg.Done()
 
 			sem <- struct{}{}        // Acquire
 			defer func() { <-sem }() // Release
 
-			result, err := p.scrapePodMetrics(ctx, &pod)
+			result, err := p.scrapePodMetrics(ctx, pod)
 			if err != nil {
 				logger.V(logging.VERBOSE).Error(err, "Failed to scrape pod",
 					"pod", pod.Name)
@@ -267,12 +267,14 @@ func (p *PodScrapingSource) scrapePodMetrics(ctx context.Context, pod *corev1.Po
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	// Add authentication header
-	token, err := p.getAuthToken(ctx)
+	// Add authentication header if available (authentication is optional)
+	token, useAuth, err := p.getAuthToken(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get auth token: %w", err)
 	}
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
+	if useAuth {
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
+	}
 
 	// Execute request
 	resp, err := p.httpClient.Do(req)
@@ -292,29 +294,39 @@ func (p *PodScrapingSource) scrapePodMetrics(ctx context.Context, pod *corev1.Po
 }
 
 // getAuthToken retrieves the authentication token.
-func (p *PodScrapingSource) getAuthToken(ctx context.Context) (string, error) {
+// Returns (token, useAuth, error) where useAuth indicates if authentication should be used.
+// Authentication is optional - if no token is configured or secret doesn't exist, useAuth will be false.
+func (p *PodScrapingSource) getAuthToken(ctx context.Context) (string, bool, error) {
 	// If explicit token provided, use it
 	if p.config.BearerToken != "" {
-		return p.config.BearerToken, nil
+		return p.config.BearerToken, true, nil
 	}
 
-	// Read from secret
+	// If no secret name configured, skip authentication
+	if p.config.MetricsReaderSecretName == "" {
+		return "", false, nil
+	}
+
+	// Try to read from secret
 	secret := &corev1.Secret{}
 	secretKey := types.NamespacedName{
 		Name:      p.config.MetricsReaderSecretName,
-		Namespace: p.config.InferencePoolNamespace,
+		Namespace: p.config.ServiceNamespace,
 	}
 
 	if err := p.k8sClient.Get(ctx, secretKey, secret); err != nil {
-		return "", fmt.Errorf("failed to get metrics reader secret: %w", err)
+		// Secret doesn't exist - treat authentication as optional
+		// Return no error, just indicate auth should not be used
+		return "", false, nil
 	}
 
 	tokenBytes, ok := secret.Data[p.config.MetricsReaderSecretKey]
 	if !ok {
-		return "", fmt.Errorf("token key %q not found in secret", p.config.MetricsReaderSecretKey)
+		// Token key not found - treat as optional, skip auth
+		return "", false, nil
 	}
 
-	return string(tokenBytes), nil
+	return string(tokenBytes), true, nil
 }
 
 // parsePrometheusMetrics parses Prometheus text format into MetricResult.

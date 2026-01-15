@@ -33,11 +33,11 @@ var _ = Describe("PodScrapingSource", func() {
 	})
 
 	Describe("NewPodScrapingSource", func() {
-		It("should create source with auto-discovered service name", func() {
+		It("should create source with provided service name", func() {
 			config := PodScrapingSourceConfig{
-				InferencePoolName:      "test-pool",
-				InferencePoolNamespace: "test-ns",
-				MetricsPort:            9090,
+				ServiceName:      "test-pool-epp",
+				ServiceNamespace: "test-ns",
+				MetricsPort:      9090,
 			}
 			source, err := NewPodScrapingSource(ctx, fakeClient.Build(), config)
 			Expect(err).NotTo(HaveOccurred())
@@ -45,29 +45,37 @@ var _ = Describe("PodScrapingSource", func() {
 			Expect(source.config.ServiceName).To(Equal("test-pool-epp"))
 		})
 
-		It("should use provided service name if set", func() {
+		It("should return error if ServiceName is empty", func() {
 			config := PodScrapingSourceConfig{
-				InferencePoolName:      "test-pool",
-				InferencePoolNamespace: "test-ns",
-				ServiceName:            "custom-service",
-				MetricsPort:            9090,
+				ServiceNamespace: "test-ns",
+				MetricsPort:      9090,
 			}
-			source, err := NewPodScrapingSource(ctx, fakeClient.Build(), config)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(source.config.ServiceName).To(Equal("custom-service"))
+			_, err := NewPodScrapingSource(ctx, fakeClient.Build(), config)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("ServiceName is required"))
+		})
+
+		It("should return error if ServiceNamespace is empty", func() {
+			config := PodScrapingSourceConfig{
+				ServiceName: "test-pool-epp",
+				MetricsPort: 9090,
+			}
+			_, err := NewPodScrapingSource(ctx, fakeClient.Build(), config)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("ServiceNamespace is required"))
 		})
 
 		It("should set defaults for missing config values", func() {
 			config := PodScrapingSourceConfig{
-				InferencePoolName:      "test-pool",
-				InferencePoolNamespace: "test-ns",
-				MetricsPort:            9090,
+				ServiceName:      "test-pool-epp",
+				ServiceNamespace: "test-ns",
+				MetricsPort:      9090,
 			}
 			source, err := NewPodScrapingSource(ctx, fakeClient.Build(), config)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(source.config.MetricsPath).To(Equal("/metrics"))
 			Expect(source.config.MetricsScheme).To(Equal("http"))
-			Expect(source.config.MetricsReaderSecretName).To(Equal("inference-gateway-sa-metrics-reader-secret"))
+			Expect(source.config.MetricsReaderSecretName).To(BeEmpty(), "MetricsReaderSecretName should be empty by default (no EPP-specific default)")
 			Expect(source.config.MetricsReaderSecretKey).To(Equal("token"))
 			Expect(source.config.ScrapeTimeout).To(Equal(5 * time.Second))
 			Expect(source.config.MaxConcurrentScrapes).To(Equal(10))
@@ -75,16 +83,15 @@ var _ = Describe("PodScrapingSource", func() {
 		})
 	})
 
-	Describe("service name discovery", func() {
-		It("should auto-discover service name when not provided", func() {
+	Describe("service name validation", func() {
+		It("should require service name to be provided", func() {
 			config := PodScrapingSourceConfig{
-				InferencePoolName:      "gaie-workload-autoscaler",
-				InferencePoolNamespace: "test-ns",
-				MetricsPort:            9090,
+				ServiceNamespace: "test-ns",
+				MetricsPort:      9090,
 			}
-			source, err := NewPodScrapingSource(ctx, fakeClient.Build(), config)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(source.config.ServiceName).To(Equal("gaie-workload-autoscaler-epp"))
+			_, err := NewPodScrapingSource(ctx, fakeClient.Build(), config)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("ServiceName is required"))
 		})
 	})
 
@@ -217,10 +224,9 @@ var _ = Describe("PodScrapingSource", func() {
 				Build()
 
 			config := PodScrapingSourceConfig{
-				InferencePoolName:      "test-pool",
-				InferencePoolNamespace: "test-ns",
-				ServiceName:            "test-pool-epp",
-				MetricsPort:            9090,
+				ServiceName:      "test-pool-epp",
+				ServiceNamespace: "test-ns",
+				MetricsPort:      9090,
 			}
 			source, err := NewPodScrapingSource(ctx, client, config)
 			Expect(err).NotTo(HaveOccurred())
@@ -236,10 +242,9 @@ var _ = Describe("PodScrapingSource", func() {
 			client := fakeClient.Build()
 
 			config := PodScrapingSourceConfig{
-				InferencePoolName:      "test-pool",
-				InferencePoolNamespace: "test-ns",
-				ServiceName:            "nonexistent-service",
-				MetricsPort:            9090,
+				ServiceName:      "nonexistent-service",
+				ServiceNamespace: "test-ns",
+				MetricsPort:      9090,
 			}
 			source, err := NewPodScrapingSource(ctx, client, config)
 			Expect(err).NotTo(HaveOccurred())
@@ -255,10 +260,9 @@ var _ = Describe("PodScrapingSource", func() {
 				Build()
 
 			config := PodScrapingSourceConfig{
-				InferencePoolName:      "test-pool",
-				InferencePoolNamespace: "test-ns",
-				ServiceName:            "test-pool-epp",
-				MetricsPort:            9090,
+				ServiceName:      "test-pool-epp",
+				ServiceNamespace: "test-ns",
+				MetricsPort:      9090,
 			}
 			source, err := NewPodScrapingSource(ctx, client, config)
 			Expect(err).NotTo(HaveOccurred())
@@ -266,6 +270,65 @@ var _ = Describe("PodScrapingSource", func() {
 			pods, err := source.discoverPods(ctx)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(pods).To(BeEmpty())
+		})
+
+		It("should return empty list if service has no selector (headless service)", func() {
+			// Create a service without selector (headless service)
+			headlessService := &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "headless-service",
+					Namespace: "test-ns",
+				},
+				Spec: corev1.ServiceSpec{
+					Selector:  map[string]string{}, // Empty selector
+					ClusterIP: "None",              // Headless service
+				},
+			}
+
+			client := fakeClient.
+				WithObjects(headlessService).
+				Build()
+
+			config := PodScrapingSourceConfig{
+				ServiceName:      "headless-service",
+				ServiceNamespace: "test-ns",
+				MetricsPort:      9090,
+			}
+			source, err := NewPodScrapingSource(ctx, client, config)
+			Expect(err).NotTo(HaveOccurred())
+
+			pods, err := source.discoverPods(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(pods).To(BeEmpty(), "Should return empty list for service without selector")
+		})
+
+		It("should return empty list if service selector is nil", func() {
+			// Create a service with nil selector
+			serviceWithNilSelector := &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "nil-selector-service",
+					Namespace: "test-ns",
+				},
+				Spec: corev1.ServiceSpec{
+					Selector: nil, // Nil selector
+				},
+			}
+
+			client := fakeClient.
+				WithObjects(serviceWithNilSelector).
+				Build()
+
+			config := PodScrapingSourceConfig{
+				ServiceName:      "nil-selector-service",
+				ServiceNamespace: "test-ns",
+				MetricsPort:      9090,
+			}
+			source, err := NewPodScrapingSource(ctx, client, config)
+			Expect(err).NotTo(HaveOccurred())
+
+			pods, err := source.discoverPods(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(pods).To(BeEmpty(), "Should return empty list for service with nil selector")
 		})
 	})
 
@@ -290,15 +353,17 @@ var _ = Describe("PodScrapingSource", func() {
 				Build()
 
 			config := PodScrapingSourceConfig{
-				InferencePoolName:      "test-pool",
-				InferencePoolNamespace: "test-ns",
-				MetricsPort:            9090,
+				ServiceName:             "test-pool-epp",
+				ServiceNamespace:        "test-ns",
+				MetricsPort:             9090,
+				MetricsReaderSecretName: "inference-gateway-sa-metrics-reader-secret",
 			}
 			source, err := NewPodScrapingSource(ctx, client, config)
 			Expect(err).NotTo(HaveOccurred())
 
-			token, err := source.getAuthToken(ctx)
+			token, useAuth, err := source.getAuthToken(ctx)
 			Expect(err).NotTo(HaveOccurred())
+			Expect(useAuth).To(BeTrue())
 			Expect(token).To(Equal("test-bearer-token"))
 		})
 
@@ -306,52 +371,74 @@ var _ = Describe("PodScrapingSource", func() {
 			client := fakeClient.Build()
 
 			config := PodScrapingSourceConfig{
-				InferencePoolName:      "test-pool",
-				InferencePoolNamespace: "test-ns",
-				BearerToken:            "explicit-token",
-				MetricsPort:            9090,
+				ServiceName:      "test-pool-epp",
+				ServiceNamespace: "test-ns",
+				BearerToken:      "explicit-token",
+				MetricsPort:      9090,
 			}
 			source, err := NewPodScrapingSource(ctx, client, config)
 			Expect(err).NotTo(HaveOccurred())
 
-			token, err := source.getAuthToken(ctx)
+			token, useAuth, err := source.getAuthToken(ctx)
 			Expect(err).NotTo(HaveOccurred())
+			Expect(useAuth).To(BeTrue())
 			Expect(token).To(Equal("explicit-token"))
 		})
 
-		It("should return error if secret not found", func() {
+		It("should skip authentication if secret not found (optional auth)", func() {
 			client := fakeClient.Build()
 
 			config := PodScrapingSourceConfig{
-				InferencePoolName:      "test-pool",
-				InferencePoolNamespace: "test-ns",
-				MetricsPort:            9090,
+				ServiceName:      "test-pool-epp",
+				ServiceNamespace: "test-ns",
+				MetricsPort:      9090,
 			}
 			source, err := NewPodScrapingSource(ctx, client, config)
 			Expect(err).NotTo(HaveOccurred())
 
-			_, err = source.getAuthToken(ctx)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("failed to get metrics reader secret"))
+			token, useAuth, err := source.getAuthToken(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(useAuth).To(BeFalse())
+			Expect(token).To(BeEmpty())
 		})
 
-		It("should return error if token key not found in secret", func() {
+		It("should skip authentication if token key not found in secret (optional auth)", func() {
 			secret.Data = map[string][]byte{} // Empty secret
 			client := fakeClient.
 				WithObjects(secret).
 				Build()
 
 			config := PodScrapingSourceConfig{
-				InferencePoolName:      "test-pool",
-				InferencePoolNamespace: "test-ns",
-				MetricsPort:            9090,
+				ServiceName:             "test-pool-epp",
+				ServiceNamespace:        "test-ns",
+				MetricsPort:             9090,
+				MetricsReaderSecretName: "inference-gateway-sa-metrics-reader-secret",
 			}
 			source, err := NewPodScrapingSource(ctx, client, config)
 			Expect(err).NotTo(HaveOccurred())
 
-			_, err = source.getAuthToken(ctx)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("token key"))
+			token, useAuth, err := source.getAuthToken(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(useAuth).To(BeFalse())
+			Expect(token).To(BeEmpty())
+		})
+
+		It("should skip authentication if MetricsReaderSecretName is empty", func() {
+			client := fakeClient.Build()
+
+			config := PodScrapingSourceConfig{
+				ServiceName:             "test-pool-epp",
+				ServiceNamespace:        "test-ns",
+				MetricsPort:             9090,
+				MetricsReaderSecretName: "", // Empty - no auth
+			}
+			source, err := NewPodScrapingSource(ctx, client, config)
+			Expect(err).NotTo(HaveOccurred())
+
+			token, useAuth, err := source.getAuthToken(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(useAuth).To(BeFalse())
+			Expect(token).To(BeEmpty())
 		})
 	})
 
@@ -360,9 +447,9 @@ var _ = Describe("PodScrapingSource", func() {
 
 		BeforeEach(func() {
 			config := PodScrapingSourceConfig{
-				InferencePoolName:      "test-pool",
-				InferencePoolNamespace: "test-ns",
-				MetricsPort:            9090,
+				ServiceName:      "test-pool-epp",
+				ServiceNamespace: "test-ns",
+				MetricsPort:      9090,
 			}
 			var err error
 			source, err = NewPodScrapingSource(ctx, fakeClient.Build(), config)
@@ -567,14 +654,13 @@ vllm_num_requests_waiting{namespace="test-ns"} 3
 				Build()
 
 			config1 := PodScrapingSourceConfig{
-				InferencePoolName:      "test-pool",
-				InferencePoolNamespace: "test-ns",
-				ServiceName:            "test-pool-epp",
-				MetricsPort:            port1,
-				MetricsPath:            "/metrics",
-				MetricsScheme:          "http",
-				ScrapeTimeout:          5 * time.Second,
-				MaxConcurrentScrapes:   10,
+				ServiceName:          "test-pool-epp",
+				ServiceNamespace:     "test-ns",
+				MetricsPort:          port1,
+				MetricsPath:          "/metrics",
+				MetricsScheme:        "http",
+				ScrapeTimeout:        5 * time.Second,
+				MaxConcurrentScrapes: 10,
 			}
 			source1, err := NewPodScrapingSource(ctx, client1, config1)
 			Expect(err).NotTo(HaveOccurred())
@@ -617,11 +703,10 @@ vllm_num_requests_waiting{namespace="test-ns"} 3
 				Build()
 
 			config := PodScrapingSourceConfig{
-				InferencePoolName:      "test-pool",
-				InferencePoolNamespace: "test-ns",
-				ServiceName:            "test-pool-epp",
-				MetricsPort:            9090,
-				ScrapeTimeout:          1 * time.Second, // Short timeout
+				ServiceName:      "test-pool-epp",
+				ServiceNamespace: "test-ns",
+				MetricsPort:      9090,
+				ScrapeTimeout:    1 * time.Second, // Short timeout
 			}
 			source, err := NewPodScrapingSource(ctx, client, config)
 			Expect(err).NotTo(HaveOccurred())
@@ -686,11 +771,11 @@ vllm_num_requests_waiting{namespace="test-ns"} 3
 				Build()
 
 			config := PodScrapingSourceConfig{
-				InferencePoolName:      "test-pool",
-				InferencePoolNamespace: "test-ns",
-				ServiceName:            "test-pool-epp",
-				MetricsPort:            port,
-				ScrapeTimeout:          1 * time.Second,
+				ServiceName:             "test-pool-epp",
+				ServiceNamespace:        "test-ns",
+				MetricsPort:             port,
+				ScrapeTimeout:           1 * time.Second,
+				MetricsReaderSecretName: "inference-gateway-sa-metrics-reader-secret",
 			}
 			source, err := NewPodScrapingSource(ctx, client, config)
 			Expect(err).NotTo(HaveOccurred())
@@ -709,9 +794,9 @@ vllm_num_requests_waiting{namespace="test-ns"} 3
 
 		BeforeEach(func() {
 			config := PodScrapingSourceConfig{
-				InferencePoolName:      "test-pool",
-				InferencePoolNamespace: "test-ns",
-				MetricsPort:            9090,
+				ServiceName:      "test-pool-epp",
+				ServiceNamespace: "test-ns",
+				MetricsPort:      9090,
 			}
 			var err error
 			source, err = NewPodScrapingSource(ctx, fakeClient.Build(), config)
@@ -766,10 +851,10 @@ vllm_num_requests_waiting{namespace="test-ns"} 3
 
 		BeforeEach(func() {
 			config := PodScrapingSourceConfig{
-				InferencePoolName:      "test-pool",
-				InferencePoolNamespace: "test-ns",
-				MetricsPort:            9090,
-				DefaultTTL:             1 * time.Hour, // Long TTL for testing
+				ServiceName:      "test-pool-epp",
+				ServiceNamespace: "test-ns",
+				MetricsPort:      9090,
+				DefaultTTL:       1 * time.Hour, // Long TTL for testing
 			}
 			var err error
 			source, err = NewPodScrapingSource(ctx, fakeClient.Build(), config)
@@ -818,9 +903,9 @@ vllm_num_requests_waiting{namespace="test-ns"} 3
 	Describe("QueryList", func() {
 		It("should return query registry", func() {
 			config := PodScrapingSourceConfig{
-				InferencePoolName:      "test-pool",
-				InferencePoolNamespace: "test-ns",
-				MetricsPort:            9090,
+				ServiceName:      "test-pool-epp",
+				ServiceNamespace: "test-ns",
+				MetricsPort:      9090,
 			}
 			source, err := NewPodScrapingSource(ctx, fakeClient.Build(), config)
 			Expect(err).NotTo(HaveOccurred())

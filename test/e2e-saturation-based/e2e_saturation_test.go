@@ -1086,7 +1086,8 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Multiple 
 			// Verify EPP pods exist and are Ready
 			By("verifying EPP pods are Ready")
 			Eventually(func(g Gomega) {
-				pods, err := utils.FindExistingEPPPods(ctx, k8sClient, testNamespace, testInferencePoolName)
+				eppServiceName := fmt.Sprintf("%s-epp", testInferencePoolName)
+				pods, err := utils.FindExistingEPPPods(ctx, k8sClient, testNamespace, eppServiceName)
 				g.Expect(err).NotTo(HaveOccurred(), "Should be able to find EPP pods")
 
 				readyCount := 0
@@ -1120,8 +1121,8 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Multiple 
 			utils.DescribePodScrapingSourceTests(func() utils.PodScrapingTestConfig {
 				return utils.PodScrapingTestConfig{
 					Environment:             "kind",
-					InferencePoolName:       testInferencePoolName,
-					InferencePoolNamespace:  testNamespace,
+					ServiceName:             fmt.Sprintf("%s-epp", testInferencePoolName),
+					ServiceNamespace:        testNamespace,
 					MetricsPort:             9090,
 					MetricsPath:             "/metrics",
 					MetricsScheme:           "http",
