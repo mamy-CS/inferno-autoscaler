@@ -31,6 +31,7 @@ rules:
   - ""
   resources:
   - pods
+  - services
   verbs:
   - get
   - list
@@ -100,4 +101,14 @@ rules:
   verbs:
   - create
   - patch
+- apiGroups:
+  - inference.networking.x-k8s.io
+  - inference.networking.k8s.io
+  resources:
+  - inferencepools
+  verbs:
+  - get
+  - watch
+  - list
+
 {{- end }}
