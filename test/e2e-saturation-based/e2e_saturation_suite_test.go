@@ -106,16 +106,9 @@ var _ = BeforeSuite(func() {
 	}, 2*time.Minute, 1*time.Second).Should(Succeed())
 
 	// Verify configuration for saturation-based mode
-	By("verifying ConfigMap has saturation-only mode configured")
+	By("verifying ConfigMap is accessible")
 	cm, err := k8sClient.CoreV1().ConfigMaps(controllerNamespace).Get(context.Background(), WVAConfigMapName, metav1.GetOptions{})
 	Expect(err).NotTo(HaveOccurred(), "Should be able to get ConfigMap: "+WVAConfigMapName)
-
-	// Verify saturation-only mode is set
-	flagHybridOptimization := cm.Data["EXPERIMENTAL_HYBRID_OPTIMIZATION"]
-	Expect(flagHybridOptimization).To(Or(Equal("off"), Equal("")), fmt.Sprintf("EXPERIMENTAL_HYBRID_OPTIMIZATION should be 'off' or unset (default) for saturation-based tests, got: %s", flagHybridOptimization))
-
-	_, _ = fmt.Fprintf(GinkgoWriter, "saturation-based mode verified: EXPERIMENTAL_HYBRID_OPTIMIZATION=%s\n",
-		cm.Data["EXPERIMENTAL_HYBRID_OPTIMIZATION"])
 
 	if cm.Data["WVA_SCALE_TO_ZERO"] == "true" {
 		MinimumReplicas = 0

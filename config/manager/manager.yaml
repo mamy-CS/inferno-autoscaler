@@ -92,11 +92,6 @@ spec:
               configMapKeyRef:
                 name: variantautoscaling-config
                 key: WVA_SCALE_TO_ZERO
-          - name: EXPERIMENTAL_HYBRID_OPTIMIZATION
-            valueFrom:
-              configMapKeyRef:
-                name: variantautoscaling-config
-                key: EXPERIMENTAL_HYBRID_OPTIMIZATION
           - name: WVA_LIMITED_MODE
             valueFrom:
               configMapKeyRef:

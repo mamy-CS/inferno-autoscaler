@@ -92,11 +92,6 @@ spec:
               configMapKeyRef:
                 name: {{ include "workload-variant-autoscaler.fullname" . }}-variantautoscaling-config
                 key: WVA_SCALE_TO_ZERO
-          - name:  EXPERIMENTAL_HYBRID_OPTIMIZATION
-            valueFrom:
-              configMapKeyRef:
-                name: {{ include "workload-variant-autoscaler.fullname" . }}-variantautoscaling-config
-                key:  EXPERIMENTAL_HYBRID_OPTIMIZATION
           - name: WVA_LIMITED_MODE
             value: {{ .Values.wva.limitedMode | quote }}
           - name: WVA_NODE_SELECTOR
