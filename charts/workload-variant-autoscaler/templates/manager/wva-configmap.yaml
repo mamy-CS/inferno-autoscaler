@@ -33,9 +33,6 @@ data:
   # Option to scale variants to zero replicas (default: false)
   WVA_SCALE_TO_ZERO: {{ .Values.wva.scaleToZero | default "false" | quote }}
 
-  # Option to use experimental hybrid optimization (default: false)
-  EXPERIMENTAL_HYBRID_OPTIMIZATION: {{ .Values.wva.experimentalHybridOptimization | default "off" | quote }}
-
   # Prometheus metrics cache configuration
   # Each collector (Prometheus, EPP, etc.) has its own cache configuration
   # Enable/disable Prometheus metrics caching (default: "true") - this is for debugging purposes, can be removed in the future

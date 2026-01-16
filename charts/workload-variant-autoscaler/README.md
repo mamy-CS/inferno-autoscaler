@@ -30,7 +30,6 @@ Helm chart for Workload-Variant-Autoscaler (WVA) - GPU-aware autoscaler for LLM 
 | vllmService.scheme | string | `"http"` |  |
 | wva.controllerInstance | string | `""` | Controller instance label for multi-controller isolation. When set, adds `controller_instance` label to all metrics and filters VariantAutoscaling resources by matching label. Use for parallel testing or multi-tenant environments. See [Multi-Controller Isolation](../../docs/user-guide/multi-controller-isolation.md) |
 | wva.enabled | bool | `true` |  |
-| wva.experimentalHybridOptimization | enum | `off` | supports on, off, and model-only |
 | wva.image.repository | string | `"ghcr.io/llm-d-incubation/workload-variant-autoscaler"` |  |
 | wva.image.tag | string | `"latest"` |  |
 | wva.imagePullPolicy | string | `"Always"` |  |
