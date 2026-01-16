@@ -36,7 +36,7 @@ var (
 	// Optional Environment Variables:
 	// - CERT_MANAGER_INSTALL_SKIP=true: Skips CertManager installation during test setup.
 	// - IMAGE_BUILD_SKIP=true: Skips building the WVA docker image during test setup.
-	// - DEPLOY_INFRA_SKIP=true: Skips deploying the WVA controller manager during test setup.
+	// - INFRA_SETUP_SKIP=true: Skips deploying the WVA controller manager during test setup.
 	// These variables are useful if CertManager is already installed, the image is already built,
 	// or the controller is already deployed, avoiding re-installation and conflicts.
 	skipCertManagerInstall = os.Getenv("CERT_MANAGER_INSTALL_SKIP") == "true"
@@ -77,7 +77,7 @@ var _ = BeforeSuite(func() {
 		_, err = utils.Run(cmd)
 		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the manager(Operator) image")
 	} else {
-		_, _ = fmt.Fprintf(GinkgoWriter, "Skipping WVA image build (WVA_IMAGE_BUILD_SKIP=true)\n")
+		_, _ = fmt.Fprintf(GinkgoWriter, "Skipping WVA image build (IMAGE_BUILD_SKIP=true)\n")
 	}
 
 	By("exporting environment variables for deployment")
