@@ -35,9 +35,14 @@ import (
 var (
 	// Optional Environment Variables:
 	// - CERT_MANAGER_INSTALL_SKIP=true: Skips CertManager installation during test setup.
-	// These variables are useful if CertManager is already installed, avoiding
-	// re-installation and conflicts.
+	// - IMAGE_BUILD_SKIP=true: Skips building the WVA docker image during test setup.
+	// - INFRA_SETUP_SKIP=true: Skips deploying the WVA controller manager during test setup.
+	// These variables are useful if CertManager is already installed, the image is already built,
+	// or the controller is already deployed, avoiding re-installation and conflicts.
 	skipCertManagerInstall = os.Getenv("CERT_MANAGER_INSTALL_SKIP") == "true"
+	skipImageBuild         = os.Getenv("IMAGE_BUILD_SKIP") == "true"
+	skipInfraSetup         = os.Getenv("INFRA_SETUP_SKIP") == "true"
+	skipInfraTeardown      = os.Getenv("INFRA_TEARDOWN_SKIP") == "true"
 	// isCertManagerAlreadyInstalled will be set true when CertManager CRDs be found on the cluster
 	isCertManagerAlreadyInstalled = false
 
@@ -52,6 +57,8 @@ const (
 	maximumAvailableGPUs = 4
 	numNodes             = 3
 	gpuTypes             = "mix"
+
+	kindClusterName = "wva-gpu-cluster"
 )
 
 // TestSaturationE2E runs the end-to-end (e2e) test suite for saturation-based (saturation-based) mode.
@@ -63,19 +70,38 @@ func TestSaturationE2E(t *testing.T) {
 }
 
 var _ = BeforeSuite(func() {
-	By("building the manager(Operator) image")
-	cmd := exec.Command("make", "docker-build", fmt.Sprintf("IMG=%s", projectImage))
-	_, err := utils.Run(cmd)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the manager(Operator) image")
+	var err error
+	if !skipImageBuild {
+		By("building the manager(Operator) image")
+		cmd := exec.Command("make", "docker-build", fmt.Sprintf("IMG=%s", projectImage))
+		_, err = utils.Run(cmd)
+		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the manager(Operator) image")
+	} else {
+		_, _ = fmt.Fprintf(GinkgoWriter, "Skipping WVA image build (IMAGE_BUILD_SKIP=true)\n")
+	}
 
 	By("exporting environment variables for deployment")
 	utils.SetupTestEnvironment(projectImage, numNodes, maximumAvailableGPUs, gpuTypes)
 
 	// Deploy llm-d and workload-variant-autoscaler on the Kind cluster
-	By("deploying Workload Variant Autoscaler on Kind")
-	launchCmd := exec.Command("make", "deploy-wva-emulated-on-kind", fmt.Sprintf("IMG=%s", projectImage))
-	_, err = utils.Run(launchCmd)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to install llm-d and workload-variant-autoscaler")
+	if !skipInfraSetup {
+		By("deploying Workload Variant Autoscaler on Kind")
+		launchCmd := exec.Command("make", "deploy-wva-emulated-on-kind", fmt.Sprintf("IMG=%s", projectImage))
+		_, err = utils.Run(launchCmd)
+		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to install llm-d and workload-variant-autoscaler")
+	} else {
+		_, _ = fmt.Fprintf(GinkgoWriter, "Skipping WVA deployment (INFRA_SETUP_SKIP=true)\n")
+
+		// If we built a new image but skipped deployment, load the new image and restart pods
+		if !skipImageBuild {
+			By("loading new image into Kind cluster")
+			loadCmd := exec.Command("kind", "load", "docker-image", projectImage, "--name", kindClusterName)
+			_, err = utils.Run(loadCmd)
+			ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load new image into Kind cluster")
+
+			_, _ = fmt.Fprintf(GinkgoWriter, "New image loaded into Kind cluster\n")
+		}
+	}
 
 	initializeK8sClient()
 
@@ -132,8 +158,12 @@ queueSpareTrigger: %.2f`, KvCacheThreshold, QueueLengthThreshold, kvSpareTrigger
 
 	_, _ = fmt.Fprintf(GinkgoWriter, "Updated saturation-scaling-config with relaxed thresholds: kvCache=%.2f, queue=%.2f, kvSpare=%.2f, queueSpare=%.2f\n", KvCacheThreshold, QueueLengthThreshold, kvSpareTrigger, queueSpareTrigger)
 
-	// Restart controller pods to pick up new saturation-scaling configuration
-	By("restarting controller-manager pods to load new saturation configuration")
+	// Restart controller pods to pick up new saturation-scaling configuration or new image
+	restartReason := "to load new saturation configuration"
+	if skipInfraSetup && !skipImageBuild {
+		restartReason = "to load new image and saturation configuration"
+	}
+	By(fmt.Sprintf("restarting controller-manager pods %s", restartReason))
 	podList, err := k8sClient.CoreV1().Pods(controllerNamespace).List(context.Background(), metav1.ListOptions{
 		LabelSelector: "app.kubernetes.io/name=workload-variant-autoscaler",
 	})
@@ -156,7 +186,7 @@ queueSpareTrigger: %.2f`, KvCacheThreshold, QueueLengthThreshold, kvSpareTrigger
 		}
 	}, 2*time.Minute, 1*time.Second).Should(Succeed())
 
-	_, _ = fmt.Fprintf(GinkgoWriter, "Controller pods restarted and running with new saturation configuration\n")
+	_, _ = fmt.Fprintf(GinkgoWriter, "Controller pods restarted and running with new configuration\n")
 
 	// The tests-e2e are intended to run on a temporary cluster that is created and destroyed for testing.
 	// To prevent errors when tests run in environments with CertManager already installed,
@@ -182,6 +212,12 @@ var _ = AfterSuite(func() {
 	}
 
 	// Destroy the Kind cluster
+	if skipInfraTeardown {
+		_, _ = fmt.Fprintf(GinkgoWriter, "Skipping Kind cluster teardown (INFRA_TEARDOWN_SKIP=true)\n")
+		return
+	}
+
+	By("destroying the Kind cluster")
 	cmd := exec.Command("bash", "deploy/kind-emulator/teardown.sh")
 	_, err := utils.Run(cmd)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to destroy Kind cluster")

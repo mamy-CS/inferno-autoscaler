@@ -141,8 +141,12 @@ undeploy-wva-on-k8s:
 
 # E2E tests on Kind cluster for saturation-based autoscaling
 # The default setup assumes Kind is pre-installed and builds/loads the Manager Docker image locally.
-# CertManager is installed by default; skip with:
-# - CERT_MANAGER_INSTALL_SKIP=true
+# Supports FOCUS and SKIP variables for ginkgo test filtering.
+# Setup options:
+# - CERT_MANAGER_INSTALL_SKIP=true: Skip certManager installation during test setup.
+# - IMAGE_BUILD_SKIP=true: Skip building the WVA docker image during test setup.
+# - INFRA_SETUP_SKIP=true: Skip setting up the llm-d and the WVA controller manager during test setup. Reload the docker image if necessary.
+# - INFRA_TEARDOWN_SKIP=true: Skip tearing down the Kind cluster during test teardown.
 .PHONY: test-e2e
 test-e2e: manifests generate fmt vet ## Run the e2e tests. Expected an isolated environment using Kind.
 	@command -v $(KIND) >/dev/null 2>&1 || { \
