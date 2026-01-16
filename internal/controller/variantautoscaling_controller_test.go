@@ -36,6 +36,7 @@ import (
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
 	testutils "github.com/llm-d-incubation/workload-variant-autoscaler/test/utils"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/test/utils/resources"
 )
 
 var _ = Describe("VariantAutoscalings Controller", func() {
@@ -60,7 +61,7 @@ var _ = Describe("VariantAutoscalings Controller", func() {
 			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, ns))).NotTo(HaveOccurred())
 
 			By("creating the required scale target ref deployment")
-			deployment := testutils.CreateLlmdSimDeployment("default", resourceName, "default-default", "default", "8000", 0, 0, 1)
+			deployment := resources.CreateLlmdSimDeployment("default", resourceName, "default-default", "default", "8000", 0, 0, 1)
 			Expect(k8sClient.Create(ctx, deployment)).To(Succeed())
 
 			By("creating the required configmap for optimization")
@@ -358,7 +359,7 @@ var _ = Describe("VariantAutoscalings Controller", func() {
 			Expect(condition.Reason).To(Equal(llmdVariantAutoscalingV1alpha1.ReasonTargetNotFound))
 
 			By("Creating target deployment")
-			deployment := testutils.CreateLlmdSimDeployment("default", resourceName, "default-default", "default", "8000", 0, 0, 1)
+			deployment := resources.CreateLlmdSimDeployment("default", resourceName, "default-default", "default", "8000", 0, 0, 1)
 			Expect(k8sClient.Create(ctx, deployment)).To(Succeed())
 
 			By("Reconciling - expect TargetFound")

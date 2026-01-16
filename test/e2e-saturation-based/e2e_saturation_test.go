@@ -26,6 +26,7 @@ import (
 	v1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/constants"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/test/utils"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/test/utils/resources"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	promoperator "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
@@ -173,17 +174,17 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Single Va
 		utils.ValidateVariantAutoscalingUniqueness(namespace, modelName, a100Acc, crClient)
 
 		By("creating llm-d-sim deployment")
-		deployment := utils.CreateLlmdSimDeployment(namespace, deployName, modelName, appLabel, fmt.Sprintf("%d", port), avgTTFT, avgITL, initialReplicas)
+		deployment := resources.CreateLlmdSimDeployment(namespace, deployName, modelName, appLabel, fmt.Sprintf("%d", port), avgTTFT, avgITL, initialReplicas)
 		_, err := k8sClient.AppsV1().Deployments(namespace).Create(ctx, deployment, metav1.CreateOptions{})
 		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to create Deployment: %s", deployName))
 
 		By("creating service to expose llm-d-sim deployment")
-		service := utils.CreateLlmdSimService(namespace, serviceName, appLabel, 30003, port)
+		service := resources.CreateLlmdSimService(namespace, serviceName, appLabel, 30003, port)
 		_, err = k8sClient.CoreV1().Services(namespace).Create(ctx, service, metav1.CreateOptions{})
 		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to create Service: %s", serviceName))
 
 		By("creating ServiceMonitor for vLLM metrics")
-		serviceMonitor := utils.CreateLlmdSimServiceMonitor(serviceMonName, controllerMonitoringNamespace, llmDNamespace, appLabel)
+		serviceMonitor := resources.CreateLlmdSimServiceMonitor(serviceMonName, controllerMonitoringNamespace, llmDNamespace, appLabel)
 		err = crClient.Create(ctx, serviceMonitor)
 		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to create ServiceMonitor: %s", serviceMonName))
 
@@ -490,33 +491,33 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Multiple 
 
 		// Create first VariantAutoscaling (A100 - cheaper)
 		By("creating llm-d-sim deployment for A100 variant")
-		deploymentA100 := utils.CreateLlmdSimDeployment(namespace, deployNameA100, modelName, appLabelA100, fmt.Sprintf("%d", port), avgTTFT, avgITL, initialReplicas)
+		deploymentA100 := resources.CreateLlmdSimDeployment(namespace, deployNameA100, modelName, appLabelA100, fmt.Sprintf("%d", port), avgTTFT, avgITL, initialReplicas)
 		_, err := k8sClient.AppsV1().Deployments(namespace).Create(ctx, deploymentA100, metav1.CreateOptions{})
 		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to create Deployment: %s", deployNameA100))
 
 		By("creating service to expose A100 variant")
-		serviceA100 := utils.CreateLlmdSimService(namespace, serviceNameA100, appLabelA100, 30001, port)
+		serviceA100 := resources.CreateLlmdSimService(namespace, serviceNameA100, appLabelA100, 30001, port)
 		_, err = k8sClient.CoreV1().Services(namespace).Create(ctx, serviceA100, metav1.CreateOptions{})
 		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to create Service: %s", serviceNameA100))
 
 		By("creating ServiceMonitor for A100 variant metrics")
-		serviceMonitorA100 := utils.CreateLlmdSimServiceMonitor(serviceMonNameA100, controllerMonitoringNamespace, llmDNamespace, appLabelA100)
+		serviceMonitorA100 := resources.CreateLlmdSimServiceMonitor(serviceMonNameA100, controllerMonitoringNamespace, llmDNamespace, appLabelA100)
 		err = crClient.Create(ctx, serviceMonitorA100)
 		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to create ServiceMonitor: %s", serviceMonNameA100))
 
 		// Create second VariantAutoscaling (H100 - more expensive)
 		By("creating llm-d-sim deployment for H100 variant")
-		deploymentH100 := utils.CreateLlmdSimDeployment(namespace, deployNameH100, modelName, appLabelH100, fmt.Sprintf("%d", port), avgTTFT, avgITL, initialReplicas)
+		deploymentH100 := resources.CreateLlmdSimDeployment(namespace, deployNameH100, modelName, appLabelH100, fmt.Sprintf("%d", port), avgTTFT, avgITL, initialReplicas)
 		_, err = k8sClient.AppsV1().Deployments(namespace).Create(ctx, deploymentH100, metav1.CreateOptions{})
 		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to create Deployment: %s", deployNameH100))
 
 		By("creating service to expose H100 variant")
-		serviceH100 := utils.CreateLlmdSimService(namespace, serviceNameH100, appLabelH100, 30002, port)
+		serviceH100 := resources.CreateLlmdSimService(namespace, serviceNameH100, appLabelH100, 30002, port)
 		_, err = k8sClient.CoreV1().Services(namespace).Create(ctx, serviceH100, metav1.CreateOptions{})
 		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to create Service: %s", serviceNameH100))
 
 		By("creating ServiceMonitor for H100 variant metrics")
-		serviceMonitorH100 := utils.CreateLlmdSimServiceMonitor(serviceMonNameH100, controllerMonitoringNamespace, llmDNamespace, appLabelH100)
+		serviceMonitorH100 := resources.CreateLlmdSimServiceMonitor(serviceMonNameH100, controllerMonitoringNamespace, llmDNamespace, appLabelH100)
 		err = crClient.Create(ctx, serviceMonitorH100)
 		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to create ServiceMonitor: %s", serviceMonNameH100))
 
@@ -1167,7 +1168,7 @@ var _ = Describe("VariantAutoscaling Target Condition", Ordered, func() {
 		port := 8000
 
 		By("creating deployment")
-		deployment := utils.CreateLlmdSimDeployment(namespace, deployName, modelName, appLabel, fmt.Sprintf("%d", port), 200, 20, 1)
+		deployment := resources.CreateLlmdSimDeployment(namespace, deployName, modelName, appLabel, fmt.Sprintf("%d", port), 200, 20, 1)
 		_, err := k8sClient.AppsV1().Deployments(namespace).Create(validCtx, deployment, metav1.CreateOptions{})
 		Expect(err).NotTo(HaveOccurred())
 
