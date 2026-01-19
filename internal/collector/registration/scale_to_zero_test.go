@@ -164,7 +164,7 @@ var _ = Describe("CollectModelRequestCount", func() {
 		})
 	})
 
-	Context("when no metrics are available", func() {
+	Context("when no metrics are available (empty vector)", func() {
 		BeforeEach(func() {
 			mockAPI = &mockPrometheusAPI{
 				queryFunc: func(ctx context.Context, query string, ts time.Time, opts ...v1.Option) (model.Value, v1.Warnings, error) {
@@ -177,10 +177,13 @@ var _ = Describe("CollectModelRequestCount", func() {
 			RegisterScaleToZeroQueries(registry)
 		})
 
-		It("should return 0", func() {
+		It("should return an error to prevent premature scale-to-zero", func() {
 			count, err := CollectModelRequestCount(ctx, metricsSource, "my-model", "default", 10*time.Minute)
 
-			Expect(err).NotTo(HaveOccurred())
+			// Error returned to signal we can't confirm request count,
+			// which prevents the enforcer from scaling to zero
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("no values"))
 			Expect(count).To(Equal(0.0))
 		})
 	})
@@ -198,10 +201,13 @@ var _ = Describe("CollectModelRequestCount", func() {
 			RegisterScaleToZeroQueries(registry)
 		})
 
-		It("should return 0 without error", func() {
+		It("should return an error to prevent premature scale-to-zero", func() {
 			count, err := CollectModelRequestCount(ctx, metricsSource, "my-model", "default", 10*time.Minute)
 
-			Expect(err).NotTo(HaveOccurred())
+			// Error returned to signal we can't confirm request count,
+			// which prevents the enforcer from scaling to zero
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("query"))
 			Expect(count).To(Equal(0.0))
 		})
 	})
