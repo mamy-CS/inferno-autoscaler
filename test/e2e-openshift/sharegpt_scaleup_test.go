@@ -107,7 +107,7 @@ func getModelsToTest() []modelTestConfig {
 			deployment:        deploymentName,
 			gatewayService:    gatewayServiceName,
 			maxTokens:         400,  // Moderate tokens for ~3s requests, sustains queue during test
-			requestsPerWorker: 1000, // Balanced request count for moderate-length requests
+			requestsPerWorker: 1100, // 10% increase from original to sustain load slightly longer
 		},
 	}
 
@@ -122,7 +122,7 @@ func getModelsToTest() []modelTestConfig {
 			deployment:        modelBDeploymentName, // Derive from Model B namespace
 			gatewayService:    modelBGatewayName,    // Derive from Model B namespace
 			maxTokens:         1500,                 // Long requests to test sustained GPU load
-			requestsPerWorker: 500,                  // Fewer requests since each takes ~10s
+			requestsPerWorker: 550,                  // 10% increase from original
 		})
 	}
 
