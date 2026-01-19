@@ -17,10 +17,15 @@ limitations under the License.
 package datastore
 
 import (
+	"context"
 	"errors"
+	"os"
 	"sync"
 
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/source"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/source/pod"
 	poolutil "github.com/llm-d-incubation/workload-variant-autoscaler/internal/utils/pool"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 var (
@@ -31,11 +36,12 @@ var (
 // The datastore is a local cache of relevant data for the given InferencePool (currently all pulled from k8s-api)
 type Datastore interface {
 	// InferencePool operations
-	PoolSet(pool *poolutil.EndpointPool) error
+	PoolSet(ctx context.Context, client client.Client, pool *poolutil.EndpointPool) error
 	PoolGet(name string) (*poolutil.EndpointPool, error)
+	PoolGetMetricsSource(name string) source.MetricsSource
 	PoolList() []*poolutil.EndpointPool
 	PoolGetFromLabels(labels map[string]string) (*poolutil.EndpointPool, error)
-	PoolDelete(poolName string)
+	PoolDelete(name string)
 
 	// Clears the store state, happens when the pool gets deleted.
 	Clear()
@@ -43,20 +49,46 @@ type Datastore interface {
 
 func NewDatastore() Datastore {
 	store := &datastore{
-		pools: &sync.Map{},
+		pools:    &sync.Map{},
+		registry: source.NewSourceRegistry(),
 	}
 	return store
 }
 
 type datastore struct {
-	pools *sync.Map
+	pools    *sync.Map
+	registry *source.SourceRegistry
 }
 
 // Datastore operations
-func (ds *datastore) PoolSet(pool *poolutil.EndpointPool) error {
+func (ds *datastore) PoolSet(ctx context.Context, client client.Client, pool *poolutil.EndpointPool) error {
 	if pool == nil {
 		return errPoolIsNull
 	}
+
+	if ds.registry.Get(pool.Name) == nil {
+		// Create pod source
+		token := os.Getenv("EPP_METRIC_READER_BEARER_TOKEN")
+		config := pod.PodScrapingSourceConfig{
+			ServiceName:      pool.EndpointPicker.ServiceName,
+			ServiceNamespace: pool.EndpointPicker.Namespace,
+			MetricsPort:      pool.EndpointPicker.MetricsPortNumber,
+			BearerToken:      token,
+		}
+
+		podSource, err := pod.NewPodScrapingSource(ctx, client, config)
+		if err != nil {
+			return err
+		}
+
+		// Register in registry
+		// TODO: We need to be able to update or delete a pod source object in the registry at internal/collector/source/registry.go
+		if err := ds.registry.Register(pool.Name, podSource); err != nil {
+			return err
+		}
+	}
+
+	// Store in the datastore
 	ds.pools.Store(pool.Name, pool)
 	return nil
 }
@@ -70,6 +102,11 @@ func (ds *datastore) PoolGet(name string) (*poolutil.EndpointPool, error) {
 
 	epp := pool.(*poolutil.EndpointPool)
 	return epp, nil
+}
+
+func (ds *datastore) PoolGetMetricsSource(name string) source.MetricsSource {
+	source := ds.registry.Get(name)
+	return source
 }
 
 func (ds *datastore) PoolGetFromLabels(labels map[string]string) (*poolutil.EndpointPool, error) {

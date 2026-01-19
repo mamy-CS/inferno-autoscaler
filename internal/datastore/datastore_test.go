@@ -94,7 +94,7 @@ func TestDatastore(t *testing.T) {
 			}
 
 			// Test PoolSet
-			gotErr := ds.PoolSet(ep)
+			gotErr := ds.PoolSet(ctx, fakeClient, ep)
 			if diff := cmp.Diff(tt.wantErr, gotErr, cmpopts.EquateErrors()); diff != "" {
 				t.Errorf("Unexpected error diff (+got/-want): %s", diff)
 			}
@@ -136,7 +136,7 @@ func TestDatastore(t *testing.T) {
 				ds.PoolDelete(ep.Name)
 				assert.Equal(t, len(ds.PoolList()), tt.clearDeleteResultLen, "Pools map should have the expected length after item deleted")
 
-				if err := ds.PoolSet(ep); err != nil {
+				if err := ds.PoolSet(ctx, fakeClient, ep); err != nil {
 					t.Errorf("failed to add endpoint into the datastore: %v", err)
 				}
 				assert.Equal(t, len(ds.PoolList()), tt.listResultLen, "Pools map should have the expected length after item added")

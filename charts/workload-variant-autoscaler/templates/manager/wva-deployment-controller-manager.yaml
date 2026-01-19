@@ -64,6 +64,11 @@ spec:
         image: "{{ .Values.wva.image.repository }}:{{ .Values.wva.image.tag }}"
         imagePullPolicy: "{{ .Values.wva.imagePullPolicy }}"
         env:
+          - name: EPP_METRIC_READER_BEARER_TOKEN
+            valueFrom:
+              configMapKeyRef:
+                name: {{ include "workload-variant-autoscaler.fullname" . }}-variantautoscaling-config
+                key: EPP_METRIC_READER_BEARER_TOKEN
           - name: LOG_LEVEL
             value: {{ if .Values.wva.logging }}{{ .Values.wva.logging.level | default "info" | quote }}{{ else }}"info"{{ end }}
           - name: CONFIG_MAP_NAME

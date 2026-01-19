@@ -48,12 +48,12 @@ type EndpointPicker struct {
 }
 
 // InferencePoolToEndpointPool converts an v1 InferencePool to an EndpointPool.
-func InferencePoolToEndpointPool(ctx context.Context, reader client.Reader, inferencePool *v1.InferencePool) (*EndpointPool, error) {
+func InferencePoolToEndpointPool(ctx context.Context, client client.Client, inferencePool *v1.InferencePool) (*EndpointPool, error) {
 	if inferencePool == nil {
 		return nil, nil
 	}
 
-	epp, err := generateEndpointPickerObject(ctx, string(inferencePool.Spec.EndpointPickerRef.Name), inferencePool.Namespace, reader)
+	epp, err := generateEndpointPickerObject(ctx, string(inferencePool.Spec.EndpointPickerRef.Name), inferencePool.Namespace, client)
 	if err != nil {
 		return nil, err
 	}
@@ -72,12 +72,12 @@ func InferencePoolToEndpointPool(ctx context.Context, reader client.Reader, infe
 }
 
 // AlphaInferencePoolToEndpointPool converts an v1alpha2 inferencePool to an EndpointPool.
-func AlphaInferencePoolToEndpointPool(ctx context.Context, reader client.Reader, inferencePool *v1alpha2.InferencePool) (*EndpointPool, error) {
+func AlphaInferencePoolToEndpointPool(ctx context.Context, client client.Client, inferencePool *v1alpha2.InferencePool) (*EndpointPool, error) {
 	if inferencePool == nil {
 		return nil, nil
 	}
 
-	epp, err := generateEndpointPickerObject(ctx, string(inferencePool.Spec.ExtensionRef.Name), inferencePool.Namespace, reader)
+	epp, err := generateEndpointPickerObject(ctx, string(inferencePool.Spec.ExtensionRef.Name), inferencePool.Namespace, client)
 	if err != nil {
 		return nil, err
 	}
@@ -95,9 +95,9 @@ func AlphaInferencePoolToEndpointPool(ctx context.Context, reader client.Reader,
 	return endpointPool, nil
 }
 
-func generateEndpointPickerObject(ctx context.Context, serviceName, namespace string, reader client.Reader) (*EndpointPicker, error) {
+func generateEndpointPickerObject(ctx context.Context, serviceName, namespace string, c client.Client) (*EndpointPicker, error) {
 	service := &corev1.Service{}
-	err := reader.Get(ctx, client.ObjectKey{
+	err := c.Get(ctx, client.ObjectKey{
 		Namespace: namespace,
 		Name:      serviceName,
 	}, service)

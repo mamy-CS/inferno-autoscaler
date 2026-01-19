@@ -33,7 +33,7 @@ import (
 )
 
 type InferencePoolReconciler struct {
-	client.Reader
+	client.Client
 	Datastore datastore.Datastore
 	PoolGKNN  common.GKNN
 }
@@ -80,12 +80,12 @@ func (c *InferencePoolReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	switch pool := obj.(type) {
 	case *v1.InferencePool:
-		endpointPool, err = poolutils.InferencePoolToEndpointPool(ctx, c.Reader, pool)
+		endpointPool, err = poolutils.InferencePoolToEndpointPool(ctx, c.Client, pool)
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed to convert InferencePool v1 to EndPointPool - %w", err)
 		}
 	case *v1alpha2.InferencePool:
-		endpointPool, err = poolutils.AlphaInferencePoolToEndpointPool(ctx, c.Reader, pool)
+		endpointPool, err = poolutils.AlphaInferencePoolToEndpointPool(ctx, c.Client, pool)
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed to convert InferencePool v1alpha2 to EndPointPool - %w", err)
 		}
@@ -94,7 +94,7 @@ func (c *InferencePoolReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	if endpointPool != nil {
-		if err := c.Datastore.PoolSet(endpointPool); err != nil {
+		if err := c.Datastore.PoolSet(ctx, c.Client, endpointPool); err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed to add endpoint into the datastore: - %w", err)
 		}
 	}
