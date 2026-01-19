@@ -43,7 +43,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
-	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/registration"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/source"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/source/prometheus"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/config"
@@ -378,9 +377,6 @@ func main() {
 			setupLog.Error(err, "failed to register prometheus source in source registry")
 			os.Exit(1)
 		}
-
-		// Register scale-to-zero queries with the prometheus source
-		registration.RegisterScaleToZeroQueries(sourceRegistry)
 
 		engine := saturation.NewEngine(
 			mgr.GetClient(),

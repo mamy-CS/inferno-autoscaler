@@ -197,10 +197,13 @@ func (r *VariantAutoscalingReconciler) Reconcile(ctx context.Context, req ctrl.R
 
 		// Only update DesiredOptimizedAlloc if we have a valid accelerator (required by CRD).
 		// Note: numReplicas may legitimately be 0 for scale-to-zero scenarios.
+		// Replace the entire struct to ensure all required fields are included in the patch.
 		if accelerator != "" {
-			va.Status.DesiredOptimizedAlloc.NumReplicas = numReplicas
-			va.Status.DesiredOptimizedAlloc.Accelerator = accelerator
-			va.Status.DesiredOptimizedAlloc.LastRunTime = lastRunTime
+			va.Status.DesiredOptimizedAlloc = llmdVariantAutoscalingV1alpha1.OptimizedAlloc{
+				NumReplicas: numReplicas,
+				Accelerator: accelerator,
+				LastRunTime: lastRunTime,
+			}
 		}
 
 		// Always apply MetricsAvailable condition from cache

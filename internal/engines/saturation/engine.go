@@ -42,6 +42,7 @@ import (
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/saturation"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/pipeline"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/utils"
 )
 
@@ -62,6 +63,9 @@ type Engine struct {
 
 	// ReplicaMetricsCollector is the collector for replica metrics using the source infrastructure
 	ReplicaMetricsCollector *collector.ReplicaMetricsCollector
+
+	// ScaleToZeroEnforcer applies scale-to-zero and minimum replica enforcement
+	ScaleToZeroEnforcer *pipeline.Enforcer
 }
 
 // getVariantKey returns a unique key for a variant combining namespace and name.
@@ -74,11 +78,17 @@ func getVariantKey(namespace, name string) string {
 func NewEngine(client client.Client, scheme *runtime.Scheme, recorder record.EventRecorder, metricsRegistry *source.SourceRegistry) *Engine {
 	promSource := metricsRegistry.Get("prometheus") // assume prometheus source is registered
 
+	// Create request count function wrapper for scale-to-zero enforcer
+	requestCountFunc := func(ctx context.Context, modelID, namespace string, retentionPeriod time.Duration) (float64, error) {
+		return registration.CollectModelRequestCount(ctx, promSource, modelID, namespace, retentionPeriod)
+	}
+
 	engine := Engine{
 		client:                  client,
 		scheme:                  scheme,
 		Recorder:                recorder,
 		ReplicaMetricsCollector: collector.NewReplicaMetricsCollector(promSource, client),
+		ScaleToZeroEnforcer:     pipeline.NewEnforcer(requestCountFunc),
 	}
 
 	engine.executor = executor.NewPollingExecutor(executor.PollingConfig{
@@ -91,6 +101,9 @@ func NewEngine(client client.Client, scheme *runtime.Scheme, recorder record.Eve
 
 	// Register saturation-specific queries in the metrics registry
 	registration.RegisterSaturationQueries(metricsRegistry)
+
+	// Register scale-to-zero queries in the metrics registry
+	registration.RegisterScaleToZeroQueries(metricsRegistry)
 
 	return &engine
 }
@@ -203,6 +216,32 @@ func (e *Engine) optimize(ctx context.Context) error {
 
 		var finalDecisions []interfaces.VariantDecision
 		if saturationAnalysis != nil {
+			// Apply scale-to-zero enforcement after saturation analysis
+			// This either scales to zero if enabled and no requests, or ensures minimum replicas
+			scaleToZeroConfig := common.Config.GetScaleToZeroConfig()
+
+			// Copy original targets for logging (enforcer modifies map in place)
+			originalTargets := make(map[string]int, len(saturationTargets))
+			for k, v := range saturationTargets {
+				originalTargets[k] = v
+			}
+
+			enforcedTargets, scaledToZero := e.ScaleToZeroEnforcer.EnforcePolicy(
+				ctx,
+				modelID,
+				modelVAs[0].Namespace,
+				saturationTargets,
+				saturationAnalysis.VariantAnalyses,
+				scaleToZeroConfig,
+			)
+			if scaledToZero {
+				logger.Info("Scale-to-zero enforcement applied",
+					"modelID", modelID,
+					"originalTargets", originalTargets,
+					"enforcedTargets", enforcedTargets)
+			}
+			saturationTargets = enforcedTargets
+
 			finalDecisions = e.convertSaturationTargetsToDecisions(ctx, saturationTargets, saturationAnalysis, variantStates)
 			logger.Info("Saturation-only decisions made for model",
 				"modelID", modelID,

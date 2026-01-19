@@ -6,6 +6,7 @@ package registration
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -24,7 +25,7 @@ const (
 	ParamRetentionPeriod = "retentionPeriod"
 )
 
-// RegisterScaleToZeroQueries registers queries used for scale-to-zero decisions.
+// RegisterQueries registers queries used for scale-to-zero decisions.
 // This should be called during initialization to register query templates with the prometheus source.
 func RegisterScaleToZeroQueries(sourceRegistry *source.SourceRegistry) {
 	metricsSource := sourceRegistry.Get("prometheus")
@@ -50,6 +51,11 @@ func RegisterScaleToZeroQueries(sourceRegistry *source.SourceRegistry) {
 // CollectModelRequestCount collects the total number of successful requests for a model
 // over the specified retention period. This is used for scale-to-zero decisions.
 //
+// The function returns an error when it cannot determine the request count with certainty.
+// This is important for scale-to-zero safety: we should only scale to zero when we have
+// positive confirmation that no requests were made. If we can't determine the count,
+// the enforcer will keep current replicas (preventing premature scale-to-zero).
+//
 // Parameters:
 //   - ctx: Context for the operation
 //   - source: The metrics source to query
@@ -58,8 +64,8 @@ func RegisterScaleToZeroQueries(sourceRegistry *source.SourceRegistry) {
 //   - retentionPeriod: How far back to look for requests
 //
 // Returns:
-//   - float64: Total request count over the retention period (0 if no requests or error)
-//   - error: Any error that occurred during collection
+//   - float64: Total request count over the retention period
+//   - error: Error if the request count cannot be determined (query failed, no data, etc.)
 func CollectModelRequestCount(
 	ctx context.Context,
 	metricsSource source.MetricsSource,
@@ -84,40 +90,40 @@ func CollectModelRequestCount(
 		Params:  params,
 	})
 	if err != nil {
-		logger.V(logging.DEBUG).Info("Failed to query model request count, returning 0",
+		logger.V(logging.DEBUG).Info("Failed to query model request count",
 			"model", modelID,
 			"namespace", namespace,
 			"retentionPeriod", retentionPeriodStr,
 			"error", err)
-		return 0, nil // Return 0 instead of error - no requests is valid
+		return 0, fmt.Errorf("failed to query request count for model %s: %w", modelID, err)
 	}
 
 	// Extract the result
 	result := results[QueryModelRequestCount]
 	if result == nil {
-		logger.V(logging.DEBUG).Info("No result for model request count query, returning 0",
+		logger.V(logging.DEBUG).Info("No result for model request count query",
 			"model", modelID,
 			"namespace", namespace,
 			"retentionPeriod", retentionPeriodStr)
-		return 0, nil
+		return 0, fmt.Errorf("no result for request count query for model %s (metrics may not be available yet)", modelID)
 	}
 
 	if result.HasError() {
-		logger.V(logging.DEBUG).Info("Model request count query failed, returning 0",
+		logger.V(logging.DEBUG).Info("Model request count query failed",
 			"model", modelID,
 			"namespace", namespace,
 			"retentionPeriod", retentionPeriodStr,
 			"error", result.Error)
-		return 0, nil
+		return 0, fmt.Errorf("request count query failed for model %s: %v", modelID, result.Error)
 	}
 
 	// Get the first value (sum query returns a single scalar)
 	if len(result.Values) == 0 {
-		logger.V(logging.DEBUG).Info("No values in model request count result, returning 0",
+		logger.V(logging.DEBUG).Info("No values in model request count result",
 			"model", modelID,
 			"namespace", namespace,
 			"retentionPeriod", retentionPeriodStr)
-		return 0, nil
+		return 0, fmt.Errorf("no values in request count result for model %s (metrics may not be scraped yet)", modelID)
 	}
 
 	count := result.FirstValue().Value
