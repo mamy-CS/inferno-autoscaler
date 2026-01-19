@@ -57,6 +57,11 @@ jobs:
           sudo mv ./kind /usr/local/bin/kind
           kind version
 
+      - name: Run make test-e2e-scale-to-zero
+        shell: bash
+        run: |
+          make test-e2e-scale-to-zero
+
       - name: Run make test-e2e
         shell: bash
         run: |

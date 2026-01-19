@@ -157,6 +157,19 @@ test-e2e: manifests generate fmt vet ## Run the e2e tests. Expected an isolated 
 	$(eval SKIP_ARGS := $(if $(SKIP),-ginkgo.skip="$(SKIP)",))
 	export COLLECTOR_V2=1 KUBECONFIG=$(KUBECONFIG) K8S_EXPECTED_VERSION=$(K8S_VERSION) && go test ./test/e2e-saturation-based/ -timeout 30m -v -ginkgo.v $(FOCUS_ARGS) $(SKIP_ARGS)
 
+# E2E tests for scale-to-zero feature on Kind cluster
+# Requires HPAScaleToZero feature gate (enabled by default in deploy/kind-emulator/setup.sh)
+# These tests create isolated resources and do not interfere with other tests
+.PHONY: test-e2e-scale-to-zero
+test-e2e-scale-to-zero: manifests generate fmt vet ## Run scale-to-zero e2e tests on Kind cluster.
+	@command -v $(KIND) >/dev/null 2>&1 || { \
+		echo "Kind is not installed. Please install Kind manually."; \
+		exit 1; \
+	}
+	@echo "Running scale-to-zero e2e tests (requires HPAScaleToZero feature gate)..."
+	export COLLECTOR_V2=1 KUBECONFIG=$(KUBECONFIG) K8S_EXPECTED_VERSION=$(K8S_VERSION) && \
+		go test ./test/e2e-saturation-based/ -timeout 30m -v -ginkgo.v -ginkgo.focus="Scale-to-Zero"
+
 # E2E tests on OpenShift cluster
 # Supports KUBECONFIG or in-cluster authentication (for self-hosted runners).
 .PHONY: test-e2e-openshift
@@ -174,6 +187,20 @@ test-e2e-openshift: ## Run the e2e tests on OpenShift. Supports KUBECONFIG or in
 	REQUEST_RATE=$(REQUEST_RATE) \
 	NUM_PROMPTS=$(NUM_PROMPTS) \
 	go test ./test/e2e-openshift/ -timeout 30m -v -ginkgo.v $(FOCUS_ARGS) $(SKIP_ARGS)
+
+# E2E tests for scale-to-zero feature on OpenShift cluster
+# Requires HPAScaleToZero feature gate enabled by cluster admin (see docs/integrations/hpa-integration.md)
+# Tests will skip automatically if feature gate is not enabled
+.PHONY: test-e2e-openshift-scale-to-zero
+test-e2e-openshift-scale-to-zero: ## Run scale-to-zero e2e tests on OpenShift.
+	@echo "Running scale-to-zero e2e tests on OpenShift (will skip if HPAScaleToZero feature gate not enabled)..."
+	CONTROLLER_NAMESPACE=$(CONTROLLER_NAMESPACE) \
+	MONITORING_NAMESPACE=$(MONITORING_NAMESPACE) \
+	LLMD_NAMESPACE=$(LLMD_NAMESPACE) \
+	GATEWAY_NAME=$(GATEWAY_NAME) \
+	MODEL_ID=$(MODEL_ID) \
+	DEPLOYMENT=$(DEPLOYMENT) \
+	go test ./test/e2e-openshift/ -timeout 30m -v -ginkgo.v -ginkgo.focus="Scale-to-Zero"
 
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter
