@@ -84,6 +84,10 @@ va:
 
 hpa:
   enabled: true
+  # minReplicas: 0 enables scale-to-zero (requires HPAScaleToZero feature gate in k8s)
+  # minReplicas: 1 is the safe default that prevents scale-to-zero
+  # Set to 0 when wva.scaleToZero is enabled
+  minReplicas: 1
   maxReplicas: 10
   targetAverageValue: "1"
   # HPA scaling behavior configuration
