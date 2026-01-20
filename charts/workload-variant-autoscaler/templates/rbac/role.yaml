@@ -110,5 +110,11 @@ rules:
   - get
   - watch
   - list
-
+- apiGroups:
+  - apps
+  resources:
+  - deployments/scale
+  verbs:
+  - get
+  - update
 {{- end }}
