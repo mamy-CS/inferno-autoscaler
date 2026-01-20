@@ -50,7 +50,7 @@ var (
 func TestControllers(t *testing.T) {
 	RegisterFailHandler(Fail)
 
-	RunSpecs(t, "Controller Suite")
+	RunSpecs(t, "Indexers Suite")
 }
 
 var _ = BeforeSuite(func() {
