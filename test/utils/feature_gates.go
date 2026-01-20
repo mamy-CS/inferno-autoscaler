@@ -57,20 +57,51 @@ func IsHPAScaleToZeroEnabled(ctx context.Context, k8sClient *kubernetes.Clientse
 	}
 
 	// On vanilla Kubernetes, check kube-controller-manager pod args
-	pods, err := k8sClient.CoreV1().Pods("kube-system").List(ctx, metav1.ListOptions{
-		LabelSelector: "component=kube-controller-manager",
-	})
-	if err != nil || len(pods.Items) == 0 {
-		_, _ = fmt.Fprintf(w, "Warning: Could not check kube-controller-manager: %v\n", err)
-		return false
+	// Try multiple label selectors as different K8s distributions use different labels
+	labelSelectors := []string{
+		"component=kube-controller-manager",
+		"tier=control-plane,component=kube-controller-manager",
 	}
 
-	for _, pod := range pods.Items {
-		for _, container := range pod.Spec.Containers {
-			for _, arg := range container.Args {
-				if strings.Contains(arg, "HPAScaleToZero=true") {
-					_, _ = fmt.Fprintf(w, "HPAScaleToZero feature gate is enabled\n")
-					return true
+	for _, labelSelector := range labelSelectors {
+		pods, err := k8sClient.CoreV1().Pods("kube-system").List(ctx, metav1.ListOptions{
+			LabelSelector: labelSelector,
+		})
+		if err != nil {
+			_, _ = fmt.Fprintf(w, "Warning: Could not list pods with selector %s: %v\n", labelSelector, err)
+			continue
+		}
+		if len(pods.Items) == 0 {
+			continue
+		}
+
+		for _, pod := range pods.Items {
+			for _, container := range pod.Spec.Containers {
+				// Check both Command and Args as feature gates can be in either
+				allArgs := append(container.Command, container.Args...)
+				for _, arg := range allArgs {
+					if strings.Contains(arg, "HPAScaleToZero=true") {
+						_, _ = fmt.Fprintf(w, "HPAScaleToZero feature gate is enabled\n")
+						return true
+					}
+				}
+			}
+		}
+	}
+
+	// Also try to find the pod by name prefix if label selectors didn't work
+	pods, err := k8sClient.CoreV1().Pods("kube-system").List(ctx, metav1.ListOptions{})
+	if err == nil {
+		for _, pod := range pods.Items {
+			if strings.HasPrefix(pod.Name, "kube-controller-manager") {
+				for _, container := range pod.Spec.Containers {
+					allArgs := append(container.Command, container.Args...)
+					for _, arg := range allArgs {
+						if strings.Contains(arg, "HPAScaleToZero=true") {
+							_, _ = fmt.Fprintf(w, "HPAScaleToZero feature gate is enabled (found by name)\n")
+							return true
+						}
+					}
 				}
 			}
 		}
