@@ -9,7 +9,8 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	llmdv1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/indexers"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
 )
 
 // PodVAMapper maps pod names to their corresponding VariantAutoscaling objects.
@@ -24,8 +25,8 @@ func NewPodVAMapper(k8sClient client.Client) *PodVAMapper {
 	}
 }
 
-// FindVAForPod finds the VariantAutoscaling object for a pod by first finding
-// its deployment and then finding the VA that targets that deployment.
+// FindVAForPod finds the VariantAutoscaling object for a Pod by first finding
+// its Deployment and then finding the VA that targets that Deployment using indexed lookups.
 //
 // Returns the VA name if found, empty string otherwise.
 func (m *PodVAMapper) FindVAForPod(
@@ -33,17 +34,15 @@ func (m *PodVAMapper) FindVAForPod(
 	podName string,
 	namespace string,
 	deployments map[string]*appsv1.Deployment,
-	variantAutoscalings map[string]*llmdv1alpha1.VariantAutoscaling,
 ) string {
 	deploymentName := m.findDeploymentForPod(ctx, podName, namespace, deployments)
 	if deploymentName == "" {
 		return ""
 	}
-	return m.findVAForDeployment(deploymentName, namespace, variantAutoscalings)
+	return m.findVAForDeployment(ctx, deploymentName, namespace)
 }
 
-// findDeploymentForPod finds which deployment owns a pod using Kubernetes API.
-// Uses the deployment's label selector to find matching pods.
+// findDeploymentForPod finds which Deployment owns a Pod by traversing owner references.
 func (m *PodVAMapper) findDeploymentForPod(
 	ctx context.Context,
 	podName string,
@@ -52,48 +51,55 @@ func (m *PodVAMapper) findDeploymentForPod(
 ) string {
 	logger := ctrl.LoggerFrom(ctx)
 
-	// TODO: optimize
-	for deploymentName, deployment := range deployments {
-		selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
-		if err != nil {
-			logger.Info("Invalid label selector for deployment", "deployment", deploymentName, "error", err)
-			continue
-		}
+	pod := &corev1.Pod{}
+	if err := m.k8sClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: podName}, pod); err != nil {
+		logger.Error(err, "failed to get pod", "pod", podName, "namespace", namespace)
+		return ""
+	}
 
-		podList := &corev1.PodList{}
-		listOpts := &client.ListOptions{
-			Namespace:     namespace,
-			LabelSelector: selector,
-		}
+	owner := metav1.GetControllerOf(pod)
+	if owner == nil || owner.Kind != "ReplicaSet" {
+		logger.V(logging.DEBUG).Info("Pod has no ReplicaSet owner", "pod", podName, "namespace", namespace)
+		return ""
+	}
 
-		if err := m.k8sClient.List(ctx, podList, listOpts); err != nil {
-			logger.Info("Failed to list pods for deployment", "deployment", deploymentName, "error", err)
-			continue
-		}
+	rs := &appsv1.ReplicaSet{}
+	if err := m.k8sClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: owner.Name}, rs); err != nil {
+		logger.Error(err, "failed to get ReplicaSet", "replicaset", owner.Name, "namespace", namespace)
+		return ""
+	}
 
-		for _, pod := range podList.Items {
-			if pod.Name == podName {
-				return deploymentName
-			}
-		}
+	rsOwner := metav1.GetControllerOf(rs)
+	if rsOwner == nil || rsOwner.Kind != "Deployment" {
+		logger.V(logging.DEBUG).Info("ReplicaSet has no Deployment owner", "replicaset", owner.Name, "namespace", namespace)
+		return ""
+	}
+
+	// Verify the Deployment is in our map of tracked Deployments
+	if _, exists := deployments[rsOwner.Name]; exists {
+		return rsOwner.Name
 	}
 	return ""
 }
 
-// findVAForDeployment finds the VariantAutoscaling object that targets a deployment.
+// findVAForDeployment finds the VariantAutoscaling object that targets a Deployment.
 func (m *PodVAMapper) findVAForDeployment(
+	ctx context.Context,
 	deploymentName string,
 	namespace string,
-	variantAutoscalings map[string]*llmdv1alpha1.VariantAutoscaling,
 ) string {
-	for vaName, va := range variantAutoscalings {
-		if va == nil {
-			continue
-		}
-		if va.Spec.ScaleTargetRef.Name == deploymentName &&
-			va.Namespace == namespace {
-			return vaName
-		}
+	logger := ctrl.LoggerFrom(ctx)
+
+	// Use indexed lookup for VA targeting this Deployment
+	va, err := indexers.FindVAForDeployment(ctx, m.k8sClient, deploymentName, namespace)
+	if err != nil {
+		logger.Error(err, "failed to find VA for deployment using index", "deployment", deploymentName, "namespace", namespace)
+		return ""
 	}
-	return ""
+
+	if va == nil {
+		return ""
+	}
+
+	return va.Name
 }

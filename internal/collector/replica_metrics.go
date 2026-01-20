@@ -197,8 +197,8 @@ func (c *ReplicaMetricsCollector) CollectReplicaMetrics(
 			queueLen = 0
 		}
 
-		// Match pod to variant using deployment label selectors
-		variantName := c.podVAMapper.FindVAForPod(ctx, podName, namespace, deployments, variantAutoscalings)
+		// Match Pod to VariantAutoscaling using indexed lookup
+		variantName := c.podVAMapper.FindVAForPod(ctx, podName, namespace, deployments)
 
 		if variantName == "" {
 			logger.Info("Skipping pod that doesn't match any deployment",
