@@ -1178,15 +1178,15 @@ var _ = Describe("VariantAutoscaling Target Condition", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		By("waiting for TargetResolved=True")
-		Eventually(func() {
+		Eventually(func(g Gomega) {
 			fetchedVA := &v1alpha1.VariantAutoscaling{}
 			err := crClient.Get(validCtx, client.ObjectKey{Namespace: namespace, Name: deployName}, fetchedVA)
-			Expect(err).NotTo(HaveOccurred())
+			g.Expect(err).NotTo(HaveOccurred())
 
 			condition := v1alpha1.GetCondition(fetchedVA, v1alpha1.TypeTargetResolved)
-			Expect(condition).NotTo(BeNil())
-			Expect(condition.Status).To(Equal(metav1.ConditionTrue))
-			Expect(condition.Reason).To(Equal(v1alpha1.ReasonTargetFound))
+			g.Expect(condition).NotTo(BeNil())
+			g.Expect(condition.Status).To(Equal(metav1.ConditionTrue))
+			g.Expect(condition.Reason).To(Equal(v1alpha1.ReasonTargetFound))
 		}, 1*time.Minute, 1*time.Second).Should(Succeed())
 
 		// Cleanup
@@ -1204,15 +1204,15 @@ var _ = Describe("VariantAutoscaling Target Condition", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		By("waiting for TargetResolved=False")
-		Eventually(func() {
+		Eventually(func(g Gomega) {
 			fetchedVA := &v1alpha1.VariantAutoscaling{}
 			err := crClient.Get(invalidCtx, client.ObjectKey{Namespace: namespace, Name: name}, fetchedVA)
-			Expect(err).NotTo(HaveOccurred())
+			g.Expect(err).NotTo(HaveOccurred())
 
 			condition := v1alpha1.GetCondition(fetchedVA, v1alpha1.TypeTargetResolved)
-			Expect(condition).NotTo(BeNil())
-			Expect(condition.Status).To(Equal(metav1.ConditionFalse))
-			Expect(condition.Reason).To(Equal(v1alpha1.ReasonTargetNotFound))
+			g.Expect(condition).NotTo(BeNil())
+			g.Expect(condition.Status).To(Equal(metav1.ConditionFalse))
+			g.Expect(condition.Reason).To(Equal(v1alpha1.ReasonTargetNotFound))
 		}, 1*time.Minute, 1*time.Second).Should(Succeed())
 
 		// Cleanup
