@@ -19,6 +19,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/prometheus/common/expfmt"
+	"github.com/prometheus/common/model"
 
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/source"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
@@ -331,7 +332,7 @@ func (p *PodScrapingSource) getAuthToken(ctx context.Context) (string, bool, err
 
 // parsePrometheusMetrics parses Prometheus text format into MetricResult.
 func (p *PodScrapingSource) parsePrometheusMetrics(reader io.Reader, podName string) (*source.MetricResult, error) {
-	var parser expfmt.TextParser
+	parser := expfmt.NewTextParser(model.NameValidationScheme)
 	metricFamilies, err := parser.TextToMetricFamilies(reader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse metrics: %w", err)
