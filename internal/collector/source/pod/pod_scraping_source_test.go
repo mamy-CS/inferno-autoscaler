@@ -474,15 +474,20 @@ vllm_num_requests_waiting{namespace="test-ns"} 5
 			Expect(result.Values).To(HaveLen(2))
 			Expect(result.QueryName).To(Equal("all_metrics"))
 
+			// Check metrics (order not guaranteed from map iteration)
+			metricsByName := make(map[string]sourcepkg.MetricValue)
+			for _, value := range result.Values {
+				Expect(value.Labels["pod"]).To(Equal("test-pod"))
+				metricsByName[value.Labels["__name__"]] = value
+			}
+
 			// Check first metric
-			Expect(result.Values[0].Labels["pod"]).To(Equal("test-pod"))
-			Expect(result.Values[0].Labels["__name__"]).To(Equal("vllm_kv_cache_usage_perc"))
-			Expect(result.Values[0].Value).To(Equal(0.75))
+			Expect(metricsByName).To(HaveKey("vllm_kv_cache_usage_perc"))
+			Expect(metricsByName["vllm_kv_cache_usage_perc"].Value).To(Equal(0.75))
 
 			// Check second metric
-			Expect(result.Values[1].Labels["pod"]).To(Equal("test-pod"))
-			Expect(result.Values[1].Labels["__name__"]).To(Equal("vllm_num_requests_waiting"))
-			Expect(result.Values[1].Value).To(Equal(5.0))
+			Expect(metricsByName).To(HaveKey("vllm_num_requests_waiting"))
+			Expect(metricsByName["vllm_num_requests_waiting"].Value).To(Equal(5.0))
 		})
 
 		It("should handle empty metrics", func() {
@@ -654,13 +659,14 @@ vllm_num_requests_waiting{namespace="test-ns"} 3
 				Build()
 
 			config1 := PodScrapingSourceConfig{
-				ServiceName:          "test-pool-epp",
-				ServiceNamespace:     "test-ns",
-				MetricsPort:          port1,
-				MetricsPath:          "/metrics",
-				MetricsScheme:        "http",
-				ScrapeTimeout:        5 * time.Second,
-				MaxConcurrentScrapes: 10,
+				ServiceName:             "test-pool-epp",
+				ServiceNamespace:        "test-ns",
+				MetricsPort:             port1,
+				MetricsPath:             "/metrics",
+				MetricsScheme:           "http",
+				ScrapeTimeout:           5 * time.Second,
+				MaxConcurrentScrapes:    10,
+				MetricsReaderSecretName: "inference-gateway-sa-metrics-reader-secret",
 			}
 			source1, err := NewPodScrapingSource(ctx, client1, config1)
 			Expect(err).NotTo(HaveOccurred())
