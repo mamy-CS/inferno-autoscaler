@@ -25,7 +25,7 @@ const (
 	ParamRetentionPeriod = "retentionPeriod"
 )
 
-// RegisterQueries registers queries used for scale-to-zero decisions.
+// RegisterScaleToZeroQueries registers queries used for scale-to-zero decisions.
 // This should be called during initialization to register query templates with the prometheus source.
 func RegisterScaleToZeroQueries(sourceRegistry *source.SourceRegistry) {
 	metricsSource := sourceRegistry.Get("prometheus")
@@ -90,7 +90,7 @@ func CollectModelRequestCount(
 		Params:  params,
 	})
 	if err != nil {
-		logger.V(logging.DEBUG).Info("Failed to query model request count",
+		logger.V(logging.VERBOSE).Info("Failed to query model request count",
 			"model", modelID,
 			"namespace", namespace,
 			"retentionPeriod", retentionPeriodStr,
@@ -101,7 +101,7 @@ func CollectModelRequestCount(
 	// Extract the result
 	result := results[QueryModelRequestCount]
 	if result == nil {
-		logger.V(logging.DEBUG).Info("No result for model request count query",
+		logger.V(logging.VERBOSE).Info("No result for model request count query",
 			"model", modelID,
 			"namespace", namespace,
 			"retentionPeriod", retentionPeriodStr)
@@ -109,7 +109,7 @@ func CollectModelRequestCount(
 	}
 
 	if result.HasError() {
-		logger.V(logging.DEBUG).Info("Model request count query failed",
+		logger.V(logging.VERBOSE).Info("Model request count query failed",
 			"model", modelID,
 			"namespace", namespace,
 			"retentionPeriod", retentionPeriodStr,

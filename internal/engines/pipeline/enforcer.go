@@ -9,25 +9,23 @@ import (
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/config"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/saturation"
 )
 
-// DefaultVariantCost is used when a variant's cost is not specified.
-const DefaultVariantCost = 1.0
-
-// RequestCountFunc is the signature for functions that retrieve the total request count
+// RequestCountFuncType is the signature for functions that retrieve the total request count
 // for a model over a specified retention period. This type alias improves readability
 // and makes the function signature reusable across the codebase.
-type RequestCountFunc func(ctx context.Context, modelID, namespace string, retentionPeriod time.Duration) (float64, error)
+type RequestCountFuncType func(ctx context.Context, modelID, namespace string, retentionPeriod time.Duration) (float64, error)
 
 // Enforcer applies scale-to-zero and minimum replica enforcement after saturation analysis.
 type Enforcer struct {
 	// requestCountFunc is a function that returns the total request count for a model.
 	// Injected for testability.
-	requestCountFunc RequestCountFunc
+	requestCountFunc RequestCountFuncType
 }
 
 // NewEnforcer creates a new scale-to-zero enforcer.
-func NewEnforcer(requestCountFunc RequestCountFunc) *Enforcer {
+func NewEnforcer(requestCountFunc RequestCountFuncType) *Enforcer {
 	return &Enforcer{
 		requestCountFunc: requestCountFunc,
 	}
@@ -163,7 +161,7 @@ func (e *Enforcer) ensureMinimumReplicas(
 	for variant := range targets {
 		cost, hasCost := variantCosts[variant]
 		if !hasCost {
-			cost = DefaultVariantCost // Use default if cost not available
+			cost = saturation.DefaultVariantCost // Use default if cost not available
 		}
 
 		if cheapestCost < 0 || cost < cheapestCost || (cost == cheapestCost && variant < cheapestVariant) {

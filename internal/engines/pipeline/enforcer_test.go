@@ -306,7 +306,7 @@ var _ = Describe("Enforcer", func() {
 				}
 				variantAnalyses = []interfaces.VariantSaturationAnalysis{
 					{VariantName: "variant-a", Cost: 100.0}, // Very expensive
-					// variant-missing not in analysis - uses DefaultVariantCost (1.0)
+					// variant-missing not in analysis - uses saturation.DefaultVariantCost (10.0)
 				}
 			})
 
