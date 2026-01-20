@@ -473,6 +473,8 @@ jobs:
           CONTROLLER_INSTANCE: ${{ env.WVA_NAMESPACE }}
           # vLLM max-num-seqs for e2e testing (lower = easier to saturate)
           VLLM_MAX_NUM_SEQS: ${{ env.MAX_NUM_SEQS }}
+          # Disable benchmark mode - istioBench environment not available in llm-d helmfile
+          BENCHMARK_MODE: "false"
         run: |
           echo "Deploying WVA and llm-d infrastructure..."
           echo "  MODEL_ID: $MODEL_ID"
@@ -526,6 +528,8 @@ jobs:
           DEPLOY_HPA: "false"
           # vLLM max-num-seqs for e2e testing (lower = easier to saturate)
           VLLM_MAX_NUM_SEQS: ${{ env.MAX_NUM_SEQS }}
+          # Disable benchmark mode - istioBench environment not available in llm-d helmfile
+          BENCHMARK_MODE: "false"
         run: |
           echo "Deploying Model B infrastructure in $LLMD_NAMESPACE_B..."
           echo "  MODEL_ID: $MODEL_ID"
