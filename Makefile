@@ -153,7 +153,7 @@ test-e2e: manifests generate fmt vet ## Run the e2e tests. Expected an isolated 
 		echo "Kind is not installed. Please install Kind manually."; \
 		exit 1; \
 	}
-	$(eval FOCUS_ARGS := $(if $(FOCUS),-ginkgo.focus="$(FOCUS)",-ginkgo.focus="Saturation Mode"))
+	$(eval FOCUS_ARGS := $(if $(FOCUS),-ginkgo.focus="$(FOCUS)",))
 	$(eval SKIP_ARGS := $(if $(SKIP),-ginkgo.skip="$(SKIP)",))
 	export COLLECTOR_V2=1 KUBECONFIG=$(KUBECONFIG) K8S_EXPECTED_VERSION=$(K8S_VERSION) && go test ./test/e2e-saturation-based/ -timeout 30m -v -ginkgo.v $(FOCUS_ARGS) $(SKIP_ARGS)
 

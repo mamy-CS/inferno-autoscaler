@@ -387,6 +387,11 @@ retention_period: %s`, modelName, retentionPeriodShort),
 		})
 
 		It("should scale actual deployment replicas to zero", func() {
+			// Skip if HPAScaleToZero feature gate is not enabled
+			if !utils.IsHPAScaleToZeroEnabled(ctx, k8sClient, GinkgoWriter) {
+				Skip("HPAScaleToZero feature gate is not enabled; skipping deployment scale-to-zero test")
+			}
+
 			By("waiting for HPA to scale deployment to 0 replicas")
 			Eventually(func(g Gomega) {
 				deploy, err := k8sClient.AppsV1().Deployments(namespace).Get(ctx, deployName, metav1.GetOptions{})
