@@ -332,7 +332,7 @@ func (p *PodScrapingSource) getAuthToken(ctx context.Context) (string, bool, err
 
 // parsePrometheusMetrics parses Prometheus text format into MetricResult.
 func (p *PodScrapingSource) parsePrometheusMetrics(reader io.Reader, podName string) (*source.MetricResult, error) {
-	parser := expfmt.NewTextParser(model.NameValidationScheme)
+	parser := expfmt.NewTextParser(model.UTF8Validation)
 	metricFamilies, err := parser.TextToMetricFamilies(reader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse metrics: %w", err)
