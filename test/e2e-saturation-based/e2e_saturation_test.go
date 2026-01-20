@@ -831,12 +831,9 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Multiple 
 	})
 
 	Context("Replica stability under constant load", func() {
-		//TODO: Flaky - re-enable when controller is stable
 		It("should maintain stable replica count under constant load", func() {
-			Skip("Flaky - re-enable when controller is stable")
 			By("starting constant load generation")
 			loadGenJob, err := utils.CreateLoadGeneratorJob(
-
 				namespace,
 				fmt.Sprintf("http://%s:%d", gatewayName, 80),
 				modelName,
@@ -855,8 +852,12 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Multiple 
 				Expect(err).NotTo(HaveOccurred(), "Should be able to stop load generator")
 			}()
 
-			By("waiting for stable state to be reached")
-			time.Sleep(30 * time.Second) // Allow initial stabilization
+			By("waiting for load generator to be ready (pod running + pip install complete)")
+			err = utils.WaitForLoadGeneratorReady(ctx, loadGenJob, k8sClient, GinkgoWriter)
+			Expect(err).NotTo(HaveOccurred(), "Load generator should become ready")
+
+			By("waiting for autoscaler to respond to load (2 minutes)")
+			time.Sleep(2 * time.Minute)
 
 			By("recording initial replica counts")
 			var initialA100Replicas, initialH100Replicas int
