@@ -355,13 +355,10 @@ var _ = Describe("Indexers", Ordered, func() {
 				Expect(client.IgnoreNotFound(k8sClient.Delete(testCtx, va))).To(Succeed())
 			}()
 
-			// FindVAForDeployment queries with "apps/v1", but VA has empty APIVersion
-			// They should NOT match - no implicit defaults are applied
-			// Wait for cache sync first
-			time.Sleep(100 * time.Millisecond)
-			found, err := FindVAForDeployment(testCtx, mgrClient, deploymentName, namespace)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(found).To(BeNil())
+			Consistently(func() (*llmdv1alpha1.VariantAutoscaling, error) {
+				return FindVAForDeployment(testCtx, mgrClient, deploymentName, namespace)
+			}, 1*time.Second, 100*time.Millisecond).Should(BeNil())
+
 		})
 	})
 })
