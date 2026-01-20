@@ -444,6 +444,12 @@ retention_period: %s`, modelName, retentionPeriodShort),
 	// Test retention period behavior - scale-to-zero should not happen immediately
 	Context("Retention period behavior", func() {
 		It("should respect retention period before scaling to zero", func() {
+			// Skip if HPAScaleToZero feature gate is not enabled
+			// This test depends on the previous scale-to-zero test having completed
+			if !utils.IsHPAScaleToZeroEnabled(ctx, k8sClient, GinkgoWriter) {
+				Skip("HPAScaleToZero feature gate is not enabled; skipping retention period test")
+			}
+
 			// This test verifies the retention period by checking that:
 			// 1. When there's recent traffic, scale-to-zero doesn't happen
 			// 2. The controller waits for the retention period before scaling down
