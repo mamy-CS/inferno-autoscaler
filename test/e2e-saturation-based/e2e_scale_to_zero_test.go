@@ -72,7 +72,7 @@ var _ = Describe("Test workload-variant-autoscaler - Scale-to-Zero Feature", Ord
 		initializeK8sClient()
 
 		ctx = context.Background()
-		name = "llm-d-sim"
+		name = "llm-d-sim-stz" // Use unique name to avoid conflicts with saturation test
 		deployName = name + "-deployment"
 		serviceName = name + "-service"
 		serviceMonName = name + "-servicemonitor"
@@ -343,6 +343,11 @@ retention_period: %s`, modelName, retentionPeriodShort),
 	// Scale-to-zero behavior - Test scale-to-zero after load stops
 	Context("Scale-to-zero behavior after stopping load", func() {
 		It("should scale VA desired replicas to zero when HPA minReplicas=0 and no requests", func() {
+			// Skip if HPAScaleToZero feature gate is not enabled
+			if !utils.IsHPAScaleToZeroEnabled(ctx, k8sClient, GinkgoWriter) {
+				Skip("HPAScaleToZero feature gate is not enabled; skipping scale-to-zero test")
+			}
+
 			_, _ = fmt.Fprintf(GinkgoWriter, "Enabling scale-to-zero by setting HPA minReplicas=0...\n")
 
 			By("updating HPA to allow scale-to-zero (minReplicas=0)")
@@ -610,10 +615,18 @@ enable_scale_to_zero: false`, modelName),
 		err = crClient.Create(ctx, variantAutoscaling)
 		Expect(err).NotTo(HaveOccurred())
 
-		By("creating HPA with minReplicas=0 (to test that controller prevents scale-to-zero)")
+		By("creating HPA (minReplicas depends on feature gate availability)")
 		hpa := utils.CreateHPAOnDesiredReplicaMetrics(hpaName, namespace, deployName, deployName, 10)
-		minReplicas := int32(0)
-		hpa.Spec.MinReplicas = &minReplicas
+		// Use minReplicas=0 only if HPAScaleToZero feature gate is enabled, otherwise use 1
+		if utils.IsHPAScaleToZeroEnabled(ctx, k8sClient, GinkgoWriter) {
+			minReplicas := int32(0)
+			hpa.Spec.MinReplicas = &minReplicas
+			_, _ = fmt.Fprintf(GinkgoWriter, "HPAScaleToZero feature gate enabled, setting minReplicas=0\n")
+		} else {
+			minReplicas := int32(1)
+			hpa.Spec.MinReplicas = &minReplicas
+			_, _ = fmt.Fprintf(GinkgoWriter, "HPAScaleToZero feature gate disabled, setting minReplicas=1\n")
+		}
 		_, err = k8sClient.AutoscalingV2().HorizontalPodAutoscalers(namespace).Create(ctx, hpa, metav1.CreateOptions{})
 		Expect(err).NotTo(HaveOccurred())
 	})
