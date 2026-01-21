@@ -49,6 +49,9 @@ func CreateLlmdSimDeployment(namespace, deployName, modelName, appLabel, port st
 								fmt.Sprintf("--time-to-first-token=%d", avgTTFT),
 								fmt.Sprintf("--inter-token-latency=%d", avgITL),
 								"--mode=random",
+								"--enable-kvcache",
+								"--kv-cache-size=1024",
+								"--block-size=16",
 							},
 							Env: []corev1.EnvVar{
 								{Name: "POD_NAME", ValueFrom: &corev1.EnvVarSource{
