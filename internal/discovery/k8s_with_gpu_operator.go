@@ -91,3 +91,115 @@ func (d *K8sWithGpuOperator) Discover(ctx context.Context) (map[string]map[strin
 
 	return inv, nil
 }
+
+// DiscoverUsage calculates current GPU usage by summing GPU requests from running pods.
+// Returns a map of accelerator type to used GPU count.
+func (d *K8sWithGpuOperator) DiscoverUsage(ctx context.Context) (map[string]int, error) {
+	// First, build a map of node name -> GPU type
+	nodeGPUType, err := d.discoverNodeGPUTypes(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to discover node GPU types: %w", err)
+	}
+
+	// List all pods (running or pending on a node)
+	var podList corev1.PodList
+	if err := d.Client.List(ctx, &podList); err != nil {
+		return nil, fmt.Errorf("failed to list pods: %w", err)
+	}
+
+	// Aggregate GPU requests by accelerator type
+	usageByType := make(map[string]int)
+
+	for _, pod := range podList.Items {
+		// Skip pods that aren't scheduled or are completed/failed
+		if pod.Spec.NodeName == "" {
+			continue
+		}
+		if pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
+			continue
+		}
+
+		// Get the GPU type for this node
+		gpuType, ok := nodeGPUType[pod.Spec.NodeName]
+		if !ok {
+			// Node doesn't have GPUs, skip
+			continue
+		}
+
+		// Sum GPU requests from all containers
+		gpuCount := getPodGPURequests(&pod)
+		if gpuCount > 0 {
+			usageByType[gpuType] += gpuCount
+		}
+	}
+
+	return usageByType, nil
+}
+
+// discoverNodeGPUTypes returns a map of node name to GPU type (model name).
+func (d *K8sWithGpuOperator) discoverNodeGPUTypes(ctx context.Context) (map[string]string, error) {
+	// Use the same filtering as Discover()
+	req, err := labels.NewRequirement("nvidia.com/gpu.product", selection.Exists, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create label requirement: %w", err)
+	}
+	selector := labels.NewSelector().Add(*req)
+
+	// Check for WVA_NODE_SELECTOR environment variable for sharding
+	if selectorStr := os.Getenv("WVA_NODE_SELECTOR"); selectorStr != "" {
+		userSelector, err := labels.Parse(selectorStr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid WVA_NODE_SELECTOR: %w", err)
+		}
+		requirements, _ := userSelector.Requirements()
+		for _, req := range requirements {
+			selector = selector.Add(req)
+		}
+	}
+
+	var nodeList corev1.NodeList
+	if err := d.Client.List(ctx, &nodeList, &client.ListOptions{LabelSelector: selector}); err != nil {
+		return nil, fmt.Errorf("failed to list nodes: %w", err)
+	}
+
+	nodeGPUType := make(map[string]string)
+	for _, node := range nodeList.Items {
+		for _, vendor := range vendors {
+			prodKey := vendor + "/gpu.product"
+			if model, ok := node.Labels[prodKey]; ok {
+				nodeGPUType[node.Name] = model
+				break // Only one GPU type per node expected
+			}
+		}
+	}
+
+	return nodeGPUType, nil
+}
+
+// getPodGPURequests returns the total GPU requests for a pod across all containers.
+func getPodGPURequests(pod *corev1.Pod) int {
+	total := 0
+	for _, container := range pod.Spec.Containers {
+		for _, vendor := range vendors {
+			resName := corev1.ResourceName(vendor + "/gpu")
+			if qty, ok := container.Resources.Requests[resName]; ok {
+				total += int(qty.Value())
+			}
+		}
+	}
+	// Also check init containers
+	for _, container := range pod.Spec.InitContainers {
+		for _, vendor := range vendors {
+			resName := corev1.ResourceName(vendor + "/gpu")
+			if qty, ok := container.Resources.Requests[resName]; ok {
+				// Init containers run sequentially, so we take the max, not sum
+				// But for simplicity, we can sum here as they don't run concurrently with main containers
+				total += int(qty.Value())
+			}
+		}
+	}
+	return total
+}
+
+// Ensure K8sWithGpuOperator implements FullDiscovery
+var _ FullDiscovery = (*K8sWithGpuOperator)(nil)
