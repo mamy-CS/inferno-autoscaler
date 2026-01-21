@@ -98,7 +98,7 @@ func TestGroupVariantAutoscalingByModel(t *testing.T) {
 		expectedKeys   []string
 	}{
 		{
-			name: "same model different accelerators creates separate groups",
+			name: "same model different accelerators groups together for cost optimization",
 			vas: []wvav1alpha1.VariantAutoscaling{
 				{
 					ObjectMeta: metav1.ObjectMeta{
@@ -125,11 +125,11 @@ func TestGroupVariantAutoscalingByModel(t *testing.T) {
 					},
 				},
 			},
-			expectedGroups: 2,
-			expectedKeys:   []string{"llama-8b|default|A100", "llama-8b|default|H100"},
+			expectedGroups: 1,
+			expectedKeys:   []string{"llama-8b|default"},
 		},
 		{
-			name: "same model same accelerator groups together",
+			name: "same model same namespace groups together",
 			vas: []wvav1alpha1.VariantAutoscaling{
 				{
 					ObjectMeta: metav1.ObjectMeta{
@@ -151,7 +151,7 @@ func TestGroupVariantAutoscalingByModel(t *testing.T) {
 				},
 			},
 			expectedGroups: 1,
-			expectedKeys:   []string{"llama-8b|default|"},
+			expectedKeys:   []string{"llama-8b|default"},
 		},
 		{
 			name: "different namespaces creates separate groups",
@@ -176,7 +176,7 @@ func TestGroupVariantAutoscalingByModel(t *testing.T) {
 				},
 			},
 			expectedGroups: 2,
-			expectedKeys:   []string{"llama-8b|ns1|", "llama-8b|ns2|"},
+			expectedKeys:   []string{"llama-8b|ns1", "llama-8b|ns2"},
 		},
 	}
 

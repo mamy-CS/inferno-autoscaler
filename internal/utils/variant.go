@@ -57,19 +57,17 @@ func InactiveVariantAutoscalingByModel(ctx context.Context, client client.Client
 // AcceleratorNameLabel is the label key used to specify the accelerator name for a VA.
 const AcceleratorNameLabel = "inference.optimization/acceleratorName"
 
-// GroupVariantAutoscalingByModel groups VariantAutoscalings by model ID, namespace, AND accelerator type.
-// This is necessary because the same model deployed in different namespaces or on different hardware
-// should be treated as separate scaling domains for saturation analysis.
-// The key format is "modelID|namespace|accelerator" to ensure proper isolation.
+// GroupVariantAutoscalingByModel groups VariantAutoscalings by model ID and namespace.
+// Variants of the same model on different accelerators are grouped together to enable
+// cost-based optimization (scale up cheaper variants, scale down expensive variants).
+// The key format is "modelID|namespace".
 func GroupVariantAutoscalingByModel(
 	vas []wvav1alpha1.VariantAutoscaling,
 ) map[string][]wvav1alpha1.VariantAutoscaling {
 	groups := make(map[string][]wvav1alpha1.VariantAutoscaling)
 	for _, va := range vas {
-		// Use modelID + namespace + accelerator as key to isolate VAs
-		// on different hardware types
-		accelerator := GetAcceleratorType(&va)
-		key := va.Spec.ModelID + "|" + va.Namespace + "|" + accelerator
+		// Use modelID + namespace as key to group all variants of same model
+		key := va.Spec.ModelID + "|" + va.Namespace
 		groups[key] = append(groups[key], va)
 	}
 	return groups
