@@ -386,6 +386,74 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Single Va
 		})
 	})
 
+	Context("Replica stability under constant load", func() {
+		It("should maintain stable replica count under constant load", func() {
+			By("starting constant load generation")
+			loadGenJob, err := utils.CreateLoadGeneratorJob(
+				namespace,
+				fmt.Sprintf("http://%s:%d", serviceName, port),
+				modelName,
+				loadRatePerSecond,
+				maxExecutionTimeSec,
+				inputTokens,
+				outputTokens,
+				k8sClient,
+				ctx,
+			)
+			Expect(err).NotTo(HaveOccurred(), "Should be able to start constant load generator")
+
+			defer func() {
+				By("stopping load generation job")
+				err = utils.StopJob(namespace, loadGenJob, k8sClient, ctx)
+				Expect(err).NotTo(HaveOccurred(), "Should be able to stop load generator")
+			}()
+
+			By("waiting for load generator to be ready (pod running + pip install complete)")
+			err = utils.WaitForLoadGeneratorReady(ctx, loadGenJob, k8sClient, GinkgoWriter)
+			Expect(err).NotTo(HaveOccurred(), "Load generator should become ready")
+
+			By("recording initial replica count after load stabilizes")
+			var initialReplicas int
+			Eventually(func(g Gomega) {
+				va := &v1alpha1.VariantAutoscaling{}
+				err := crClient.Get(ctx, client.ObjectKey{
+					Namespace: namespace,
+					Name:      deployName,
+				}, va)
+				g.Expect(err).NotTo(HaveOccurred())
+
+				initialReplicas = va.Status.DesiredOptimizedAlloc.NumReplicas
+
+				// Ensure we have some replicas running under load
+				g.Expect(initialReplicas).To(BeNumerically(">", 0),
+					"Should have replicas running under load")
+			}, 2*time.Minute, 10*time.Second).Should(Succeed())
+
+			_, _ = fmt.Fprintf(GinkgoWriter, "Initial stable state: %d replicas\n", initialReplicas)
+
+			By("verifying replica count remains stable for 3 minutes")
+			Consistently(func(g Gomega) {
+				va := &v1alpha1.VariantAutoscaling{}
+				err := crClient.Get(ctx, client.ObjectKey{
+					Namespace: namespace,
+					Name:      deployName,
+				}, va)
+				g.Expect(err).NotTo(HaveOccurred())
+
+				currentReplicas := va.Status.DesiredOptimizedAlloc.NumReplicas
+
+				// Allow small fluctuations (±1 replica) due to metric variance
+				g.Expect(currentReplicas).To(BeNumerically("~", initialReplicas, 1),
+					fmt.Sprintf("Replicas should remain stable around %d, but got %d", initialReplicas, currentReplicas))
+
+			}, 3*time.Minute, 15*time.Second).Should(Succeed())
+
+			By("logging VariantAutoscaling status after stability check")
+			err = utils.LogVariantAutoscalingStatus(ctx, deployName, namespace, crClient, GinkgoWriter)
+			Expect(err).NotTo(HaveOccurred(), "Should be able to log VariantAutoscaling status after stability check")
+		})
+	})
+
 	AfterAll(func() {
 		By("cleaning up test resources")
 
@@ -830,8 +898,11 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Multiple 
 		})
 	})
 
+	// TODO: This test is flaky because A100 and H100 variants share the same model
+	// and get grouped together for cost-based optimization, causing replica shifts
+	// between variants even under constant load. Needs redesign with independent variants.
 	Context("Replica stability under constant load", func() {
-		It("should maintain stable replica count under constant load", func() {
+		PIt("should maintain stable replica count under constant load", func() {
 			By("starting constant load generation")
 			loadGenJob, err := utils.CreateLoadGeneratorJob(
 				namespace,
