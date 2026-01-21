@@ -74,8 +74,6 @@ func (a *Analyzer) AnalyzeModelSaturation(
 	var totalSpareKv float64
 	var totalSpareQueue float64
 	var nonSaturatedCount int
-	var maxKvUsage float64
-	var maxQueueLen int
 
 	variantAnalyses := make([]interfaces.VariantSaturationAnalysis, 0, len(variantMap))
 
@@ -87,14 +85,6 @@ func (a *Analyzer) AnalyzeModelSaturation(
 		nonSaturatedCount += variantAnalysis.NonSaturatedCount
 		totalSpareKv += variantAnalysis.AvgSpareKvCapacity * float64(variantAnalysis.NonSaturatedCount)
 		totalSpareQueue += variantAnalysis.AvgSpareQueueLength * float64(variantAnalysis.NonSaturatedCount)
-
-		// Track worst-case metrics
-		if variantAnalysis.MaxKvCacheUsage > maxKvUsage {
-			maxKvUsage = variantAnalysis.MaxKvCacheUsage
-		}
-		if variantAnalysis.MaxQueueLength > maxQueueLen {
-			maxQueueLen = variantAnalysis.MaxQueueLength
-		}
 	}
 
 	analysis.TotalReplicas = len(replicaMetrics)
@@ -115,9 +105,12 @@ func (a *Analyzer) AnalyzeModelSaturation(
 	)
 
 	// Step 4: Determine if scale-down is safe
+	// Pass pre-calculated average spare capacities to avoid redundant iteration
 	analysis.ScaleDownSafe = a.isScaleDownSafe(
 		ctx,
-		replicaMetrics,
+		nonSaturatedCount,
+		analysis.AvgSpareKvCapacity,
+		analysis.AvgSpareQueueLength,
 		config,
 	)
 
@@ -236,21 +229,11 @@ func (a *Analyzer) shouldScaleUp(
 // redistributing that load across (N-1) replicas to determine if spare Saturation remains adequate.
 func (a *Analyzer) isScaleDownSafe(
 	ctx context.Context,
-	replicaMetrics []interfaces.ReplicaMetrics,
+	nonSaturatedCount int,
+	avgSpareKv float64,
+	avgSpareQueue float64,
 	config interfaces.SaturationScalingConfig,
 ) bool {
-
-	// Collect non-saturated replicas
-	var nonSaturatedMetrics []interfaces.ReplicaMetrics
-	for _, m := range replicaMetrics {
-		isSaturated := m.KvCacheUsage >= config.KvCacheThreshold ||
-			float64(m.QueueLength) >= config.QueueLengthThreshold
-		if !isSaturated {
-			nonSaturatedMetrics = append(nonSaturatedMetrics, m)
-		}
-	}
-
-	nonSaturatedCount := len(nonSaturatedMetrics)
 
 	// Require minimum non-saturated replicas for scale-down safety
 	// With fewer replicas, we cannot safely redistribute load without risking saturation
@@ -260,20 +243,20 @@ func (a *Analyzer) isScaleDownSafe(
 		return false
 	}
 
-	// Calculate total load across all non-saturated replicas
-	var totalKvLoad float64
-	var totalQueueLoad int
-	for _, m := range nonSaturatedMetrics {
-		totalKvLoad += m.KvCacheUsage
-		totalQueueLoad += m.QueueLength
-	}
+	// Calculate current average load per replica
+	// Load = Threshold - Spare
+	avgKvLoad := config.KvCacheThreshold - avgSpareKv
+	avgQueueLoad := config.QueueLengthThreshold - avgSpareQueue
 
-	// Simulate removing one replica: redistribute total load across remaining replicas
+	// Simulate removing one replica: load increases by factor of N/(N-1)
+	// New avg load = current avg load × N/(N-1)
 	remainingCount := nonSaturatedCount - 1
-	avgKvAfterRemoval := totalKvLoad / float64(remainingCount)
-	avgQueueAfterRemoval := float64(totalQueueLoad) / float64(remainingCount)
+	scaleFactor := float64(nonSaturatedCount) / float64(remainingCount)
+	avgKvAfterRemoval := avgKvLoad * scaleFactor
+	avgQueueAfterRemoval := avgQueueLoad * scaleFactor
 
-	// Calculate spare Saturation after redistribution
+	// Calculate spare capacity after redistribution
+	// Spare = Threshold - Load
 	remainingSpareKv := config.KvCacheThreshold - avgKvAfterRemoval
 	remainingSpareQueue := config.QueueLengthThreshold - avgQueueAfterRemoval
 
