@@ -74,12 +74,6 @@ type Engine struct {
 	GPULimiter pipeline.Limiter
 }
 
-// getVariantKey returns a unique key for a variant combining namespace and name.
-// This ensures no collisions when multiple namespaces have deployments with the same name.
-func getVariantKey(namespace, name string) string {
-	return namespace + "/" + name
-}
-
 // NewEngine creates a new instance of the saturation engine.
 func NewEngine(client client.Client, scheme *runtime.Scheme, recorder record.EventRecorder, metricsRegistry *source.SourceRegistry) *Engine {
 	promSource := metricsRegistry.Get("prometheus") // assume prometheus source is registered
@@ -196,15 +190,15 @@ func (e *Engine) optimize(ctx context.Context) error {
 
 	// Create VA lookup map for applySaturationDecisions (used to access VA status and update decisions)
 	// Copy slice elements to local variable to ensure stable pointers
-	// Use namespace/deploymentName as key to avoid collisions when multiple namespaces have same deployment name
+	// Use namespace/vaName as key to avoid collisions when multiple namespaces have same VA name
 	vaMap := make(map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling, len(activeVAs))
 	for i := range activeVAs {
 		va := activeVAs[i] // Copy to local variable to ensure stable pointer
-		vaMap[getVariantKey(va.Namespace, va.GetScaleTargetName())] = &va
+		vaMap[utils.GetVariantKey(va.Namespace, va.Name)] = &va
 	}
 
 	// Create map to store current allocations populated during metrics collection
-	// Keyed by deployment name (ScaleTargetName)
+	// Keyed by VariantAutoscaling Namespace/Name
 	currentAllocations := make(map[string]*interfaces.Allocation)
 
 	for groupKey, modelVAs := range modelGroups {
@@ -336,10 +330,7 @@ func (e *Engine) BuildVariantStates(
 
 		// Try to look up in provided map first (optimization)
 		if deployments != nil {
-			// Deployment map is keyed by deployment name
-			// But do we know the deployment name?
-			// va.GetScaleTargetName() gives the name.
-			deploy, found = deployments[va.GetScaleTargetName()]
+			deploy, found = deployments[utils.GetVariantKey(va.Namespace, va.Name)]
 		}
 
 		if !found {
@@ -379,7 +370,7 @@ func (e *Engine) BuildVariantStates(
 		ctrl.LoggerFrom(ctx).V(1).Info("BuildVariantStates result", "variant", va.Name, "currentReplicas", currentReplicas, "readyReplicas", readyReplicas, "pendingReplicas", pendingReplicas, "gpusPerReplica", gpusPerReplica)
 
 		states = append(states, interfaces.VariantReplicaState{
-			VariantName:     deploy.Name,
+			VariantName:     va.Name,
 			CurrentReplicas: currentReplicas,
 			DesiredReplicas: va.Status.DesiredOptimizedAlloc.NumReplicas,
 			PendingReplicas: pendingReplicas,
@@ -537,11 +528,11 @@ func (e *Engine) RunSaturationAnalysis(
 			}
 		}
 
-		// Use deployment name as key (not VA name) since getExistingPods uses
-		// the key to build pod name regex filters for Prometheus queries
-		deployments[deploy.Name] = &deploy
-		variantAutoscalings[deploy.Name] = va
-		variantCosts[deploy.Name] = cost
+		// Populate maps indexed by VariantAutoscaling namespace/name
+		variantKey := utils.GetVariantKey(va.Namespace, va.Name)
+		deployments[variantKey] = &deploy
+		variantAutoscalings[variantKey] = va
+		variantCosts[variantKey] = cost
 	}
 
 	// Collect Saturation metrics using source infrastructure
@@ -606,7 +597,7 @@ func (e *Engine) applySaturationDecisions(
 	// Use namespace/variantName as key to match vaMap and avoid collisions
 	decisionMap := make(map[string]interfaces.VariantDecision)
 	for _, d := range decisions {
-		decisionMap[getVariantKey(d.Namespace, d.VariantName)] = d
+		decisionMap[utils.GetVariantKey(d.Namespace, d.VariantName)] = d
 	}
 
 	// Iterate over ALL active VAs to ensure we update status and trigger reconciliation for everyone
@@ -830,7 +821,7 @@ func (e *Engine) emitSafetyNetMetrics(
 		if err != nil {
 			logger.Error(err, "Safety net: failed to get current replicas from Deployment for metrics", "using cached allocation",
 				"variant", va.Name)
-			if curr, ok := currentAllocations[va.GetScaleTargetName()]; ok {
+			if curr, ok := currentAllocations[utils.GetVariantKey(va.Namespace, va.Name)]; ok {
 				currentReplicas = int32(curr.NumReplicas)
 			}
 		}
@@ -849,13 +840,13 @@ func (e *Engine) emitSafetyNetMetrics(
 		// with required accelerator field
 		accelerator := va.Status.DesiredOptimizedAlloc.Accelerator
 		if accelerator == "" {
-			if curr, ok := currentAllocations[va.GetScaleTargetName()]; ok {
+			if curr, ok := currentAllocations[utils.GetVariantKey(va.Namespace, va.Name)]; ok {
 				accelerator = curr.Accelerator
 			}
 		}
 		if accelerator == "" {
 			// Try to get from VA labels as last resort
-			if val, ok := va.Labels["inference.optimization/acceleratorName"]; ok && val != "" {
+			if val, ok := va.Labels[utils.AcceleratorNameLabel]; ok && val != "" {
 				accelerator = val
 			}
 		}

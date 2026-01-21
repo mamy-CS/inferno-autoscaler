@@ -25,21 +25,36 @@ func NewPodVAMapper(k8sClient client.Client) *PodVAMapper {
 	}
 }
 
-// FindVAForPod finds the VariantAutoscaling object for a Pod by first finding
-// its Deployment and then finding the VA that targets that Deployment using indexed lookups.
-//
-// Returns the VA name if found, empty string otherwise.
+// FindVAForPod finds the VariantAutoscaling object for a Pod by:
+// 1. finding the Deployment owning the Pod
+// 2. finding the VariantAutoscaling that targets that Deployment, using indexed lookups.
+// Returns the VariantAutoscaling name if found, empty string otherwise.
 func (m *PodVAMapper) FindVAForPod(
 	ctx context.Context,
 	podName string,
 	namespace string,
 	deployments map[string]*appsv1.Deployment,
 ) string {
+	logger := ctrl.LoggerFrom(ctx)
+
 	deploymentName := m.findDeploymentForPod(ctx, podName, namespace, deployments)
 	if deploymentName == "" {
 		return ""
 	}
-	return m.findVAForDeployment(ctx, deploymentName, namespace)
+
+	// Use indexed lookup for VariantAutoscaling targeting this Deployment
+	va, err := indexers.FindVAForDeployment(ctx, m.k8sClient, deploymentName, namespace)
+	if err != nil {
+		logger.V(logging.DEBUG).Error(err, "failed to find VariantAutoscaling for deployment", "deployment", deploymentName, "namespace", namespace)
+		return ""
+	}
+
+	if va == nil {
+		logger.V(logging.DEBUG).Info("no VariantAutoscaling matched for deployment", "deployment", deploymentName, "namespace", namespace)
+		return ""
+	}
+
+	return va.Name
 }
 
 // findDeploymentForPod finds which Deployment owns a Pod by traversing owner references.
@@ -76,30 +91,10 @@ func (m *PodVAMapper) findDeploymentForPod(
 	}
 
 	// Verify the Deployment is in our map of tracked Deployments
-	if _, exists := deployments[rsOwner.Name]; exists {
-		return rsOwner.Name
+	for _, deploy := range deployments {
+		if deploy != nil && deploy.Name == rsOwner.Name && deploy.Namespace == namespace {
+			return rsOwner.Name
+		}
 	}
 	return ""
-}
-
-// findVAForDeployment finds the VariantAutoscaling object that targets a Deployment.
-func (m *PodVAMapper) findVAForDeployment(
-	ctx context.Context,
-	deploymentName string,
-	namespace string,
-) string {
-	logger := ctrl.LoggerFrom(ctx)
-
-	// Use indexed lookup for VA targeting this Deployment
-	va, err := indexers.FindVAForDeployment(ctx, m.k8sClient, deploymentName, namespace)
-	if err != nil {
-		logger.Error(err, "failed to find VA for deployment using index", "deployment", deploymentName, "namespace", namespace)
-		return ""
-	}
-
-	if va == nil {
-		return ""
-	}
-
-	return va.Name
 }

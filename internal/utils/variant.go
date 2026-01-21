@@ -211,3 +211,9 @@ func GetDesiredReplicas(deploy *appsv1.Deployment) int32 {
 	}
 	return *deploy.Spec.Replicas
 }
+
+// getVariantKey returns a unique key for a variant combining namespace and name.
+// This ensures no collisions when multiple namespaces have deployments with the same name.
+func GetVariantKey(namespace, name string) string {
+	return namespace + "/" + name
+}
