@@ -1,8 +1,8 @@
-// Package limiter provides interfaces for resource limiting algorithms.
+// Limiter interfaces for resource limiting algorithms.
 //
 // # Design Rationale
 //
-// The limiter package separates two orthogonal concerns:
+// The limiter interfaces separate two orthogonal concerns:
 //
 //  1. Inventory (Granularity): How resources are tracked and what constraints apply.
 //     Examples: cluster-wide pool, per-accelerator-type limits, node-level with scheduling.
@@ -43,7 +43,7 @@
 //   - Collector inventory: knows how to collect metrics, track staleness, emit events
 //   - Limiter inventory: knows resource availability for allocation decisions
 //   - Different responsibilities, different lifecycles
-package limiter
+package pipeline
 
 import (
 	"context"
