@@ -36,10 +36,10 @@ limitations under the License.
 //  4. In-cluster scraping: A Job running inside the cluster can successfully scrape metrics
 //
 // What is skipped on Kind:
-//  - Direct scraping tests (TestPodScrapingMetricsCollection, TestPodScrapingCaching)
-//    are skipped because pod IPs are not accessible from outside the cluster.
-//    These are replaced by TestInClusterScraping which creates a Job inside the
-//    cluster to verify scraping works.
+//   - Direct scraping tests (TestPodScrapingMetricsCollection, TestPodScrapingCaching)
+//     are skipped because pod IPs are not accessible from outside the cluster.
+//     These are replaced by TestInClusterScraping which creates a Job inside the
+//     cluster to verify scraping works.
 //
 // What unit tests verify (in internal/collector/source/pod/):
 //   - Actual scraping logic with mock HTTP servers
