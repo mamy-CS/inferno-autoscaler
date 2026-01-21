@@ -25,6 +25,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
+	ctrl "sigs.k8s.io/controller-runtime"
 )
 
 const (
@@ -38,6 +40,21 @@ const (
 // scaleTargetIndexKey returns the composite index key for a scale target reference.
 // Format: Namespace/APIVersion/Kind/Name (e.g., "default/apps/v1/Deployment/my-app")
 func scaleTargetIndexKey(namespace string, ref autoscalingv1.CrossVersionObjectReference) string {
+
+	logger := ctrl.LoggerFrom(context.Background())
+
+	if ref.APIVersion == "" {
+		switch ref.Kind {
+		case "Deployment":
+			ref.APIVersion = "apps/v1"
+
+		// Note: add other Kinds when support is added
+		default:
+			logger.V(logging.DEBUG).Info("Unsupported Kind with empty APIVersion - defaulting to apps/v1", "kind", ref.Kind)
+			ref.APIVersion = "apps/v1"
+		}
+	}
+
 	return fmt.Sprintf("%s/%s/%s/%s", namespace, ref.APIVersion, ref.Kind, ref.Name)
 }
 
