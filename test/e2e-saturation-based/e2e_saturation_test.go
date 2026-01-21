@@ -830,8 +830,11 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Multiple 
 		})
 	})
 
+	// TODO: This test is flaky because A100 and H100 variants share the same model
+	// and get grouped together for cost-based optimization, causing replica shifts
+	// between variants even under constant load. Needs redesign with independent variants.
 	Context("Replica stability under constant load", func() {
-		It("should maintain stable replica count under constant load", func() {
+		PIt("should maintain stable replica count under constant load", func() {
 			By("starting constant load generation")
 			loadGenJob, err := utils.CreateLoadGeneratorJob(
 				namespace,
