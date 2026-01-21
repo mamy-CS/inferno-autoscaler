@@ -176,6 +176,10 @@ func TestPodScrapingPodDiscovery(ctx context.Context, config PodScrapingTestConf
 
 // TestPodScrapingMetricsCollection tests that PodScrapingSource can scrape metrics from pods.
 func TestPodScrapingMetricsCollection(ctx context.Context, config PodScrapingTestConfig, g gom.Gomega) {
+	if config.Environment == "kind" {
+		ginkgo.Skip("Skipping metrics collection test on Kind - tests run from outside cluster where pod IPs are not accessible. Use 'should successfully scrape metrics from inside cluster' test instead.")
+	}
+
 	source, err := CreatePodScrapingSource(config)
 	g.Expect(err).NotTo(gom.HaveOccurred(), "Should be able to create PodScrapingSource")
 
@@ -191,68 +195,40 @@ func TestPodScrapingMetricsCollection(ctx context.Context, config PodScrapingTes
 	)
 	g.Expect(svcErr).NotTo(gom.HaveOccurred(), "Service should exist")
 
-	if config.Environment == "kind" {
-		if err != nil {
-			// Expected failure from outside cluster - verify infrastructure is correct
-			podList, listErr := config.K8sClient.CoreV1().Pods(config.ServiceNamespace).List(ctx, metav1.ListOptions{
-				LabelSelector: metav1.FormatLabelSelector(&metav1.LabelSelector{MatchLabels: service.Spec.Selector}),
-			})
-			g.Expect(listErr).NotTo(gom.HaveOccurred(), "Should be able to list pods")
-			g.Expect(podList.Items).NotTo(gom.BeEmpty(), "Should have EPP pods")
+	if err != nil {
+		// If scraping fails, verify infrastructure is correct
+		podList, listErr := config.K8sClient.CoreV1().Pods(config.ServiceNamespace).List(ctx, metav1.ListOptions{
+			LabelSelector: metav1.FormatLabelSelector(&metav1.LabelSelector{MatchLabels: service.Spec.Selector}),
+		})
+		g.Expect(listErr).NotTo(gom.HaveOccurred(), "Should be able to list pods")
+		g.Expect(podList.Items).NotTo(gom.BeEmpty(), "Should have EPP pods")
 
-			readyCount := 0
-			for _, pod := range podList.Items {
-				for _, condition := range pod.Status.Conditions {
-					if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
-						readyCount++
-						g.Expect(pod.Status.PodIP).NotTo(gom.BeEmpty(), "Pod should have IP")
-						break
-					}
+		readyCount := 0
+		for _, pod := range podList.Items {
+			for _, condition := range pod.Status.Conditions {
+				if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
+					readyCount++
+					g.Expect(pod.Status.PodIP).NotTo(gom.BeEmpty(), "Pod should have IP")
+					break
 				}
 			}
-			g.Expect(readyCount).To(gom.BeNumerically(">=", 1), "Should have at least one ready pod")
-
-			cached := source.Get("all_metrics", nil)
-			_ = cached // Verify Get doesn't panic
-		} else if results != nil {
-			g.Expect(results).To(gom.HaveKey("all_metrics"), "Should have all_metrics result")
 		}
-	} else {
-		if err != nil {
-			// If scraping fails, verify infrastructure is correct
+		g.Expect(readyCount).To(gom.BeNumerically(">=", 1), "Should have at least one ready pod")
+
+		cached := source.Get("all_metrics", nil)
+		_ = cached // Verify Get doesn't panic
+	} else if results != nil {
+		g.Expect(results).To(gom.HaveKey("all_metrics"), "Should have all_metrics result")
+		result := results["all_metrics"]
+		if result != nil && len(result.Values) > 0 {
+			g.Expect(result.Values).NotTo(gom.BeEmpty(), "Should have collected metrics from pods")
+		} else {
+			// Empty results - verify infrastructure instead
 			podList, listErr := config.K8sClient.CoreV1().Pods(config.ServiceNamespace).List(ctx, metav1.ListOptions{
 				LabelSelector: metav1.FormatLabelSelector(&metav1.LabelSelector{MatchLabels: service.Spec.Selector}),
 			})
 			g.Expect(listErr).NotTo(gom.HaveOccurred(), "Should be able to list pods")
 			g.Expect(podList.Items).NotTo(gom.BeEmpty(), "Should have EPP pods")
-
-			readyCount := 0
-			for _, pod := range podList.Items {
-				for _, condition := range pod.Status.Conditions {
-					if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
-						readyCount++
-						g.Expect(pod.Status.PodIP).NotTo(gom.BeEmpty(), "Pod should have IP")
-						break
-					}
-				}
-			}
-			g.Expect(readyCount).To(gom.BeNumerically(">=", 1), "Should have at least one ready pod")
-
-			cached := source.Get("all_metrics", nil)
-			_ = cached // Verify Get doesn't panic
-		} else if results != nil {
-			g.Expect(results).To(gom.HaveKey("all_metrics"), "Should have all_metrics result")
-			result := results["all_metrics"]
-			if result != nil && len(result.Values) > 0 {
-				g.Expect(result.Values).NotTo(gom.BeEmpty(), "Should have collected metrics from pods")
-			} else {
-				// Empty results - verify infrastructure instead
-				podList, listErr := config.K8sClient.CoreV1().Pods(config.ServiceNamespace).List(ctx, metav1.ListOptions{
-					LabelSelector: metav1.FormatLabelSelector(&metav1.LabelSelector{MatchLabels: service.Spec.Selector}),
-				})
-				g.Expect(listErr).NotTo(gom.HaveOccurred(), "Should be able to list pods")
-				g.Expect(podList.Items).NotTo(gom.BeEmpty(), "Should have EPP pods")
-			}
 		}
 	}
 }
@@ -389,6 +365,10 @@ func TestPodScrapingAuthentication(ctx context.Context, config PodScrapingTestCo
 
 // TestPodScrapingCaching tests that PodScrapingSource caches results
 func TestPodScrapingCaching(ctx context.Context, config PodScrapingTestConfig, g gom.Gomega) {
+	if config.Environment == "kind" {
+		ginkgo.Skip("Skipping caching test on Kind - tests run from outside cluster where pod IPs are not accessible. Use 'should successfully scrape metrics from inside cluster' test instead.")
+	}
+
 	source, err := CreatePodScrapingSource(config)
 	g.Expect(err).NotTo(gom.HaveOccurred(), "Should be able to create PodScrapingSource")
 
@@ -405,33 +385,21 @@ func TestPodScrapingCaching(ctx context.Context, config PodScrapingTestConfig, g
 		Queries: []string{"all_metrics"},
 	})
 
-	if config.Environment == "kind" {
-		cached := source.Get("all_metrics", nil)
+	cached := source.Get("all_metrics", nil)
+	g.Expect(cached).NotTo(gom.BeNil(), "Cached result should exist")
+
+	if err == nil && cached != nil && len(cached.Result.Values) > 0 {
+		g.Expect(cached.Result.Values).NotTo(gom.BeEmpty(), "Cached result should have values")
+		g.Expect(cached.IsExpired()).To(gom.BeFalse(), "Cache should not be expired immediately")
+	} else {
 		if cached != nil {
-			_ = cached.IsExpired() // Verify IsExpired doesn't panic
+			g.Expect(cached.IsExpired()).To(gom.BeFalse(), "Cache should not be expired immediately")
 		}
 		podList, listErr := config.K8sClient.CoreV1().Pods(config.ServiceNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: metav1.FormatLabelSelector(&metav1.LabelSelector{MatchLabels: service.Spec.Selector}),
 		})
 		g.Expect(listErr).NotTo(gom.HaveOccurred(), "Should be able to list pods")
 		g.Expect(podList.Items).NotTo(gom.BeEmpty(), "Should have EPP pods")
-	} else {
-		cached := source.Get("all_metrics", nil)
-		g.Expect(cached).NotTo(gom.BeNil(), "Cached result should exist")
-
-		if err == nil && cached != nil && len(cached.Result.Values) > 0 {
-			g.Expect(cached.Result.Values).NotTo(gom.BeEmpty(), "Cached result should have values")
-			g.Expect(cached.IsExpired()).To(gom.BeFalse(), "Cache should not be expired immediately")
-		} else {
-			if cached != nil {
-				g.Expect(cached.IsExpired()).To(gom.BeFalse(), "Cache should not be expired immediately")
-			}
-			podList, listErr := config.K8sClient.CoreV1().Pods(config.ServiceNamespace).List(ctx, metav1.ListOptions{
-				LabelSelector: metav1.FormatLabelSelector(&metav1.LabelSelector{MatchLabels: service.Spec.Selector}),
-			})
-			g.Expect(listErr).NotTo(gom.HaveOccurred(), "Should be able to list pods")
-			g.Expect(podList.Items).NotTo(gom.BeEmpty(), "Should have EPP pods")
-		}
 	}
 }
 
