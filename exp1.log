@@ -1,0 +1,138 @@
+/Users/abhishekmalvankar/wva_paper/workload-variant-autoscaler/bin/controller-gen rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=config/crd/bases
+/Users/abhishekmalvankar/wva_paper/workload-variant-autoscaler/bin/controller-gen object:headerFile="hack/boilerplate.go.txt" paths="./..."
+go fmt ./...
+go vet ./...
+export COLLECTOR_V2=1 KUBECONFIG=/Users/abhishekmalvankar/.kube/config K8S_EXPECTED_VERSION=v1.32.0 && go test ./test/e2e-saturation-based/ -timeout 30m -v -ginkgo.v -ginkgo.focus="Saturation Mode - Single VariantAutoscaling" 
+=== RUN   TestSaturationE2E
+  Starting workload-variant-autoscaler saturation-based test suite
+Running Suite: e2e saturation suite - /Users/abhishekmalvankar/wva_paper/workload-variant-autoscaler/test/e2e-saturation-based
+==============================================================================================================================
+Random Seed: [1m1768098473[0m
+
+Will run [1m5[0m of [1m14[0m specs
+[38;5;243m------------------------------[0m
+[0m[1m[BeforeSuite] [0m
+[38;5;243m/Users/abhishekmalvankar/wva_paper/workload-variant-autoscaler/test/e2e-saturation-based/e2e_saturation_suite_test.go:65[0m
+  [1mSTEP:[0m building the manager(Operator) image [38;5;243m@ 01/10/26 21:27:53.74[0m
+  running: make docker-build IMG=ghcr.io/llm-d-incubation/workload-variant-autoscaler:0.0.1-test
+  [1mSTEP:[0m exporting environment variables for deployment [38;5;243m@ 01/10/26 21:27:58.808[0m
+  [1mSTEP:[0m deploying Workload Variant Autoscaler on Kind [38;5;243m@ 01/10/26 21:27:58.808[0m
+  running: make deploy-wva-emulated-on-kind IMG=ghcr.io/llm-d-incubation/workload-variant-autoscaler:0.0.1-test
+  [1mSTEP:[0m waiting for the controller-manager pods to be ready [38;5;243m@ 01/10/26 21:34:51.697[0m
+  [1mSTEP:[0m waiting for the controller-manager to acquire lease [38;5;243m@ 01/10/26 21:34:51.71[0m
+  [1mSTEP:[0m verifying ConfigMap has saturation-only mode configured [38;5;243m@ 01/10/26 21:34:51.715[0m
+  saturation-based mode verified: EXPERIMENTAL_HYBRID_OPTIMIZATION=off
+  [1mSTEP:[0m updating saturation-scaling ConfigMap with relaxed thresholds [38;5;243m@ 01/10/26 21:34:51.721[0m
+  Updated saturation-scaling-config with relaxed thresholds: kvCache=0.70, queue=10.00, kvSpare=0.10, queueSpare=2.00
+  [1mSTEP:[0m restarting controller-manager pods to load new saturation configuration [38;5;243m@ 01/10/26 21:34:51.74[0m
+  Controller pods restarted and running with new saturation configuration
+  [1mSTEP:[0m checking if cert manager is installed already [38;5;243m@ 01/10/26 21:34:51.796[0m
+  running: kubectl get crds
+  Installing CertManager...
+  running: kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.16.3/cert-manager.yaml
+  running: kubectl wait deployment.apps/cert-manager-webhook --for condition=Available --namespace cert-manager --timeout 5m
+[38;5;10m[BeforeSuite] PASSED [440.136 seconds][0m
+[38;5;243m------------------------------[0m
+[38;5;14mS[0m[38;5;14mS[0m[38;5;14mS[0m[38;5;14mS[0m[38;5;14mS[0m[38;5;14mS[0m[38;5;14mS[0m
+[38;5;243m------------------------------[0m
+[0mTest workload-variant-autoscaler - Saturation Mode - Single VariantAutoscaling [38;5;243mConfigMap and VA existence checks [0m[1mshould have saturation-scaling ConfigMap with default configuration spawned[0m
+[38;5;243m/Users/abhishekmalvankar/wva_paper/workload-variant-autoscaler/test/e2e-saturation-based/e2e_saturation_test.go:213[0m
+  [1mSTEP:[0m verifying saturation-scaling ConfigMap exists before creating VA [38;5;243m@ 01/10/26 21:35:13.882[0m
+  [1mSTEP:[0m ensuring unique app label for deployment and service [38;5;243m@ 01/10/26 21:35:13.887[0m
+  [1mSTEP:[0m creating llm-d-sim deployment [38;5;243m@ 01/10/26 21:35:13.928[0m
+  [1mSTEP:[0m creating service to expose llm-d-sim deployment [38;5;243m@ 01/10/26 21:35:13.942[0m
+  [1mSTEP:[0m creating ServiceMonitor for vLLM metrics [38;5;243m@ 01/10/26 21:35:13.978[0m
+  [1mSTEP:[0m waiting for pod to be running before creating VariantAutoscaling [38;5;243m@ 01/10/26 21:35:14.042[0m
+  [1mSTEP:[0m creating VariantAutoscaling resource [38;5;243m@ 01/10/26 21:35:34.094[0m
+  [1mSTEP:[0m creating HorizontalPodAutoscaler for deployment [38;5;243m@ 01/10/26 21:35:34.108[0m
+  [1mSTEP:[0m verifying ConfigMap exists with expected structure [38;5;243m@ 01/10/26 21:35:34.177[0m
+  [1mSTEP:[0m verifying default configuration exists [38;5;243m@ 01/10/26 21:35:34.192[0m
+  ConfigMap workload-variant-autoscaler-saturation-scaling-config verified with default configuration
+[38;5;10m• [20.313 seconds][0m
+[38;5;243m------------------------------[0m
+[0mTest workload-variant-autoscaler - Saturation Mode - Single VariantAutoscaling [38;5;243mConfigMap and VA existence checks [0m[1mshould have VariantAutoscaling resource created[0m
+[38;5;243m/Users/abhishekmalvankar/wva_paper/workload-variant-autoscaler/test/e2e-saturation-based/e2e_saturation_test.go:230[0m
+  [1mSTEP:[0m verifying VariantAutoscaling exists [38;5;243m@ 01/10/26 21:35:34.192[0m
+  VariantAutoscaling resource verified: llm-d-sim-deployment
+[38;5;10m• [0.005 seconds][0m
+[38;5;243m------------------------------[0m
+[0mTest workload-variant-autoscaler - Saturation Mode - Single VariantAutoscaling [38;5;243mConfigMap and VA existence checks [0m[1mshould have HPA created and configured correctly[0m
+[38;5;243m/Users/abhishekmalvankar/wva_paper/workload-variant-autoscaler/test/e2e-saturation-based/e2e_saturation_test.go:243[0m
+  [1mSTEP:[0m verifying HPA exists [38;5;243m@ 01/10/26 21:35:34.197[0m
+  [1mSTEP:[0m verifying HPA targets correct deployment [38;5;243m@ 01/10/26 21:35:34.202[0m
+  [1mSTEP:[0m verifying HPA uses external metrics [38;5;243m@ 01/10/26 21:35:34.202[0m
+  HPA llm-d-sim-hpa verified and configured correctly
+[38;5;10m• [0.005 seconds][0m
+[38;5;243m------------------------------[0m
+[0mTest workload-variant-autoscaler - Saturation Mode - Single VariantAutoscaling [38;5;243mBefore load - initial replica count [0m[1mshould have correct initial replica count before applying load[0m
+[38;5;243m/Users/abhishekmalvankar/wva_paper/workload-variant-autoscaler/test/e2e-saturation-based/e2e_saturation_test.go:263[0m
+  [1mSTEP:[0m waiting for DesiredOptimizedAlloc to be populated [38;5;243m@ 01/10/26 21:35:34.202[0m
+  [38;5;9m[FAILED][0m in [It] - /Users/abhishekmalvankar/wva_paper/workload-variant-autoscaler/test/e2e-saturation-based/e2e_saturation_test.go:278 [38;5;243m@ 01/10/26 21:45:34.208[0m
+  [1mSTEP:[0m cleaning up test resources [38;5;243m@ 01/10/26 21:45:34.209[0m
+  [38;5;9m[FAILED][0m in [AfterAll] - /Users/abhishekmalvankar/wva_paper/workload-variant-autoscaler/test/e2e-saturation-based/e2e_saturation_test.go:400 [38;5;243m@ 01/10/26 21:45:34.224[0m
+[38;5;9m• [FAILED] [600.018 seconds][0m
+[0mTest workload-variant-autoscaler - Saturation Mode - Single VariantAutoscaling [38;5;243mBefore load - initial replica count [38;5;9m[1m[It] should have correct initial replica count before applying load[0m
+[38;5;243m/Users/abhishekmalvankar/wva_paper/workload-variant-autoscaler/test/e2e-saturation-based/e2e_saturation_test.go:263[0m
+
+  [38;5;9m[FAILED] Timed out after 600.001s.
+  The function passed to Eventually failed at /Users/abhishekmalvankar/wva_paper/workload-variant-autoscaler/test/e2e-saturation-based/e2e_saturation_test.go:271 with:
+  Should be able to fetch VariantAutoscaling for: llm-d-sim-deployment
+  Unexpected error:
+      <*errors.StatusError | 0x1400070f400>: 
+      variantautoscalings.llmd.ai "llm-d-sim-deployment" not found
+      {
+          ErrStatus: {
+              TypeMeta: {Kind: "", APIVersion: ""},
+              ListMeta: {
+                  SelfLink: "",
+                  ResourceVersion: "",
+                  Continue: "",
+                  RemainingItemCount: nil,
+              },
+              Status: "Failure",
+              Message: "variantautoscalings.llmd.ai \"llm-d-sim-deployment\" not found",
+              Reason: "NotFound",
+              Details: {
+                  Name: "llm-d-sim-deployment",
+                  Group: "llmd.ai",
+                  Kind: "variantautoscalings",
+                  UID: "",
+                  Causes: nil,
+                  RetryAfterSeconds: 0,
+              },
+              Code: 404,
+          },
+      }
+  occurred[0m
+  [38;5;9mIn [1m[It][0m[38;5;9m at: [1m/Users/abhishekmalvankar/wva_paper/workload-variant-autoscaler/test/e2e-saturation-based/e2e_saturation_test.go:278[0m [38;5;243m@ 01/10/26 21:45:34.208[0m
+
+  There were [1m[38;5;9madditional failures[0m detected.  To view them in detail run [1mginkgo -vv[0m
+[38;5;243m------------------------------[0m
+[38;5;14mS [SKIPPED] [0.000 seconds][0m
+[0mTest workload-variant-autoscaler - Saturation Mode - Single VariantAutoscaling [38;5;243mScale-up under load [38;5;14m[1m[It] should scale up when saturation is detected[0m
+[38;5;243m/Users/abhishekmalvankar/wva_paper/workload-variant-autoscaler/test/e2e-saturation-based/e2e_saturation_test.go:313[0m
+
+  [38;5;14m[SKIPPED] Spec skipped because an earlier spec in an ordered container failed[0m
+  [38;5;14mIn [1m[It][0m[38;5;14m at: [1m/Users/abhishekmalvankar/wva_paper/workload-variant-autoscaler/test/e2e-saturation-based/e2e_saturation_test.go:313[0m [38;5;243m@ 01/10/26 21:45:34.224[0m
+[38;5;243m------------------------------[0m
+[38;5;14mS[0m[38;5;14mS[0m
+[38;5;243m------------------------------[0m
+[0m[1m[AfterSuite] [0m
+[38;5;243m/Users/abhishekmalvankar/wva_paper/workload-variant-autoscaler/test/e2e-saturation-based/e2e_saturation_suite_test.go:184[0m
+  Uninstalling CertManager...
+  running: kubectl delete -f https://github.com/cert-manager/cert-manager/releases/download/v1.16.3/cert-manager.yaml
+  running: bash deploy/kind-emulator/teardown.sh
+[38;5;10m[AfterSuite] PASSED [19.301 seconds][0m
+[38;5;243m------------------------------[0m
+
+[38;5;9m[1mSummarizing 1 Failure:[0m
+  [38;5;9m[FAIL][0m [0mTest workload-variant-autoscaler - Saturation Mode - Single VariantAutoscaling [38;5;243mBefore load - initial replica count [38;5;9m[1m[It] should have correct initial replica count before applying load[0m
+  [38;5;243m/Users/abhishekmalvankar/wva_paper/workload-variant-autoscaler/test/e2e-saturation-based/e2e_saturation_test.go:278[0m
+
+[38;5;9m[1mRan 4 of 14 Specs in 1079.779 seconds[0m
+[38;5;9m[1mFAIL![0m -- [38;5;10m[1m3 Passed[0m | [38;5;9m[1m1 Failed[0m | [38;5;11m[1m0 Pending[0m | [38;5;14m[1m10 Skipped[0m
+--- FAIL: TestSaturationE2E (1079.78s)
+FAIL
+FAIL	github.com/llm-d-incubation/workload-variant-autoscaler/test/e2e-saturation-based	1080.420s
+FAIL
+make: *** [test-e2e] Error 1
