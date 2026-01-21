@@ -894,7 +894,8 @@ func CreateVariantAutoscalingResource(namespace, resourceName, modelId, acc stri
 				Kind:       "Deployment",
 				Name:       resourceName, // Use resourceName as the deployment name
 			},
-			ModelID: modelId,
+			ModelID:     modelId,
+			VariantCost: fmt.Sprintf("%.1f", variantCost),
 		},
 	}
 }
