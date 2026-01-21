@@ -22,7 +22,9 @@ limitations under the License.
 // which creates network limitations:
 //
 //   - Kind: Pod IPs are not routable from outside the cluster. Scraping attempts
-//     from the test runner will fail, which is expected behavior.
+//     from the test runner will fail, which is expected behavior. Tests that
+//     require actual scraping (TestPodScrapingMetricsCollection and TestPodScrapingCaching)
+//     are skipped on Kind, and in-cluster tests are used instead.
 //
 //   - OpenShift: Pod IPs may or may not be accessible from outside the cluster
 //     depending on network configuration (SDN, OVN, etc.).
@@ -31,7 +33,13 @@ limitations under the License.
 //  1. Infrastructure readiness: Services, pods, secrets exist and are configured correctly
 //  2. Pod readiness: EPP pods are Ready and have IP addresses assigned
 //  3. Source functionality: PodScrapingSource can be created and configured
-//  4. Cache mechanism: Caching works even when scraping fails
+//  4. In-cluster scraping: A Job running inside the cluster can successfully scrape metrics
+//
+// What is skipped on Kind:
+//  - Direct scraping tests (TestPodScrapingMetricsCollection, TestPodScrapingCaching)
+//    are skipped because pod IPs are not accessible from outside the cluster.
+//    These are replaced by TestInClusterScraping which creates a Job inside the
+//    cluster to verify scraping works.
 //
 // What unit tests verify (in internal/collector/source/pod/):
 //   - Actual scraping logic with mock HTTP servers
@@ -44,7 +52,7 @@ limitations under the License.
 //	from pod IPs. This is verified through:
 //	- Unit tests with mock servers
 //	- Controller logs (when integrated)
-//	- Infrastructure verification in e2e tests
+//	- In-cluster scraping tests (TestInClusterScraping)
 package utils
 
 import (
