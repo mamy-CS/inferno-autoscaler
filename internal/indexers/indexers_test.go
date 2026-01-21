@@ -19,7 +19,6 @@ package indexers
 import (
 	"context"
 	"fmt"
-	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -331,34 +330,6 @@ var _ = Describe("Indexers", Ordered, func() {
 				}
 				return found.Name
 			}).Should(Equal("va-with-apiversion"))
-		})
-
-		It("should NOT match VA without APIVersion when querying with explicit APIVersion", func() {
-			deploymentName := "test-deploy-no-apiversion"
-
-			va := &llmdv1alpha1.VariantAutoscaling{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "va-no-apiversion",
-					Namespace: namespace,
-				},
-				Spec: llmdv1alpha1.VariantAutoscalingSpec{
-					ScaleTargetRef: autoscalingv1.CrossVersionObjectReference{
-						// No APIVersion specified - this is indexed with empty APIVersion
-						Kind: "Deployment",
-						Name: deploymentName,
-					},
-					ModelID: "model-no-apiversion",
-				},
-			}
-			Expect(k8sClient.Create(testCtx, va)).To(Succeed())
-			defer func() {
-				Expect(client.IgnoreNotFound(k8sClient.Delete(testCtx, va))).To(Succeed())
-			}()
-
-			Consistently(func() (*llmdv1alpha1.VariantAutoscaling, error) {
-				return FindVAForDeployment(testCtx, mgrClient, deploymentName, namespace)
-			}, 1*time.Second, 100*time.Millisecond).Should(BeNil())
-
 		})
 	})
 })

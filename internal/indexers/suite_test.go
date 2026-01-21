@@ -47,7 +47,7 @@ var (
 	k8sClient client.Client
 )
 
-func TestControllers(t *testing.T) {
+func TestIndexers(t *testing.T) {
 	RegisterFailHandler(Fail)
 
 	RunSpecs(t, "Indexers Suite")
