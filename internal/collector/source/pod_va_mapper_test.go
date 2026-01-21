@@ -336,7 +336,17 @@ var _ = Describe("PodVAMapper", func() {
 					Namespace: "namespace-a",
 				},
 			}
-			deployments["shared-deploy"] = deploymentA
+			// Maps are now keyed by namespace/vaName format
+			deployments["namespace-a/va-a"] = deploymentA
+
+			// Deployment in namespace-b (same deployment name, different namespace)
+			deploymentB := &appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "shared-deploy",
+					Namespace: "namespace-b",
+				},
+			}
+			deployments["namespace-b/va-b"] = deploymentB
 
 			// VA in namespace-a targeting shared-deploy
 			vaA := createVA("va-a", "namespace-a", "shared-deploy")
