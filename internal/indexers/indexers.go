@@ -60,8 +60,10 @@ func scaleTargetIndexKey(namespace string, ref autoscalingv1.CrossVersionObjectR
 
 // SetupIndexes registers custom indexes with the manager's cache.
 func SetupIndexes(ctx context.Context, mgr manager.Manager) error {
-	err := mgr.GetFieldIndexer().IndexField(ctx, &llmdVariantAutoscalingV1alpha1.VariantAutoscaling{}, VAScaleTargetKey, VAScaleTargetIndexFunc)
-	return err
+	if err := mgr.GetFieldIndexer().IndexField(ctx, &llmdVariantAutoscalingV1alpha1.VariantAutoscaling{}, VAScaleTargetKey, VAScaleTargetIndexFunc); err != nil {
+		return fmt.Errorf("failed to set up index by scale target for VariantAutoscaling: %w", err)
+	}
+	return nil
 }
 
 // VAScaleTargetIndexFunc is the index function for VariantAutoscaling by scale target.
@@ -74,7 +76,7 @@ func VAScaleTargetIndexFunc(o client.Object) []string {
 }
 
 // FindVAForScaleTarget returns the VariantAutoscaling that targets the given scale resource.
-// Returns nil if no VA targets this resource.
+// Returns nil if no VariantAutoscaling targets this resource.
 // Note: A scale target should have at most one VariantAutoscaling targeting it, so the first match is returned.
 func FindVAForScaleTarget(ctx context.Context, c client.Client, ref autoscalingv1.CrossVersionObjectReference, namespace string) (*llmdVariantAutoscalingV1alpha1.VariantAutoscaling, error) {
 	var vaList llmdVariantAutoscalingV1alpha1.VariantAutoscalingList
