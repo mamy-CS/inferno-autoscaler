@@ -19,6 +19,7 @@ package e2esaturation
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"testing"
@@ -200,6 +201,44 @@ queueSpareTrigger: %.2f`, KvCacheThreshold, QueueLengthThreshold, kvSpareTrigger
 			Expect(utils.InstallCertManager()).To(Succeed(), "Failed to install CertManager")
 		} else {
 			_, _ = fmt.Fprintf(GinkgoWriter, "WARNING: CertManager is already installed. Skipping installation...\n")
+		}
+	}
+})
+
+// ReportAfterEach dumps controller logs and VA status after each failed test.
+// This helps debug failures by capturing state immediately when a test fails.
+// Writes to both GinkgoWriter and os.Stdout to ensure visibility in CI logs.
+var _ = ReportAfterEach(func(report SpecReport) {
+	if !report.Failed() {
+		return
+	}
+
+	// Write to both GinkgoWriter and stdout to ensure visibility in CI
+	writers := []io.Writer{GinkgoWriter, os.Stdout}
+
+	for _, w := range writers {
+		_, _ = fmt.Fprintf(w, "\n\n=== TEST FAILED: %s - Dumping debug information ===\n", report.FullText())
+	}
+
+	// Dump controller logs
+	if k8sClient != nil {
+		for _, w := range writers {
+			utils.DumpControllerLogs(context.Background(), k8sClient, controllerNamespace, w)
+		}
+	} else {
+		for _, w := range writers {
+			_, _ = fmt.Fprintf(w, "WARNING: k8sClient is nil, cannot dump controller logs\n")
+		}
+	}
+
+	// Dump VA status
+	if crClient != nil {
+		for _, w := range writers {
+			utils.DumpVAStatus(context.Background(), crClient, w)
+		}
+	} else {
+		for _, w := range writers {
+			_, _ = fmt.Fprintf(w, "WARNING: crClient is nil, cannot dump VA status\n")
 		}
 	}
 })

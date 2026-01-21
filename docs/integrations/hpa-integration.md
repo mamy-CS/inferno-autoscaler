@@ -265,6 +265,66 @@ kubectl -n kube-system get pod -l component=kube-controller-manager -o yaml | gr
 
 7. Specify the `minReplicas: 0` field in the `yaml` snippet for HPA and apply it following the integration steps
 
+### Automatic Setup with Kind Cluster Script
+
+When using the `deploy/kind-emulator/setup.sh` script, the HPAScaleToZero feature gate is **enabled by default**. You can disable it if needed:
+
+```sh
+# Default: HPAScaleToZero enabled
+./deploy/kind-emulator/setup.sh
+
+# Disable HPAScaleToZero feature gate
+ENABLE_SCALE_TO_ZERO=false ./deploy/kind-emulator/setup.sh
+```
+
+### OpenShift Cluster Configuration
+
+On OpenShift, the HPAScaleToZero feature gate must be enabled at the cluster level by a cluster administrator. This requires modifying the FeatureGate custom resource:
+
+> **Warning**: Modifying FeatureGate on OpenShift may impact cluster stability as HPAScaleToZero is a TechPreview/alpha feature. Consult your cluster administrator before making these changes.
+
+1. Check current FeatureGate configuration:
+
+```sh
+oc get featuregate cluster -o yaml
+```
+
+2. Enable HPAScaleToZero feature gate:
+
+```sh
+oc patch featuregate cluster --type=merge -p '{
+  "spec": {
+    "featureSet": "CustomNoUpgrade",
+    "customNoUpgrade": {
+      "enabled": ["HPAScaleToZero"]
+    }
+  }
+}'
+```
+
+3. Wait for the cluster to apply the changes (this may take several minutes as nodes are updated):
+
+```sh
+oc get clusterversion -w
+```
+
+4. Verify the feature gate is enabled:
+
+```sh
+oc get featuregate cluster -o jsonpath='{.spec.customNoUpgrade.enabled}'
+```
+
+5. Deploy HPA with `minReplicas: 0`:
+
+```sh
+# Using install script
+HPA_MIN_REPLICAS=0 ./deploy/install.sh -e openshift
+
+# Or via Helm
+helm upgrade workload-variant-autoscaler ./charts/workload-variant-autoscaler \
+  --set hpa.minReplicas=0
+```
+
 ### Note on possible timing issues
 
 For this discussion, please refer to the [community doc](https://docs.google.com/document/d/15z1u2HIH7qoxT-nxj4BnZ_TyqHPqIn0FcCPTnIMn7bs/edit?tab=t.0).

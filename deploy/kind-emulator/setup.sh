@@ -21,6 +21,8 @@ gpu_type="$DEFAULT_GPU_TYPE"
 gpu_model="$DEFAULT_GPU_MODEL"
 gpu_memory="$DEFAULT_GPU_MEMORY"
 k8s_version="${K8S_VERSION:-$DEFAULT_K8S_VERSION}"
+# Enable HPAScaleToZero feature gate (alpha feature for scale-to-zero HPA support)
+enable_scale_to_zero="${ENABLE_SCALE_TO_ZERO:-true}"
 
 # --------------------------------------------------------------------
 # Cleanup on exit
@@ -48,7 +50,8 @@ Options:
     -h                 Show this help message
 
 Environment Variables:
-    K8S_VERSION        Kubernetes version to use (default: $DEFAULT_K8S_VERSION)
+    K8S_VERSION           Kubernetes version to use (default: $DEFAULT_K8S_VERSION)
+    ENABLE_SCALE_TO_ZERO  Enable HPAScaleToZero feature gate (default: true)
 EOF
 }
 
@@ -83,6 +86,13 @@ done
 # --------------------------------------------------------------------
 echo "[1/6] Creating Kind cluster: ${cluster_name} with ${nodes} nodes and ${gpus_per_node} GPUS each..."
 
+# Build feature gates string
+feature_gates=""
+if [ "$enable_scale_to_zero" = "true" ]; then
+    feature_gates="HPAScaleToZero=true"
+    echo "  HPAScaleToZero feature gate: enabled"
+fi
+
 cat <<EOF > kind-config.yaml
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
@@ -90,6 +100,21 @@ nodes:
 - role: control-plane
   image: kindest/node:${k8s_version}
 EOF
+
+# Add kubeadmConfigPatches for feature gates if any are enabled
+if [ -n "$feature_gates" ]; then
+    cat <<EOF >> kind-config.yaml
+  kubeadmConfigPatches:
+  - |
+    kind: ClusterConfiguration
+    apiServer:
+      extraArgs:
+        feature-gates: ${feature_gates}
+    controllerManager:
+      extraArgs:
+        feature-gates: ${feature_gates}
+EOF
+fi
 
 for ((i=1; i<nodes; i++)); do
     echo "- role: worker" >> kind-config.yaml

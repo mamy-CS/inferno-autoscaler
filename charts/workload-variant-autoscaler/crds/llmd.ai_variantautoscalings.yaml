@@ -187,7 +187,7 @@ spec:
                   numReplicas:
                     description: NumReplicas is the number of replicas for the optimized
                       allocation.
-                    minimum: 1
+                    minimum: 0
                     type: integer
                 required:
                 - accelerator

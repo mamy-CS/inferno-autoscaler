@@ -53,7 +53,7 @@ type OptimizedAlloc struct {
 	Accelerator string `json:"accelerator"`
 
 	// NumReplicas is the number of replicas for the optimized allocation.
-	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Minimum=0
 	NumReplicas int `json:"numReplicas"`
 }
 

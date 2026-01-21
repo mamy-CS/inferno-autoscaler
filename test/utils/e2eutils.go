@@ -540,6 +540,61 @@ func CreateLoadGeneratorJob(namespace, targetURL, modelName string, rate, maxSec
 	return job, nil
 }
 
+// WaitForJobPodRunning waits for the job's pod to be in Running phase with container started.
+// This ensures the load generator has actually started (past the pip install phase).
+func WaitForJobPodRunning(ctx context.Context, job *batchv1.Job, k8sClient *kubernetes.Clientset, timeout time.Duration, w io.Writer) error {
+	return wait.PollUntilContextTimeout(ctx, 5*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
+		pods, err := k8sClient.CoreV1().Pods(job.Namespace).List(ctx, metav1.ListOptions{
+			LabelSelector: fmt.Sprintf("job-name=%s", job.Name),
+		})
+		if err != nil {
+			_, _ = fmt.Fprintf(w, "Warning: failed to list pods for job %s: %v\n", job.Name, err)
+			return false, nil
+		}
+
+		if len(pods.Items) == 0 {
+			_, _ = fmt.Fprintf(w, "Waiting for job pod to be created...\n")
+			return false, nil
+		}
+
+		for _, pod := range pods.Items {
+			if pod.Status.Phase == corev1.PodRunning {
+				// Check if container is actually running (not just initializing)
+				for _, cs := range pod.Status.ContainerStatuses {
+					if cs.State.Running != nil {
+						_, _ = fmt.Fprintf(w, "Load generator pod %s is running (started at %v)\n",
+							pod.Name, cs.State.Running.StartedAt.Time)
+						return true, nil
+					}
+				}
+				_, _ = fmt.Fprintf(w, "Pod %s is Running but container not started yet...\n", pod.Name)
+			} else {
+				_, _ = fmt.Fprintf(w, "Pod %s phase: %s\n", pod.Name, pod.Status.Phase)
+			}
+		}
+
+		return false, nil
+	})
+}
+
+// WaitForLoadGeneratorReady waits for the load generator to be actively sending requests.
+// It waits for the pod to be running and then an additional stabilization period
+// to allow pip install and guidellm startup to complete.
+func WaitForLoadGeneratorReady(ctx context.Context, job *batchv1.Job, k8sClient *kubernetes.Clientset, w io.Writer) error {
+	// First wait for pod to be running
+	if err := WaitForJobPodRunning(ctx, job, k8sClient, 5*time.Minute, w); err != nil {
+		return fmt.Errorf("timeout waiting for load generator pod to start: %w", err)
+	}
+
+	// Wait additional time for pip install and guidellm startup
+	// pip install torch + guidellm typically takes 2-3 minutes
+	_, _ = fmt.Fprintf(w, "Waiting 3 minutes for pip install and guidellm startup...\n")
+	time.Sleep(3 * time.Minute)
+
+	_, _ = fmt.Fprintf(w, "Load generator should now be actively sending requests\n")
+	return nil
+}
+
 // CalculateExpectedArrivalRate calculates the expected arrival rate (req/min) based on GuideLLM rate (req/sec), ITL/TTFT latencies, and the number of output tokens.
 //
 // With constant rate type, GuideLLM maintains a number of concurrent in-flight requests
@@ -1193,3 +1248,4 @@ func SetupTestEnvironment(image string, numNodes, gpusPerNode int, gpuTypes stri
 	gom.Expect(os.Setenv("DEPLOY_HPA", "false")).To(gom.Succeed())                 // tests create their own HPAs if needed
 	gom.Expect(os.Setenv("VLLM_SVC_ENABLED", "false")).To(gom.Succeed())           // tests deploy their own Service
 }
+

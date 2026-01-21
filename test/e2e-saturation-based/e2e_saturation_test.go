@@ -834,7 +834,6 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Multiple 
 		It("should maintain stable replica count under constant load", func() {
 			By("starting constant load generation")
 			loadGenJob, err := utils.CreateLoadGeneratorJob(
-
 				namespace,
 				fmt.Sprintf("http://%s:%d", gatewayName, 80),
 				modelName,
@@ -853,8 +852,12 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Multiple 
 				Expect(err).NotTo(HaveOccurred(), "Should be able to stop load generator")
 			}()
 
-			By("waiting for stable state to be reached")
-			time.Sleep(30 * time.Second) // Allow initial stabilization
+			By("waiting for load generator to be ready (pod running + pip install complete)")
+			err = utils.WaitForLoadGeneratorReady(ctx, loadGenJob, k8sClient, GinkgoWriter)
+			Expect(err).NotTo(HaveOccurred(), "Load generator should become ready")
+
+			By("waiting for autoscaler to respond to load (2 minutes)")
+			time.Sleep(2 * time.Minute)
 
 			By("recording initial replica counts")
 			var initialA100Replicas, initialH100Replicas int
@@ -1176,15 +1179,15 @@ var _ = Describe("VariantAutoscaling Target Condition", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		By("waiting for TargetResolved=True")
-		Eventually(func() {
+		Eventually(func(g Gomega) {
 			fetchedVA := &v1alpha1.VariantAutoscaling{}
 			err := crClient.Get(validCtx, client.ObjectKey{Namespace: namespace, Name: deployName}, fetchedVA)
-			Expect(err).NotTo(HaveOccurred())
+			g.Expect(err).NotTo(HaveOccurred())
 
 			condition := v1alpha1.GetCondition(fetchedVA, v1alpha1.TypeTargetResolved)
-			Expect(condition).NotTo(BeNil())
-			Expect(condition.Status).To(Equal(metav1.ConditionTrue))
-			Expect(condition.Reason).To(Equal(v1alpha1.ReasonTargetFound))
+			g.Expect(condition).NotTo(BeNil())
+			g.Expect(condition.Status).To(Equal(metav1.ConditionTrue))
+			g.Expect(condition.Reason).To(Equal(v1alpha1.ReasonTargetFound))
 		}, 1*time.Minute, 1*time.Second).Should(Succeed())
 
 		// Cleanup
@@ -1202,15 +1205,15 @@ var _ = Describe("VariantAutoscaling Target Condition", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		By("waiting for TargetResolved=False")
-		Eventually(func() {
+		Eventually(func(g Gomega) {
 			fetchedVA := &v1alpha1.VariantAutoscaling{}
 			err := crClient.Get(invalidCtx, client.ObjectKey{Namespace: namespace, Name: name}, fetchedVA)
-			Expect(err).NotTo(HaveOccurred())
+			g.Expect(err).NotTo(HaveOccurred())
 
 			condition := v1alpha1.GetCondition(fetchedVA, v1alpha1.TypeTargetResolved)
-			Expect(condition).NotTo(BeNil())
-			Expect(condition.Status).To(Equal(metav1.ConditionFalse))
-			Expect(condition.Reason).To(Equal(v1alpha1.ReasonTargetNotFound))
+			g.Expect(condition).NotTo(BeNil())
+			g.Expect(condition.Status).To(Equal(metav1.ConditionFalse))
+			g.Expect(condition.Reason).To(Equal(v1alpha1.ReasonTargetNotFound))
 		}, 1*time.Minute, 1*time.Second).Should(Succeed())
 
 		// Cleanup
