@@ -69,7 +69,7 @@ func CreateLlmdSimDeployment(namespace, deployName, modelName, appLabel, port st
 								}},
 							},
 							Ports: []corev1.ContainerPort{
-								{ContainerPort: 8000, Name: appLabel, Protocol: corev1.ProtocolTCP},
+								{ContainerPort: 8000, Name: "http", Protocol: corev1.ProtocolTCP},
 							},
 						},
 					},
@@ -121,7 +121,7 @@ func CreateLlmdSimDeploymentWithGPU(namespace, deployName, modelName, appLabel, 
 			}},
 		},
 		Ports: []corev1.ContainerPort{
-			{ContainerPort: 8000, Name: appLabel, Protocol: corev1.ProtocolTCP},
+			{ContainerPort: 8000, Name: "http", Protocol: corev1.ProtocolTCP},
 		},
 	}
 
@@ -187,7 +187,7 @@ func CreateLlmdSimService(namespace, serviceName, appLabel string, nodePort, por
 			},
 			Ports: []corev1.ServicePort{
 				{
-					Name:       appLabel,
+					Name:       "http",
 					Port:       int32(port),
 					Protocol:   corev1.ProtocolTCP,
 					TargetPort: intstr.FromInt32(int32(port)),
@@ -218,7 +218,7 @@ func CreateLlmdSimServiceMonitor(name, namespace, targetNamespace, appLabel stri
 			},
 			Endpoints: []promoperator.Endpoint{
 				{
-					Port:     appLabel,
+					Port:     "http",
 					Path:     "/metrics",
 					Interval: promoperator.Duration("15s"),
 				},

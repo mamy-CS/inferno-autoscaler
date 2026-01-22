@@ -20,8 +20,6 @@ import (
 
 // Limiter test constants
 const (
-	limiterConfigMapName = "saturation-scaling-config"
-
 	// Test model IDs - different models to test limiter across variants
 	limiterModel1 = "test/limiter-model-1"
 	limiterModel2 = "test/limiter-model-2"
@@ -120,13 +118,13 @@ var _ = Describe("Test workload-variant-autoscaler - GPU Limiter Feature", Order
 
 		By("verifying saturation-scaling ConfigMap exists with limiter enabled")
 		Eventually(func(g Gomega) {
-			cm, err := k8sClient.CoreV1().ConfigMaps(controllerNamespace).Get(ctx, limiterConfigMapName, metav1.GetOptions{})
-			g.Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("saturation ConfigMap %s should exist in namespace %s", limiterConfigMapName, controllerNamespace))
+			cm, err := k8sClient.CoreV1().ConfigMaps(controllerNamespace).Get(ctx, saturationConfigMapName, metav1.GetOptions{})
+			g.Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("saturation ConfigMap %s should exist in namespace %s", saturationConfigMapName, controllerNamespace))
 			g.Expect(cm.Data).To(HaveKey("default"), "saturation ConfigMap should have 'default' configuration")
 		}, 2*time.Minute, 5*time.Second).Should(Succeed())
 
 		By("enabling limiter in saturation-scaling ConfigMap")
-		cm, err := k8sClient.CoreV1().ConfigMaps(controllerNamespace).Get(ctx, limiterConfigMapName, metav1.GetOptions{})
+		cm, err := k8sClient.CoreV1().ConfigMaps(controllerNamespace).Get(ctx, saturationConfigMapName, metav1.GetOptions{})
 		Expect(err).NotTo(HaveOccurred())
 		// Update the default config to enable limiter
 		cm.Data["default"] = `kvCacheThreshold: 0.80
@@ -227,7 +225,7 @@ enableLimiter: true`
 	Context("Scenario 1: Limiter enabled - normal operation", func() {
 		It("should allow scale-up when sufficient GPUs are available", func() {
 			By("verifying limiter is enabled in ConfigMap")
-			cm, err := k8sClient.CoreV1().ConfigMaps(controllerNamespace).Get(ctx, limiterConfigMapName, metav1.GetOptions{})
+			cm, err := k8sClient.CoreV1().ConfigMaps(controllerNamespace).Get(ctx, saturationConfigMapName, metav1.GetOptions{})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(cm.Data["default"]).To(ContainSubstring("enableLimiter: true"))
 
@@ -310,7 +308,7 @@ enableLimiter: true`
 			_, _ = fmt.Fprintf(GinkgoWriter, "Variant costs - V1: %s, V2: %s\n", cost1, cost2)
 
 			By("checking that limiter uses saturation-based prioritization")
-			cm, err := k8sClient.CoreV1().ConfigMaps(controllerNamespace).Get(ctx, limiterConfigMapName, metav1.GetOptions{})
+			cm, err := k8sClient.CoreV1().ConfigMaps(controllerNamespace).Get(ctx, saturationConfigMapName, metav1.GetOptions{})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(cm.Data["default"]).To(ContainSubstring("enableLimiter: true"),
 				"Limiter should be enabled for saturation-based prioritization")
