@@ -2,12 +2,12 @@ package pipeline
 
 import (
 	"context"
-	"testing"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/discovery"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // mockDiscovery implements discovery.CapacityDiscovery for testing.
@@ -45,448 +45,389 @@ func (m *mockFullDiscovery) DiscoverUsage(ctx context.Context) (map[string]int, 
 	return m.usage, nil
 }
 
-func TestTypeInventory_Refresh(t *testing.T) {
-	tests := []struct {
-		name             string
-		nodeInventory    map[string]map[string]discovery.AcceleratorModelInfo
-		expectedLimits   map[string]int
-		expectedTotal    int
-		expectedAccTypes []string
-	}{
-		{
-			name: "single node single type",
-			nodeInventory: map[string]map[string]discovery.AcceleratorModelInfo{
-				"node-1": {
-					"H100": {Count: 8, Memory: "80GB"},
-				},
-			},
-			expectedLimits:   map[string]int{"H100": 8},
-			expectedTotal:    8,
-			expectedAccTypes: []string{"H100"},
-		},
-		{
-			name: "single node multiple types",
-			nodeInventory: map[string]map[string]discovery.AcceleratorModelInfo{
-				"node-1": {
-					"H100": {Count: 4, Memory: "80GB"},
-					"A100": {Count: 4, Memory: "40GB"},
-				},
-			},
-			expectedLimits:   map[string]int{"H100": 4, "A100": 4},
-			expectedTotal:    8,
-			expectedAccTypes: []string{"H100", "A100"},
-		},
-		{
-			name: "multiple nodes same type",
-			nodeInventory: map[string]map[string]discovery.AcceleratorModelInfo{
-				"node-1": {
-					"H100": {Count: 8, Memory: "80GB"},
-				},
-				"node-2": {
-					"H100": {Count: 8, Memory: "80GB"},
-				},
-			},
-			expectedLimits:   map[string]int{"H100": 16},
-			expectedTotal:    16,
-			expectedAccTypes: []string{"H100"},
-		},
-		{
-			name: "heterogeneous cluster",
-			nodeInventory: map[string]map[string]discovery.AcceleratorModelInfo{
-				"node-1": {
-					"H100": {Count: 8, Memory: "80GB"},
-				},
-				"node-2": {
-					"A100": {Count: 8, Memory: "40GB"},
-				},
-				"node-3": {
-					"L40S": {Count: 4, Memory: "48GB"},
-				},
-			},
-			expectedLimits:   map[string]int{"H100": 8, "A100": 8, "L40S": 4},
-			expectedTotal:    20,
-			expectedAccTypes: []string{"H100", "A100", "L40S"},
-		},
-		{
-			name:             "empty cluster",
-			nodeInventory:    map[string]map[string]discovery.AcceleratorModelInfo{},
-			expectedLimits:   map[string]int{},
-			expectedTotal:    0,
-			expectedAccTypes: []string{},
-		},
-	}
+var _ = Describe("TypeInventory", func() {
+	var ctx context.Context
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			disc := &mockDiscovery{inventory: tt.nodeInventory}
+	BeforeEach(func() {
+		ctx = context.Background()
+	})
+
+	Describe("Refresh", func() {
+		DescribeTable("should aggregate GPU capacity from nodes",
+			func(nodeInventory map[string]map[string]discovery.AcceleratorModelInfo, expectedLimits map[string]int, expectedTotal int) {
+				disc := &mockDiscovery{inventory: nodeInventory}
+				inv := NewTypeInventory("test", disc)
+
+				err := inv.Refresh(ctx)
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(inv.TotalLimit()).To(Equal(expectedTotal))
+
+				for accType, expected := range expectedLimits {
+					Expect(inv.LimitByType(accType)).To(Equal(expected))
+				}
+
+				// With no usage set, available should equal limits
+				Expect(inv.TotalAvailable()).To(Equal(expectedTotal))
+				for accType, expected := range expectedLimits {
+					Expect(inv.AvailableByType(accType)).To(Equal(expected))
+				}
+			},
+			Entry("single node single type",
+				map[string]map[string]discovery.AcceleratorModelInfo{
+					"node-1": {"H100": {Count: 8, Memory: "80GB"}},
+				},
+				map[string]int{"H100": 8},
+				8,
+			),
+			Entry("single node multiple types",
+				map[string]map[string]discovery.AcceleratorModelInfo{
+					"node-1": {
+						"H100": {Count: 4, Memory: "80GB"},
+						"A100": {Count: 4, Memory: "40GB"},
+					},
+				},
+				map[string]int{"H100": 4, "A100": 4},
+				8,
+			),
+			Entry("multiple nodes same type",
+				map[string]map[string]discovery.AcceleratorModelInfo{
+					"node-1": {"H100": {Count: 8, Memory: "80GB"}},
+					"node-2": {"H100": {Count: 8, Memory: "80GB"}},
+				},
+				map[string]int{"H100": 16},
+				16,
+			),
+			Entry("heterogeneous cluster",
+				map[string]map[string]discovery.AcceleratorModelInfo{
+					"node-1": {"H100": {Count: 8, Memory: "80GB"}},
+					"node-2": {"A100": {Count: 8, Memory: "40GB"}},
+					"node-3": {"L40S": {Count: 4, Memory: "48GB"}},
+				},
+				map[string]int{"H100": 8, "A100": 8, "L40S": 4},
+				20,
+			),
+			Entry("empty cluster",
+				map[string]map[string]discovery.AcceleratorModelInfo{},
+				map[string]int{},
+				0,
+			),
+		)
+	})
+
+	Describe("SetUsed", func() {
+		It("should track GPU usage and update available capacity", func() {
+			disc := &mockDiscovery{
+				inventory: map[string]map[string]discovery.AcceleratorModelInfo{
+					"node-1": {"H100": {Count: 16, Memory: "80GB"}},
+					"node-2": {"A100": {Count: 8, Memory: "40GB"}},
+				},
+			}
+
 			inv := NewTypeInventory("test", disc)
+			err := inv.Refresh(ctx)
+			Expect(err).NotTo(HaveOccurred())
 
-			err := inv.Refresh(context.Background())
-			require.NoError(t, err)
+			// Initially: limit=24, used=0, available=24
+			Expect(inv.TotalLimit()).To(Equal(24))
+			Expect(inv.TotalUsed()).To(Equal(0))
+			Expect(inv.TotalAvailable()).To(Equal(24))
 
-			// Check limits (capacity)
-			assert.Equal(t, tt.expectedTotal, inv.TotalLimit(), "wrong total limit")
+			// Set some usage
+			inv.SetUsed(map[string]int{"H100": 4, "A100": 2})
 
-			for accType, expected := range tt.expectedLimits {
-				assert.Equal(t, expected, inv.LimitByType(accType),
-					"wrong limit for accelerator type %s", accType)
-			}
+			// Now: limit=24, used=6, available=18
+			Expect(inv.TotalLimit()).To(Equal(24))
+			Expect(inv.TotalUsed()).To(Equal(6))
+			Expect(inv.TotalAvailable()).To(Equal(18))
 
-			// With no usage set, available should equal limits
-			assert.Equal(t, tt.expectedTotal, inv.TotalAvailable(), "available should equal limit when no usage")
-			for accType, expected := range tt.expectedLimits {
-				assert.Equal(t, expected, inv.AvailableByType(accType),
-					"available should equal limit for type %s when no usage", accType)
-			}
+			// Per-type checks
+			Expect(inv.LimitByType("H100")).To(Equal(16))
+			Expect(inv.UsedByType("H100")).To(Equal(4))
+			Expect(inv.AvailableByType("H100")).To(Equal(12))
 
-			accTypes := inv.AcceleratorTypes()
-			assert.ElementsMatch(t, tt.expectedAccTypes, accTypes)
+			Expect(inv.LimitByType("A100")).To(Equal(8))
+			Expect(inv.UsedByType("A100")).To(Equal(2))
+			Expect(inv.AvailableByType("A100")).To(Equal(6))
 		})
-	}
-}
+	})
 
-func TestTypeInventory_SetUsed(t *testing.T) {
-	disc := &mockDiscovery{
-		inventory: map[string]map[string]discovery.AcceleratorModelInfo{
-			"node-1": {"H100": {Count: 16, Memory: "80GB"}},
-			"node-2": {"A100": {Count: 8, Memory: "40GB"}},
-		},
-	}
+	Describe("OverAllocation", func() {
+		It("should handle usage exceeding limits gracefully", func() {
+			disc := &mockDiscovery{
+				inventory: map[string]map[string]discovery.AcceleratorModelInfo{
+					"node-1": {"H100": {Count: 8, Memory: "80GB"}},
+				},
+			}
 
-	inv := NewTypeInventory("test", disc)
-	err := inv.Refresh(context.Background())
-	require.NoError(t, err)
+			inv := NewTypeInventory("test", disc)
+			err := inv.Refresh(ctx)
+			Expect(err).NotTo(HaveOccurred())
 
-	// Initially: limit=24, used=0, available=24
-	assert.Equal(t, 24, inv.TotalLimit())
-	assert.Equal(t, 0, inv.TotalUsed())
-	assert.Equal(t, 24, inv.TotalAvailable())
+			// Set usage greater than limit (shouldn't happen but handle gracefully)
+			inv.SetUsed(map[string]int{"H100": 12})
 
-	// Set some usage
-	inv.SetUsed(map[string]int{"H100": 4, "A100": 2})
+			// Available should be 0, not negative
+			Expect(inv.TotalLimit()).To(Equal(8))
+			Expect(inv.TotalUsed()).To(Equal(12))
+			Expect(inv.TotalAvailable()).To(Equal(0))
+			Expect(inv.AvailableByType("H100")).To(Equal(0))
+		})
+	})
 
-	// Now: limit=24, used=6, available=18
-	assert.Equal(t, 24, inv.TotalLimit())
-	assert.Equal(t, 6, inv.TotalUsed())
-	assert.Equal(t, 18, inv.TotalAvailable())
+	Describe("RefreshAll", func() {
+		Context("with usage discovery configured", func() {
+			It("should refresh both capacity and usage", func() {
+				disc := &mockFullDiscovery{
+					inventory: map[string]map[string]discovery.AcceleratorModelInfo{
+						"node-1": {"H100": {Count: 16, Memory: "80GB"}},
+						"node-2": {"A100": {Count: 8, Memory: "40GB"}},
+					},
+					usage: map[string]int{"H100": 4, "A100": 2},
+				}
 
-	// Per-type checks
-	assert.Equal(t, 16, inv.LimitByType("H100"))
-	assert.Equal(t, 4, inv.UsedByType("H100"))
-	assert.Equal(t, 12, inv.AvailableByType("H100"))
+				inv := NewTypeInventoryWithUsage("test", disc)
+				err := inv.RefreshAll(ctx)
+				Expect(err).NotTo(HaveOccurred())
 
-	assert.Equal(t, 8, inv.LimitByType("A100"))
-	assert.Equal(t, 2, inv.UsedByType("A100"))
-	assert.Equal(t, 6, inv.AvailableByType("A100"))
-}
+				// Check limits
+				Expect(inv.TotalLimit()).To(Equal(24))
+				Expect(inv.LimitByType("H100")).To(Equal(16))
+				Expect(inv.LimitByType("A100")).To(Equal(8))
 
-func TestTypeInventory_OverAllocation(t *testing.T) {
-	disc := &mockDiscovery{
-		inventory: map[string]map[string]discovery.AcceleratorModelInfo{
-			"node-1": {"H100": {Count: 8, Memory: "80GB"}},
-		},
-	}
+				// Check usage (auto-discovered)
+				Expect(inv.TotalUsed()).To(Equal(6))
+				Expect(inv.UsedByType("H100")).To(Equal(4))
+				Expect(inv.UsedByType("A100")).To(Equal(2))
 
-	inv := NewTypeInventory("test", disc)
-	err := inv.Refresh(context.Background())
-	require.NoError(t, err)
+				// Check available
+				Expect(inv.TotalAvailable()).To(Equal(18))
+				Expect(inv.AvailableByType("H100")).To(Equal(12))
+				Expect(inv.AvailableByType("A100")).To(Equal(6))
+			})
+		})
 
-	// Set usage greater than limit (shouldn't happen but handle gracefully)
-	inv.SetUsed(map[string]int{"H100": 12})
+		Context("without usage discovery configured", func() {
+			It("should fail with appropriate error", func() {
+				disc := &mockDiscovery{
+					inventory: map[string]map[string]discovery.AcceleratorModelInfo{
+						"node-1": {"H100": {Count: 8, Memory: "80GB"}},
+					},
+				}
 
-	// Available should be 0, not negative
-	assert.Equal(t, 8, inv.TotalLimit())
-	assert.Equal(t, 12, inv.TotalUsed())
-	assert.Equal(t, 0, inv.TotalAvailable())
-	assert.Equal(t, 0, inv.AvailableByType("H100"))
-}
+				inv := NewTypeInventory("test", disc)
+				err := inv.RefreshAll(ctx)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("usage discovery not configured"))
+			})
+		})
+	})
 
-func TestTypeInventory_RefreshAll(t *testing.T) {
-	disc := &mockFullDiscovery{
-		inventory: map[string]map[string]discovery.AcceleratorModelInfo{
-			"node-1": {"H100": {Count: 16, Memory: "80GB"}},
-			"node-2": {"A100": {Count: 8, Memory: "40GB"}},
-		},
-		usage: map[string]int{"H100": 4, "A100": 2},
-	}
+	Describe("CreateAllocator", func() {
+		It("should create allocator with available GPUs", func() {
+			disc := &mockDiscovery{
+				inventory: map[string]map[string]discovery.AcceleratorModelInfo{
+					"node-1": {"H100": {Count: 16, Memory: "80GB"}},
+					"node-2": {"A100": {Count: 8, Memory: "40GB"}},
+				},
+			}
 
-	inv := NewTypeInventoryWithUsage("test", disc)
-	err := inv.RefreshAll(context.Background())
-	require.NoError(t, err)
+			inv := NewTypeInventory("test", disc)
+			err := inv.Refresh(ctx)
+			Expect(err).NotTo(HaveOccurred())
 
-	// Check limits
-	assert.Equal(t, 24, inv.TotalLimit())
-	assert.Equal(t, 16, inv.LimitByType("H100"))
-	assert.Equal(t, 8, inv.LimitByType("A100"))
+			// Set current usage
+			inv.SetUsed(map[string]int{"H100": 4, "A100": 4})
 
-	// Check usage (auto-discovered)
-	assert.Equal(t, 6, inv.TotalUsed())
-	assert.Equal(t, 4, inv.UsedByType("H100"))
-	assert.Equal(t, 2, inv.UsedByType("A100"))
+			// Verify inventory state: limit=24, used=8, available=16
+			Expect(inv.TotalLimit()).To(Equal(24))
+			Expect(inv.TotalUsed()).To(Equal(8))
+			Expect(inv.TotalAvailable()).To(Equal(16))
 
-	// Check available
-	assert.Equal(t, 18, inv.TotalAvailable())
-	assert.Equal(t, 12, inv.AvailableByType("H100"))
-	assert.Equal(t, 6, inv.AvailableByType("A100"))
-}
+			// Create allocator - should get available (limit - used)
+			allocator := inv.CreateAllocator(ctx)
 
-func TestTypeInventory_RefreshAll_NoUsageDiscovery(t *testing.T) {
-	disc := &mockDiscovery{
-		inventory: map[string]map[string]discovery.AcceleratorModelInfo{
-			"node-1": {"H100": {Count: 8, Memory: "80GB"}},
-		},
-	}
+			// Allocator should have available GPUs (not limits)
+			Expect(allocator.Remaining()).To(Equal(16)) // H100: 16-4=12, A100: 8-4=4
 
-	// Create without usage discovery
-	inv := NewTypeInventory("test", disc)
-
-	// RefreshAll should fail without usage discovery configured
-	err := inv.RefreshAll(context.Background())
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "usage discovery not configured")
-}
-
-func TestTypeAllocator_TryAllocate(t *testing.T) {
-	tests := []struct {
-		name              string
-		initialByType     map[string]int
-		decision          *interfaces.VariantDecision
-		gpusRequested     int
-		expectedAllocated int
-		expectedRemaining map[string]int
-		expectError       bool
-	}{
-		{
-			name:          "allocate from available pool",
-			initialByType: map[string]int{"H100": 16, "A100": 8},
-			decision: &interfaces.VariantDecision{
+			// Allocate from H100 pool
+			allocated, err := allocator.TryAllocate(&interfaces.VariantDecision{
 				VariantName:     "model-a",
 				Namespace:       "default",
 				AcceleratorName: "H100",
-			},
-			gpusRequested:     4,
-			expectedAllocated: 4,
-			expectedRemaining: map[string]int{"H100": 12, "A100": 8},
-		},
-		{
-			name:          "allocate entire pool",
-			initialByType: map[string]int{"H100": 8},
-			decision: &interfaces.VariantDecision{
+			}, 4)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(allocated).To(Equal(4))
+			Expect(allocator.Remaining()).To(Equal(12)) // 16 - 4 = 12
+
+			// Original inventory should be unchanged
+			Expect(inv.TotalAvailable()).To(Equal(16))
+			Expect(inv.AvailableByType("H100")).To(Equal(12))
+		})
+
+		It("should handle partial allocation when resources exhausted", func() {
+			disc := &mockDiscovery{
+				inventory: map[string]map[string]discovery.AcceleratorModelInfo{
+					"node-1": {"H100": {Count: 8, Memory: "80GB"}},
+				},
+			}
+
+			inv := NewTypeInventory("test", disc)
+			err := inv.Refresh(ctx)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Set high usage - only 2 GPUs available
+			inv.SetUsed(map[string]int{"H100": 6})
+
+			allocator := inv.CreateAllocator(ctx)
+			Expect(allocator.Remaining()).To(Equal(2))
+
+			// Request more than available - should get partial allocation
+			allocated, err := allocator.TryAllocate(&interfaces.VariantDecision{
 				VariantName:     "model-a",
 				Namespace:       "default",
 				AcceleratorName: "H100",
+			}, 4)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(allocated).To(Equal(2)) // Only 2 available
+			Expect(allocator.Remaining()).To(Equal(0))
+		})
+	})
+})
+
+var _ = Describe("TypeAllocator", func() {
+	var ctx context.Context
+
+	BeforeEach(func() {
+		ctx = context.Background()
+		_ = ctx // silence unused variable warning
+	})
+
+	Describe("TryAllocate", func() {
+		DescribeTable("should allocate GPUs correctly",
+			func(initialByType map[string]int, decision *interfaces.VariantDecision, gpusRequested int, expectedAllocated int, expectedRemaining map[string]int, expectError bool) {
+				// Calculate initial total
+				total := 0
+				for _, count := range initialByType {
+					total += count
+				}
+
+				allocator := &typeAllocator{
+					remainingByType: copyMap(initialByType),
+					totalRemaining:  total,
+				}
+
+				allocated, err := allocator.TryAllocate(decision, gpusRequested)
+
+				if expectError {
+					Expect(err).To(HaveOccurred())
+					return
+				}
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(allocated).To(Equal(expectedAllocated))
+
+				for accType, expected := range expectedRemaining {
+					Expect(allocator.RemainingForType(accType)).To(Equal(expected))
+				}
 			},
-			gpusRequested:     8,
-			expectedAllocated: 8,
-			expectedRemaining: map[string]int{"H100": 0},
-		},
-		{
-			name:          "partial allocation when pool exhausted",
-			initialByType: map[string]int{"H100": 4},
-			decision: &interfaces.VariantDecision{
+			Entry("allocate from available pool",
+				map[string]int{"H100": 16, "A100": 8},
+				&interfaces.VariantDecision{VariantName: "model-a", Namespace: "default", AcceleratorName: "H100"},
+				4, 4,
+				map[string]int{"H100": 12, "A100": 8},
+				false,
+			),
+			Entry("allocate entire pool",
+				map[string]int{"H100": 8},
+				&interfaces.VariantDecision{VariantName: "model-a", Namespace: "default", AcceleratorName: "H100"},
+				8, 8,
+				map[string]int{"H100": 0},
+				false,
+			),
+			Entry("partial allocation when pool exhausted",
+				map[string]int{"H100": 4},
+				&interfaces.VariantDecision{VariantName: "model-a", Namespace: "default", AcceleratorName: "H100"},
+				8, 4,
+				map[string]int{"H100": 0},
+				false,
+			),
+			Entry("no allocation when type not available",
+				map[string]int{"A100": 8},
+				&interfaces.VariantDecision{VariantName: "model-a", Namespace: "default", AcceleratorName: "H100"},
+				4, 0,
+				map[string]int{"A100": 8},
+				false,
+			),
+			Entry("error when accelerator name not specified",
+				map[string]int{"H100": 8},
+				&interfaces.VariantDecision{VariantName: "model-a", Namespace: "default"},
+				4, 0,
+				nil,
+				true,
+			),
+			Entry("zero request returns zero",
+				map[string]int{"H100": 8},
+				&interfaces.VariantDecision{VariantName: "model-a", Namespace: "default", AcceleratorName: "H100"},
+				0, 0,
+				map[string]int{"H100": 8},
+				false,
+			),
+			Entry("types are isolated",
+				map[string]int{"H100": 4, "A100": 8},
+				&interfaces.VariantDecision{VariantName: "model-a", Namespace: "default", AcceleratorName: "A100"},
+				6, 6,
+				map[string]int{"H100": 4, "A100": 2},
+				false,
+			),
+		)
+	})
+
+	Describe("Multiple Allocations", func() {
+		It("should track state across multiple allocations", func() {
+			allocator := &typeAllocator{
+				remainingByType: map[string]int{"H100": 16, "A100": 8},
+				totalRemaining:  24,
+			}
+
+			// First allocation: 4 H100 GPUs
+			allocated, err := allocator.TryAllocate(&interfaces.VariantDecision{
 				VariantName:     "model-a",
 				Namespace:       "default",
 				AcceleratorName: "H100",
-			},
-			gpusRequested:     8,
-			expectedAllocated: 4,
-			expectedRemaining: map[string]int{"H100": 0},
-		},
-		{
-			name:          "no allocation when type not available",
-			initialByType: map[string]int{"A100": 8},
-			decision: &interfaces.VariantDecision{
-				VariantName:     "model-a",
-				Namespace:       "default",
-				AcceleratorName: "H100",
-			},
-			gpusRequested:     4,
-			expectedAllocated: 0,
-			expectedRemaining: map[string]int{"A100": 8},
-		},
-		{
-			name:          "error when accelerator name not specified",
-			initialByType: map[string]int{"H100": 8},
-			decision: &interfaces.VariantDecision{
-				VariantName: "model-a",
-				Namespace:   "default",
-				// AcceleratorName is empty
-			},
-			gpusRequested: 4,
-			expectError:   true,
-		},
-		{
-			name:          "zero request returns zero",
-			initialByType: map[string]int{"H100": 8},
-			decision: &interfaces.VariantDecision{
-				VariantName:     "model-a",
-				Namespace:       "default",
-				AcceleratorName: "H100",
-			},
-			gpusRequested:     0,
-			expectedAllocated: 0,
-			expectedRemaining: map[string]int{"H100": 8},
-		},
-		{
-			name:          "types are isolated",
-			initialByType: map[string]int{"H100": 4, "A100": 8},
-			decision: &interfaces.VariantDecision{
-				VariantName:     "model-a",
+			}, 4)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(allocated).To(Equal(4))
+			Expect(allocator.RemainingForType("H100")).To(Equal(12))
+			Expect(allocator.RemainingForType("A100")).To(Equal(8))
+			Expect(allocator.Remaining()).To(Equal(20))
+
+			// Second allocation: 6 A100 GPUs
+			allocated, err = allocator.TryAllocate(&interfaces.VariantDecision{
+				VariantName:     "model-b",
 				Namespace:       "default",
 				AcceleratorName: "A100",
-			},
-			gpusRequested:     6,
-			expectedAllocated: 6,
-			expectedRemaining: map[string]int{"H100": 4, "A100": 2},
-		},
-	}
+			}, 6)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(allocated).To(Equal(6))
+			Expect(allocator.RemainingForType("H100")).To(Equal(12))
+			Expect(allocator.RemainingForType("A100")).To(Equal(2))
+			Expect(allocator.Remaining()).To(Equal(14))
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Calculate initial total
-			total := 0
-			for _, count := range tt.initialByType {
-				total += count
-			}
-
-			allocator := &typeAllocator{
-				remainingByType: copyMap(tt.initialByType),
-				totalRemaining:  total,
-			}
-
-			allocated, err := allocator.TryAllocate(tt.decision, tt.gpusRequested)
-
-			if tt.expectError {
-				assert.Error(t, err)
-				return
-			}
-
-			require.NoError(t, err)
-			assert.Equal(t, tt.expectedAllocated, allocated)
-
-			for accType, expected := range tt.expectedRemaining {
-				assert.Equal(t, expected, allocator.RemainingForType(accType),
-					"wrong remaining for type %s", accType)
-			}
+			// Third allocation: more H100 than available
+			allocated, err = allocator.TryAllocate(&interfaces.VariantDecision{
+				VariantName:     "model-c",
+				Namespace:       "default",
+				AcceleratorName: "H100",
+			}, 20)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(allocated).To(Equal(12)) // Only 12 remaining
+			Expect(allocator.RemainingForType("H100")).To(Equal(0))
+			Expect(allocator.RemainingForType("A100")).To(Equal(2))
+			Expect(allocator.Remaining()).To(Equal(2))
 		})
-	}
-}
-
-func TestTypeAllocator_MultipleAllocations(t *testing.T) {
-	allocator := &typeAllocator{
-		remainingByType: map[string]int{"H100": 16, "A100": 8},
-		totalRemaining:  24,
-	}
-
-	// First allocation: 4 H100 GPUs
-	allocated, err := allocator.TryAllocate(&interfaces.VariantDecision{
-		VariantName:     "model-a",
-		Namespace:       "default",
-		AcceleratorName: "H100",
-	}, 4)
-	require.NoError(t, err)
-	assert.Equal(t, 4, allocated)
-	assert.Equal(t, 12, allocator.RemainingForType("H100"))
-	assert.Equal(t, 8, allocator.RemainingForType("A100"))
-	assert.Equal(t, 20, allocator.Remaining())
-
-	// Second allocation: 6 A100 GPUs
-	allocated, err = allocator.TryAllocate(&interfaces.VariantDecision{
-		VariantName:     "model-b",
-		Namespace:       "default",
-		AcceleratorName: "A100",
-	}, 6)
-	require.NoError(t, err)
-	assert.Equal(t, 6, allocated)
-	assert.Equal(t, 12, allocator.RemainingForType("H100"))
-	assert.Equal(t, 2, allocator.RemainingForType("A100"))
-	assert.Equal(t, 14, allocator.Remaining())
-
-	// Third allocation: more H100 than available
-	allocated, err = allocator.TryAllocate(&interfaces.VariantDecision{
-		VariantName:     "model-c",
-		Namespace:       "default",
-		AcceleratorName: "H100",
-	}, 20)
-	require.NoError(t, err)
-	assert.Equal(t, 12, allocated) // Only 12 remaining
-	assert.Equal(t, 0, allocator.RemainingForType("H100"))
-	assert.Equal(t, 2, allocator.RemainingForType("A100"))
-	assert.Equal(t, 2, allocator.Remaining())
-}
-
-func TestTypeInventory_CreateAllocator(t *testing.T) {
-	disc := &mockDiscovery{
-		inventory: map[string]map[string]discovery.AcceleratorModelInfo{
-			"node-1": {
-				"H100": {Count: 16, Memory: "80GB"},
-			},
-			"node-2": {
-				"A100": {Count: 8, Memory: "40GB"},
-			},
-		},
-	}
-
-	inv := NewTypeInventory("test", disc)
-	err := inv.Refresh(context.Background())
-	require.NoError(t, err)
-
-	// Set current usage
-	inv.SetUsed(map[string]int{"H100": 4, "A100": 4})
-
-	// Verify inventory state: limit=24, used=8, available=16
-	assert.Equal(t, 24, inv.TotalLimit())
-	assert.Equal(t, 8, inv.TotalUsed())
-	assert.Equal(t, 16, inv.TotalAvailable())
-
-	// Create allocator - should get available (limit - used)
-	allocator := inv.CreateAllocator(context.Background())
-
-	// Allocator should have available GPUs (not limits)
-	assert.Equal(t, 16, allocator.Remaining()) // H100: 16-4=12, A100: 8-4=4
-
-	// Allocate from H100 pool
-	allocated, err := allocator.TryAllocate(&interfaces.VariantDecision{
-		VariantName:     "model-a",
-		Namespace:       "default",
-		AcceleratorName: "H100",
-	}, 4)
-	require.NoError(t, err)
-	assert.Equal(t, 4, allocated)
-	assert.Equal(t, 12, allocator.Remaining()) // 16 - 4 = 12
-
-	// Original inventory should be unchanged
-	assert.Equal(t, 16, inv.TotalAvailable())
-	assert.Equal(t, 12, inv.AvailableByType("H100"))
-}
-
-func TestTypeInventory_CreateAllocatorWithUsage(t *testing.T) {
-	disc := &mockDiscovery{
-		inventory: map[string]map[string]discovery.AcceleratorModelInfo{
-			"node-1": {"H100": {Count: 8, Memory: "80GB"}},
-		},
-	}
-
-	inv := NewTypeInventory("test", disc)
-	err := inv.Refresh(context.Background())
-	require.NoError(t, err)
-
-	// Set high usage - only 2 GPUs available
-	inv.SetUsed(map[string]int{"H100": 6})
-
-	allocator := inv.CreateAllocator(context.Background())
-	assert.Equal(t, 2, allocator.Remaining())
-
-	// Request more than available - should get partial allocation
-	allocated, err := allocator.TryAllocate(&interfaces.VariantDecision{
-		VariantName:     "model-a",
-		Namespace:       "default",
-		AcceleratorName: "H100",
-	}, 4)
-	require.NoError(t, err)
-	assert.Equal(t, 2, allocated) // Only 2 available
-	assert.Equal(t, 0, allocator.Remaining())
-}
+	})
+})
 
 // copyMap creates a copy of a map[string]int
 func copyMap(m map[string]int) map[string]int {

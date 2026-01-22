@@ -37,12 +37,13 @@ import (
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/registration"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/source"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/discovery"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/common"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/executor"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/pipeline"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/saturation"
-	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/pipeline"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/utils"
 )
 
@@ -66,6 +67,10 @@ type Engine struct {
 
 	// ScaleToZeroEnforcer applies scale-to-zero and minimum replica enforcement
 	ScaleToZeroEnforcer *pipeline.Enforcer
+
+	// GPULimiter constrains scaling decisions based on available GPU resources.
+	// Only applied when EnableLimiter is true in the saturation config.
+	GPULimiter pipeline.Limiter
 }
 
 // getVariantKey returns a unique key for a variant combining namespace and name.
@@ -83,12 +88,19 @@ func NewEngine(client client.Client, scheme *runtime.Scheme, recorder record.Eve
 		return registration.CollectModelRequestCount(ctx, promSource, modelID, namespace, retentionPeriod)
 	}
 
+	// Create GPU limiter with TypeInventory and GreedyBySaturation algorithm
+	gpuDiscovery := discovery.NewK8sWithGpuOperator(client)
+	gpuInventory := pipeline.NewTypeInventoryWithUsage("cluster-gpu-inventory", gpuDiscovery)
+	gpuAlgorithm := pipeline.NewGreedyBySaturation()
+	gpuLimiter := pipeline.NewDefaultLimiter("gpu-limiter", gpuInventory, gpuAlgorithm)
+
 	engine := Engine{
 		client:                  client,
 		scheme:                  scheme,
 		Recorder:                recorder,
 		ReplicaMetricsCollector: collector.NewReplicaMetricsCollector(promSource, client),
 		ScaleToZeroEnforcer:     pipeline.NewEnforcer(requestCountFunc),
+		GPULimiter:              gpuLimiter,
 	}
 
 	engine.executor = executor.NewPollingExecutor(executor.PollingConfig{
@@ -251,6 +263,35 @@ func (e *Engine) optimize(ctx context.Context) error {
 			// If saturationAnalysis is nil (e.g. no metrics), we just skip this model
 			logger.V(logging.DEBUG).Info("Skipping decision application for model: saturation analysis is nil (likely no metrics)",
 				"modelID", modelID)
+		}
+	}
+
+	// STEP 2.5: Apply GPU limiter if enabled
+	// This constrains scaling decisions based on available GPU resources
+	if saturationConfig.EnableLimiter && len(allDecisions) > 0 {
+		logger.Info("Applying GPU limiter to scaling decisions",
+			"decisionCount", len(allDecisions))
+
+		// Convert to pointer slice for limiter interface
+		decisionPtrs := make([]*interfaces.VariantDecision, len(allDecisions))
+		for i := range allDecisions {
+			decisionPtrs[i] = &allDecisions[i]
+		}
+
+		if err := e.GPULimiter.Limit(ctx, decisionPtrs); err != nil {
+			logger.Error(err, "GPU limiter failed, proceeding with original decisions")
+			// Continue with original decisions on limiter failure
+		} else {
+			// Log any decisions that were limited
+			for _, d := range decisionPtrs {
+				if d.WasLimited {
+					logger.Info("Decision was limited by GPU availability",
+						"variant", d.VariantName,
+						"originalTarget", d.TargetReplicas+d.GPUsAllocated/max(d.GPUsPerReplica, 1),
+						"limitedTarget", d.TargetReplicas,
+						"limitedBy", d.LimitedBy)
+				}
+			}
 		}
 	}
 
