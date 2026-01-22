@@ -169,7 +169,47 @@ query := fmt.Sprintf(`vllm_kv_cache_usage{namespace="%s"}`, escapedNamespace)
 
 ## Breaking Changes
 
-None. This release is fully backward compatible with v0.4.x.
+### VariantAutoscaling CRD: Required `scaleTargetRef` Field
+
+**Impact:** VariantAutoscaling resources created before v0.5.0 that do not have `scaleTargetRef` must be updated before upgrading.
+
+**What Changed:**
+- The `scaleTargetRef` field is now **required** in the VariantAutoscaling CRD (enforced via kubebuilder validation).
+- The controller skips processing VAs without `scaleTargetRef.name` (see `internal/utils/variant.go`).
+
+**Impact on Scale-to-Zero:**
+- **Critical**: Old VAs without `scaleTargetRef` will **not scale to zero** properly, even if:
+  - HPAScaleToZero feature gate is enabled
+  - HPA has `minReplicas: 0` configured
+  - Scale-to-zero is enabled in WVA configuration
+- This occurs because the HPA cannot properly reference the target deployment without `scaleTargetRef`.
+
+**Migration Required:**
+1. **Before upgrading to v0.5.0**, update all existing VariantAutoscaling resources:
+   ```yaml
+   apiVersion: llmd.ai/v1alpha1
+   kind: VariantAutoscaling
+   metadata:
+     name: <your-va-name>
+     namespace: <your-namespace>
+   spec:
+     scaleTargetRef:
+       kind: Deployment
+       name: <your-deployment-name>  # Required: must match your deployment
+     modelID: <your-model-id>
+   ```
+
+2. **After CRD update**, VAs without `scaleTargetRef` will fail validation and cannot be created or updated.
+
+3. **Verify your VAs** have `scaleTargetRef` before upgrading:
+   ```bash
+   kubectl get va -A -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{"\t"}{.spec.scaleTargetRef.name}{"\n"}{end}' | grep -v "^\s*$"
+   ```
+
+**Why This Change:**
+- Provides explicit, unambiguous target deployment reference (follows HPA pattern)
+- Enables proper scale-to-zero functionality with HPA
+- Prevents controller from skipping VAs due to missing target reference
 
 ## Upgrade Notes
 
