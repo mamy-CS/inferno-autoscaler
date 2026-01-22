@@ -900,7 +900,7 @@ func CreateVariantAutoscalingResource(namespace, resourceName, modelId, acc stri
 	}
 }
 
-// CreateHPAOnDesiredReplicaMetrics creates a HorizontalPodAutoscaler for a deployment that scales based on the inferno_desired_replicas metric
+// CreateHPAOnDesiredReplicaMetrics creates a HorizontalPodAutoscaler for a deployment that scales based on the wva_desired_replicas metric
 // Needs the Prometheus Adapter to be installed and configured in the cluster to correctly map the external metric.
 func CreateHPAOnDesiredReplicaMetrics(name, namespace, deploymentName, variantName string, maxReplicas int32) *autoscalingv2.HorizontalPodAutoscaler {
 	stabilizationWindowSeconds := int32(0)
@@ -947,7 +947,7 @@ func CreateHPAOnDesiredReplicaMetrics(name, namespace, deploymentName, variantNa
 					Type: autoscalingv2.ExternalMetricSourceType,
 					External: &autoscalingv2.ExternalMetricSource{
 						Metric: autoscalingv2.MetricIdentifier{
-							Name: constants.InfernoDesiredReplicas,
+							Name: constants.WVADesiredReplicas,
 							Selector: &metav1.LabelSelector{
 								MatchLabels: map[string]string{
 									"variant_name": variantName,
@@ -1100,8 +1100,8 @@ func isPermanentPrometheusError(err error) bool {
 	return false
 }
 
-// GetInfernoReplicaMetrics queries Prometheus for metrics emitted by the Inferno autoscaler
-func GetInfernoReplicaMetrics(variantName, namespace, acceleratorType string) (currentReplicas, desiredReplicas, desiredRatio float64, err error) {
+// GetWVAReplicaMetrics queries Prometheus for metrics emitted by the WVA autoscaler
+func GetWVAReplicaMetrics(variantName, namespace, acceleratorType string) (currentReplicas, desiredReplicas, desiredRatio float64, err error) {
 
 	client, err := NewPrometheusClient("https://localhost:9090", true)
 	if err != nil {
@@ -1114,19 +1114,19 @@ func GetInfernoReplicaMetrics(variantName, namespace, acceleratorType string) (c
 	labels := fmt.Sprintf(`variant_name="%s",exported_namespace="%s",accelerator_type="%s"`, variantName, namespace, acceleratorType)
 
 	// Query both metrics with retries
-	currentQuery := fmt.Sprintf(`%s{%s}`, constants.InfernoCurrentReplicas, labels)
+	currentQuery := fmt.Sprintf(`%s{%s}`, constants.WVACurrentReplicas, labels)
 	currentReplicas, err = client.QueryWithRetry(ctx, currentQuery)
 	if err != nil {
 		return 0, 0, 0, fmt.Errorf("failed to query current replicas: %w", err)
 	}
 
-	desiredQuery := fmt.Sprintf(`%s{%s}`, constants.InfernoDesiredReplicas, labels)
+	desiredQuery := fmt.Sprintf(`%s{%s}`, constants.WVADesiredReplicas, labels)
 	desiredReplicas, err = client.QueryWithRetry(ctx, desiredQuery)
 	if err != nil {
 		return 0, 0, 0, fmt.Errorf("failed to query desired replicas: %w", err)
 	}
 
-	desiredRatioQuery := fmt.Sprintf(`%s{%s}`, constants.InfernoDesiredRatio, labels)
+	desiredRatioQuery := fmt.Sprintf(`%s{%s}`, constants.WVADesiredRatio, labels)
 	desiredRatio, err = client.QueryWithRetry(ctx, desiredRatioQuery)
 	if err != nil {
 		return 0, 0, 0, fmt.Errorf("failed to query desired ratio: %w", err)
@@ -1249,4 +1249,3 @@ func SetupTestEnvironment(image string, numNodes, gpusPerNode int, gpuTypes stri
 	gom.Expect(os.Setenv("DEPLOY_HPA", "false")).To(gom.Succeed())                 // tests create their own HPAs if needed
 	gom.Expect(os.Setenv("VLLM_SVC_ENABLED", "false")).To(gom.Succeed())           // tests deploy their own Service
 }
-

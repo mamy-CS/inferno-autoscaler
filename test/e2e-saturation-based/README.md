@@ -23,7 +23,7 @@ The test suite creates a complete testing environment:
    - Gateway for request routing
    - Emulated vLLM deployments (llm-d-sim) with configurable accelerators
    - Prometheus and monitoring stack
-4. **HPA** configured to scale based on WVA recommendations via `inferno_desired_replicas` metric
+4. **HPA** configured to scale based on WVA recommendations via `wva_desired_replicas` metric
 5. **VariantAutoscaling** resources for test model deployments
 
 ## Prerequisites
@@ -172,7 +172,7 @@ make test-e2e
 1. **BeforeSuite**: Build controller image, create Kind cluster, deploy infrastructure
 2. **ConfigMap Validation**: Verify saturation-scaling ConfigMap exists with default thresholds
 3. **Resource Creation**: Create VariantAutoscaling resource for test deployment
-4. **HPA Validation**: Verify HPA is configured with `inferno_desired_replicas` external metric
+4. **HPA Validation**: Verify HPA is configured with `wva_desired_replicas` external metric
 5. **Initial State**: Wait for deployment to reach minimum replica count (typically 1)
 6. **Load Generation**: Start load generation job with configurable request rate
 7. **Saturation Detection**: Monitor VariantAutoscaling status for saturation indicators:
@@ -202,7 +202,7 @@ Creating Kind cluster with 3 nodes and 4 GPUs per node...
 Deploying WVA and llm-d infrastructure...
 ✓ Saturation ConfigMap created with default thresholds
 ✓ VariantAutoscaling resource created
-✓ HPA configured with inferno_desired_replicas metric
+✓ HPA configured with wva_desired_replicas metric
 ✓ Deployment scaled to 1 replica (initial state)
 ✓ Load generation started (8 req/s)
 ✓ Saturation detected (KV cache: 75%, Queue: 12)
@@ -259,7 +259,7 @@ kubectl describe hpa -n llm-d-sim
 kubectl logs -n workload-variant-autoscaler-system deployment/workload-variant-autoscaler-controller-manager -f
 
 # Query external metrics API
-kubectl get --raw "/apis/external.metrics.k8s.io/v1beta1/namespaces/llm-d-sim/inferno_desired_replicas" | jq
+kubectl get --raw "/apis/external.metrics.k8s.io/v1beta1/namespaces/llm-d-sim/wva_desired_replicas" | jq
 ```
 
 ### Prometheus Metrics
@@ -271,7 +271,7 @@ kubectl port-forward -n workload-variant-autoscaler-monitoring svc/prometheus-op
 ```
 
 Key metrics to monitor:
-- `inferno_desired_replicas{variant_name="..."}` - WVA replica recommendations
+- `wva_desired_replicas{variant_name="..."}` - WVA replica recommendations
 - `vllm_cache_utilization{variant_name="..."}` - KV cache utilization
 - `vllm_queue_length{variant_name="..."}` - Request queue depth
 
@@ -325,7 +325,7 @@ make deploy-wva-emulated-on-kind
 kubectl get va -n llm-d-sim -o yaml
 
 # Verify metrics are being collected
-kubectl get --raw "/apis/external.metrics.k8s.io/v1beta1/namespaces/llm-d-sim/inferno_desired_replicas"
+kubectl get --raw "/apis/external.metrics.k8s.io/v1beta1/namespaces/llm-d-sim/wva_desired_replicas"
 
 # Check load generation job
 kubectl get jobs -n llm-d-sim

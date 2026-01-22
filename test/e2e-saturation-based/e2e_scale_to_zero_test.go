@@ -155,7 +155,6 @@ retention_period: %s`, modelName, retentionPeriodShort),
 		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to create HPA: %s", hpaName))
 	})
 
-
 	// ConfigMap and VA existence checks - same as saturation test + scale-to-zero ConfigMap check
 	Context("ConfigMap and VA existence checks", func() {
 		It("should have saturation-scaling ConfigMap with default configuration spawned", func() {
@@ -208,7 +207,7 @@ retention_period: %s`, modelName, retentionPeriodShort),
 			By("verifying HPA uses external metrics")
 			Expect(hpa.Spec.Metrics).To(HaveLen(1), "HPA should have one metric")
 			Expect(hpa.Spec.Metrics[0].Type).To(Equal(autoscalingv2.ExternalMetricSourceType), "HPA should use external metrics")
-			Expect(hpa.Spec.Metrics[0].External.Metric.Name).To(Equal(constants.InfernoDesiredReplicas), "HPA should use inferno_desired_replicas metric")
+			Expect(hpa.Spec.Metrics[0].External.Metric.Name).To(Equal(constants.WVADesiredReplicas), "HPA should use wva_desired_replicas metric")
 
 			_, _ = fmt.Fprintf(GinkgoWriter, "HPA %s verified and configured correctly\n", hpaName)
 		})
@@ -237,10 +236,10 @@ retention_period: %s`, modelName, retentionPeriodShort),
 			Eventually(func(g Gomega) {
 				result, err := k8sClient.RESTClient().
 					Get().
-					AbsPath("/apis/external.metrics.k8s.io/v1beta1/namespaces/" + namespace + "/" + constants.InfernoDesiredReplicas).
+					AbsPath("/apis/external.metrics.k8s.io/v1beta1/namespaces/" + namespace + "/" + constants.WVADesiredReplicas).
 					DoRaw(ctx)
 				g.Expect(err).NotTo(HaveOccurred(), "Should be able to query external metrics API")
-				g.Expect(string(result)).To(ContainSubstring(constants.InfernoDesiredReplicas), "Metric should be available")
+				g.Expect(string(result)).To(ContainSubstring(constants.WVADesiredReplicas), "Metric should be available")
 				g.Expect(string(result)).To(ContainSubstring(deployName), "Metric should be for the correct variant")
 			}, 2*time.Minute, 5*time.Second).Should(Succeed())
 
@@ -770,4 +769,3 @@ enable_scale_to_zero: false`, modelName),
 		_, _ = fmt.Fprintf(GinkgoWriter, "Cleanup completed for scale-to-zero disabled test\n")
 	})
 })
-

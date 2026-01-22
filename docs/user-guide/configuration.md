@@ -325,7 +325,7 @@ WVA exposes metrics for monitoring and integrates with HPA for automatic scaling
 
 WVA includes a **safety net** that prevents HPA from using stale metrics during failures:
 
-1. **Normal Operation**: Emits `inferno_desired_replicas` with optimized targets
+1. **Normal Operation**: Emits `wva_desired_replicas` with optimized targets
 2. **Capacity Analysis Fails**:
    - Uses previous desired replicas (from last successful run)
    - If unavailable, uses current replicas (safe no-op)

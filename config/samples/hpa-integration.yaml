@@ -27,7 +27,7 @@ spec:
   - type: External
     external:
       metric:
-        name: inferno_desired_replicas
+        name: wva_desired_replicas
         selector:
           matchLabels:
             variant_name: vllme-deployment

@@ -445,7 +445,7 @@ kubectl describe variantautoscaling ms-inference-scheduling-llm-d-modelservice-d
 kubectl get hpa -n llm-d-inference-scheduling
 
 # Check external metrics
-kubectl get --raw "/apis/external.metrics.k8s.io/v1beta1/namespaces/llm-d-inference-scheduling/inferno_desired_replicas" | jq
+kubectl get --raw "/apis/external.metrics.k8s.io/v1beta1/namespaces/llm-d-inference-scheduling/wva_desired_replicas" | jq
 ```
 
 ### Monitor WVA Logs (See Metrics Validation!)
@@ -470,7 +470,7 @@ kubectl port-forward -n workload-variant-autoscaler-monitoring \
 
 # Visit http://localhost:9090
 # Query: vllm:request_success_total
-# Query: inferno_desired_replicas
+# Query: wva_desired_replicas
 ```
 
 ### Access Grafana Dashboards

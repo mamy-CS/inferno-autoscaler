@@ -155,7 +155,7 @@ make test-e2e FOCUS="should scale up when saturation is detected"
 
 - ✅ Saturation detection via KV cache and queue metrics
 - ✅ Scale-up recommendations based on thresholds
-- ✅ HPA integration with `inferno_desired_replicas` metric
+- ✅ HPA integration with `wva_desired_replicas` metric
 - ✅ Multi-variant scaling with cost optimization
 - ✅ Deployment scaling and replica stabilization
 
@@ -558,11 +558,11 @@ kubectl logs -n workload-variant-autoscaler-system deployment/workload-variant-a
 **Debugging steps**:
 ```bash
 # Check external metrics API
-kubectl get --raw "/apis/external.metrics.k8s.io/v1beta1/namespaces/<namespace>/inferno_desired_replicas" | jq
+kubectl get --raw "/apis/external.metrics.k8s.io/v1beta1/namespaces/<namespace>/wva_desired_replicas" | jq
 
 # Check Prometheus
 kubectl port-forward -n workload-variant-autoscaler-monitoring svc/prometheus-operated 9090:9090
-# Query: inferno_desired_replicas{variant_name="..."}
+# Query: wva_desired_replicas{variant_name="..."}
 ```
 
 #### Deployment Not Scaling
