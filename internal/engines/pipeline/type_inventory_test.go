@@ -437,3 +437,44 @@ func copyMap(m map[string]int) map[string]int {
 	}
 	return result
 }
+
+var _ = Describe("normalizeAcceleratorName", func() {
+	DescribeTable("should normalize GPU model names to short names",
+		func(fullName, expectedShortName string) {
+			Expect(normalizeAcceleratorName(fullName)).To(Equal(expectedShortName))
+		},
+		Entry("NVIDIA A100", "NVIDIA-A100-PCIE-80GB", "A100"),
+		Entry("NVIDIA H100", "NVIDIA-H100-SXM5-80GB", "H100"),
+		Entry("NVIDIA L40S", "NVIDIA-L40S-48GB", "L40S"),
+		Entry("AMD MI300X", "AMD-MI300X-192G", "MI300X"),
+		Entry("Intel Gaudi 2", "Intel-Gaudi-2-96GB", "Gaudi-2"),
+		Entry("already short - A100", "A100", "A100"),
+		Entry("already short - H100", "H100", "H100"),
+		Entry("lowercase nvidia", "nvidia-A100-PCIE-80GB", "A100"),
+		Entry("unknown vendor fallback", "Unknown-GPU-Model-123", "GPU"),
+	)
+
+	Context("with TypeInventory integration", func() {
+		It("should normalize discovered GPU types", func() {
+			ctx := context.Background()
+			disc := &mockDiscovery{
+				inventory: map[string]map[string]discovery.AcceleratorModelInfo{
+					"node-1": {"NVIDIA-A100-PCIE-80GB": {Count: 4, Memory: "80GB"}},
+					"node-2": {"NVIDIA-H100-SXM5-80GB": {Count: 8, Memory: "80GB"}},
+				},
+			}
+
+			inv := NewTypeInventory("test", disc)
+			err := inv.Refresh(ctx)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify that types are normalized to short names
+			Expect(inv.LimitByType("A100")).To(Equal(4))
+			Expect(inv.LimitByType("H100")).To(Equal(8))
+			Expect(inv.TotalLimit()).To(Equal(12))
+
+			// Full names should not be accessible
+			Expect(inv.LimitByType("NVIDIA-A100-PCIE-80GB")).To(Equal(0))
+		})
+	})
+})

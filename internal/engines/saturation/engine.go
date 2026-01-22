@@ -25,6 +25,7 @@ import (
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
@@ -372,17 +373,50 @@ func (e *Engine) BuildVariantStates(
 			pendingReplicas = 0
 		}
 
-		ctrl.LoggerFrom(ctx).V(1).Info("BuildVariantStates result", "variant", va.Name, "currentReplicas", currentReplicas, "readyReplicas", readyReplicas, "pendingReplicas", pendingReplicas)
+		// Extract GPUs per replica from deployment's pod template
+		gpusPerReplica := getDeploymentGPUsPerReplica(deploy)
+
+		ctrl.LoggerFrom(ctx).V(1).Info("BuildVariantStates result", "variant", va.Name, "currentReplicas", currentReplicas, "readyReplicas", readyReplicas, "pendingReplicas", pendingReplicas, "gpusPerReplica", gpusPerReplica)
 
 		states = append(states, interfaces.VariantReplicaState{
 			VariantName:     deploy.Name,
 			CurrentReplicas: currentReplicas,
 			DesiredReplicas: va.Status.DesiredOptimizedAlloc.NumReplicas,
 			PendingReplicas: pendingReplicas,
+			GPUsPerReplica:  gpusPerReplica,
 		})
 	}
 
 	return states
+}
+
+// gpuVendors lists the resource name prefixes for GPU vendors
+var gpuVendors = []string{"nvidia.com", "amd.com", "intel.com"}
+
+// getDeploymentGPUsPerReplica extracts the total GPU requests from a deployment's pod template.
+// It sums GPU requests across all containers for supported vendors (nvidia.com, amd.com, intel.com).
+// Returns 1 as default if no GPU requests are found (assumes at least 1 GPU for inference workloads).
+func getDeploymentGPUsPerReplica(deploy *appsv1.Deployment) int {
+	if deploy == nil {
+		return 1
+	}
+
+	total := 0
+	for _, container := range deploy.Spec.Template.Spec.Containers {
+		for _, vendor := range gpuVendors {
+			resName := corev1.ResourceName(vendor + "/gpu")
+			if qty, ok := container.Resources.Requests[resName]; ok {
+				total += int(qty.Value())
+			}
+		}
+	}
+
+	// Default to 1 GPU if no explicit requests found
+	// (common for inference workloads that may not have resource requests)
+	if total == 0 {
+		return 1
+	}
+	return total
 }
 
 // convertSaturationTargetsToDecisions converts saturation-only targets to VariantDecisions.
@@ -422,6 +456,12 @@ func (e *Engine) convertSaturationTargetsToDecisions(
 			action = interfaces.ActionNoChange
 		}
 
+		// Use GPUsPerReplica from variant state (extracted from deployment)
+		gpusPerReplica := state.GPUsPerReplica
+		if gpusPerReplica <= 0 {
+			gpusPerReplica = 1 // Fallback default
+		}
+
 		decision := interfaces.VariantDecision{
 			VariantName:        variantName,
 			Namespace:          saturationAnalysis.Namespace,
@@ -435,11 +475,14 @@ func (e *Engine) convertSaturationTargetsToDecisions(
 			ModelBasedDecision: false,
 			SafetyOverride:     false,
 			Reason:             "saturation-only mode: " + string(action),
+			GPUsPerReplica:     gpusPerReplica,
 		}
 
 		if va != nil {
 			decision.AcceleratorName = va.AcceleratorName
 			decision.Cost = va.Cost
+			// Use average spare KV capacity as the SpareCapacity indicator for limiter prioritization
+			decision.SpareCapacity = va.AvgSpareKvCapacity
 		} else {
 			logger.Info("No variant analysis found for decision (metrics may be unavailable)",
 				"variant", variantName)

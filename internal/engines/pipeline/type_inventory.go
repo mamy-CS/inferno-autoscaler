@@ -3,11 +3,66 @@ package pipeline
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/discovery"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
 )
+
+// normalizeAcceleratorName converts a full GPU model name to a short name.
+// This enables matching between VA labels (e.g., "A100") and discovery results
+// (e.g., "NVIDIA-A100-PCIE-80GB").
+//
+// Examples:
+//   - "NVIDIA-A100-PCIE-80GB" -> "A100"
+//   - "NVIDIA-H100-SXM5-80GB" -> "H100"
+//   - "AMD-MI300X-192G" -> "MI300X"
+//   - "Intel-Gaudi-2-96GB" -> "Gaudi-2"
+//   - "A100" -> "A100" (already short)
+func normalizeAcceleratorName(fullName string) string {
+	// If already a short name (no hyphens or known pattern), return as-is
+	if !strings.Contains(fullName, "-") {
+		return fullName
+	}
+
+	// Common patterns for GPU model names:
+	// NVIDIA-{model}-{variant} -> extract {model}
+	// AMD-{model}-{memory} -> extract {model}
+	// Intel-{model}-{memory} -> extract {model}
+
+	parts := strings.Split(fullName, "-")
+	if len(parts) < 2 {
+		return fullName
+	}
+
+	// Check for known vendor prefixes
+	vendor := strings.ToUpper(parts[0])
+	switch vendor {
+	case "NVIDIA":
+		// NVIDIA-A100-PCIE-80GB -> A100
+		// NVIDIA-H100-SXM5-80GB -> H100
+		if len(parts) >= 2 {
+			return parts[1]
+		}
+	case "AMD":
+		// AMD-MI300X-192G -> MI300X
+		if len(parts) >= 2 {
+			return parts[1]
+		}
+	case "INTEL":
+		// Intel-Gaudi-2-96GB -> Gaudi-2
+		if len(parts) >= 3 {
+			return parts[1] + "-" + parts[2]
+		}
+		if len(parts) >= 2 {
+			return parts[1]
+		}
+	}
+
+	// Fallback: return the second part (after vendor)
+	return parts[1]
+}
 
 // TypeInventory tracks GPU capacity, usage, and availability per accelerator type (H100, A100, etc.).
 //
@@ -110,6 +165,8 @@ func (i *TypeInventory) RefreshAll(ctx context.Context) error {
 // Refresh updates the inventory limits from the cluster using the discovery interface.
 //
 // This aggregates GPU capacity across all nodes for each accelerator type.
+// Accelerator names are normalized from full model names (e.g., "NVIDIA-A100-PCIE-80GB")
+// to short names (e.g., "A100") to match VA label conventions.
 // Should be called before CreateAllocator to ensure fresh data.
 // Note: This only updates limits; call SetUsed or RefreshAll to update usage.
 func (i *TypeInventory) Refresh(ctx context.Context) error {
@@ -120,12 +177,15 @@ func (i *TypeInventory) Refresh(ctx context.Context) error {
 	}
 
 	// Aggregate by accelerator type across all nodes
+	// Normalize full model names to short names for matching with VA labels
 	byType := make(map[string]int)
 	total := 0
 
 	for _, accelerators := range nodeInventory {
-		for accType, info := range accelerators {
-			byType[accType] += info.Count
+		for fullModelName, info := range accelerators {
+			// Normalize "NVIDIA-A100-PCIE-80GB" -> "A100"
+			shortName := normalizeAcceleratorName(fullModelName)
+			byType[shortName] += info.Count
 			total += info.Count
 		}
 	}

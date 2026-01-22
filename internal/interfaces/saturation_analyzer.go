@@ -197,6 +197,10 @@ type VariantReplicaState struct {
 	// WVA uses this to prevent cascade scaling - avoiding new scale-up requests
 	// while pending pods are still becoming ready.
 	PendingReplicas int
+	// GPUsPerReplica is the number of GPUs required per replica, extracted from
+	// the deployment's container resource requests (nvidia.com/gpu, amd.com/gpu, etc.).
+	// Defaults to 1 if no GPU requests are found.
+	GPUsPerReplica int
 }
 
 // SaturationAnalyzer analyzes replica saturation metrics and recommends scaling decisions
