@@ -104,10 +104,11 @@ type VariantDecision struct {
 	Cost            float64
 
 	// --- Scaling state ---
-	Action          SaturationAction
-	CurrentReplicas int
-	TargetReplicas  int // Current target (modified by pipeline stages)
-	DesiredReplicas int // Original desired replicas from optimizer (from CRD status)
+	Action                 SaturationAction
+	CurrentReplicas        int
+	TargetReplicas         int // Current target (modified by pipeline stages)
+	OriginalTargetReplicas int // Original target before resource limiting (for logging)
+	DesiredReplicas        int // Original desired replicas from optimizer (from CRD status)
 
 	// --- Resource requirements (for resource limiting) ---
 	GPUsPerReplica int // GPUs required per replica

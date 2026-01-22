@@ -177,28 +177,43 @@ func (d *K8sWithGpuOperator) discoverNodeGPUTypes(ctx context.Context) (map[stri
 }
 
 // getPodGPURequests returns the total GPU requests for a pod across all containers.
+// For regular containers, GPUs are summed (they run concurrently).
+// For init containers, we take the max (they run sequentially).
+// The final result is max(initContainerMax, regularContainerSum) since init containers
+// complete before regular containers start.
 func getPodGPURequests(pod *corev1.Pod) int {
-	total := 0
+	// Sum GPU requests from regular containers (run concurrently)
+	regularTotal := 0
 	for _, container := range pod.Spec.Containers {
 		for _, vendor := range vendors {
 			resName := corev1.ResourceName(vendor + "/gpu")
 			if qty, ok := container.Resources.Requests[resName]; ok {
-				total += int(qty.Value())
+				regularTotal += int(qty.Value())
 			}
 		}
 	}
-	// Also check init containers
+
+	// Find max GPU request from init containers (run sequentially)
+	initMax := 0
 	for _, container := range pod.Spec.InitContainers {
+		containerGPUs := 0
 		for _, vendor := range vendors {
 			resName := corev1.ResourceName(vendor + "/gpu")
 			if qty, ok := container.Resources.Requests[resName]; ok {
-				// Init containers run sequentially, so we take the max, not sum
-				// But for simplicity, we can sum here as they don't run concurrently with main containers
-				total += int(qty.Value())
+				containerGPUs += int(qty.Value())
 			}
 		}
+		if containerGPUs > initMax {
+			initMax = containerGPUs
+		}
 	}
-	return total
+
+	// Return max of init containers and regular containers
+	// (init containers finish before regular containers start)
+	if initMax > regularTotal {
+		return initMax
+	}
+	return regularTotal
 }
 
 // Ensure K8sWithGpuOperator implements FullDiscovery

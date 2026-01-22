@@ -288,7 +288,7 @@ func (e *Engine) optimize(ctx context.Context) error {
 				if d.WasLimited {
 					logger.Info("Decision was limited by GPU availability",
 						"variant", d.VariantName,
-						"originalTarget", d.TargetReplicas+d.GPUsAllocated/max(d.GPUsPerReplica, 1),
+						"originalTarget", d.OriginalTargetReplicas,
 						"limitedTarget", d.TargetReplicas,
 						"limitedBy", d.LimitedBy)
 				}
@@ -463,19 +463,20 @@ func (e *Engine) convertSaturationTargetsToDecisions(
 		}
 
 		decision := interfaces.VariantDecision{
-			VariantName:        variantName,
-			Namespace:          saturationAnalysis.Namespace,
-			ModelID:            saturationAnalysis.ModelID,
-			CurrentReplicas:    state.CurrentReplicas,
-			TargetReplicas:     targetReplicas,
-			DesiredReplicas:    state.DesiredReplicas,
-			Action:             action,
-			SaturationBased:    true,
-			SaturationOnly:     true,
-			ModelBasedDecision: false,
-			SafetyOverride:     false,
-			Reason:             "saturation-only mode: " + string(action),
-			GPUsPerReplica:     gpusPerReplica,
+			VariantName:            variantName,
+			Namespace:              saturationAnalysis.Namespace,
+			ModelID:                saturationAnalysis.ModelID,
+			CurrentReplicas:        state.CurrentReplicas,
+			TargetReplicas:         targetReplicas,
+			OriginalTargetReplicas: targetReplicas, // Store original before limiter modifies it
+			DesiredReplicas:        state.DesiredReplicas,
+			Action:                 action,
+			SaturationBased:        true,
+			SaturationOnly:         true,
+			ModelBasedDecision:     false,
+			SafetyOverride:         false,
+			Reason:                 "saturation-only mode: " + string(action),
+			GPUsPerReplica:         gpusPerReplica,
 		}
 
 		if va != nil {
