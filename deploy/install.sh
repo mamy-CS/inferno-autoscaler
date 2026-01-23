@@ -518,6 +518,16 @@ spec:
           name: grpc-health
         - containerPort: 9090
           name: metrics
+        readinessProbe:
+          grpc:
+            port: 9003
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        livenessProbe:
+          grpc:
+            port: 9003
+          initialDelaySeconds: 15
+          periodSeconds: 20
 ---
 apiVersion: v1
 kind: Service
@@ -537,6 +547,11 @@ spec:
     port: 9090
     targetPort: 9090
 EOF
+
+    # Wait for second EPP to be ready
+    log_info "Waiting for second EPP deployment to be ready..."
+    kubectl wait --for=condition=Available deployment/${POOL_NAME_2}-epp -n $LLMD_NS --timeout=120s || \
+        log_warning "Second EPP deployment not ready yet - check 'kubectl get pods -n $LLMD_NS -l app=${POOL_NAME_2}-epp'"
 
     # Create second modelservice deployment (using llm-d-inference-sim)
     log_info "Creating second modelservice deployment: $MS_NAME_2"
