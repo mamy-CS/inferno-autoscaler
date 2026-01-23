@@ -54,6 +54,7 @@ EXAMPLE_DIR=${EXAMPLE_DIR:-"$WVA_PROJECT/$LLM_D_PROJECT/guides/$WELL_LIT_PATH_NA
 LLM_D_MODELSERVICE_VALUES=${LLM_D_MODELSERVICE_VALUES:-"$EXAMPLE_DIR/ms-$WELL_LIT_PATH_NAME/values.yaml"}
 ITL_AVERAGE_LATENCY_MS=${ITL_AVERAGE_LATENCY_MS:-20}
 TTFT_AVERAGE_LATENCY_MS=${TTFT_AVERAGE_LATENCY_MS:-200}
+ENABLE_SCALE_TO_ZERO=${ENABLE_SCALE_TO_ZERO:-true}
 
 # Gateway Configuration
 GATEWAY_PROVIDER=${GATEWAY_PROVIDER:-"istio"} # Options: kgateway, istio
@@ -451,7 +452,7 @@ deploy_wva_controller() {
     
     # Wait for WVA to be ready
     log_info "Waiting for WVA controller to be ready..."
-    kubectl wait --for=condition=Ready pod -l app.kubernetes.io/name=workload-variant-autoscaler -n $WVA_NS --timeout=30s || \
+    kubectl wait --for=condition=Ready pod -l app.kubernetes.io/name=workload-variant-autoscaler -n $WVA_NS --timeout=60s || \
         log_warning "WVA controller is not ready yet - check 'kubectl get pods -n $WVA_NS'"
     
     log_success "WVA deployment complete"
@@ -748,7 +749,7 @@ deploy_llm_d_infrastructure() {
                  .prefill.containers[0].args = [\"--time-to-first-token=$TTFT_AVERAGE_LATENCY_MS\", \"--inter-token-latency=$ITL_AVERAGE_LATENCY_MS\"]" \
                  -i "$LLM_D_MODELSERVICE_VALUES"
     else
-      log_info "Skipping llm-d-inference-simulator deployment (DEPLOY_LLM_D_INFERENCE_SIM=false)"
+        log_info "Skipping llm-d-inference-simulator deployment (DEPLOY_LLM_D_INFERENCE_SIM=false)"
     fi
 
     # Configure vLLM max-num-seqs if set (useful for e2e testing to force saturation)
@@ -762,17 +763,40 @@ deploy_llm_d_infrastructure() {
     helmfile apply -e $GATEWAY_PROVIDER -n ${LLMD_NS}
     kubectl apply -f httproute.yaml -n ${LLMD_NS}
 
-    if [ "$GATEWAY_PROVIDER" == "kgateway" ]; then
-        log_info "Patching kgateway service to NodePort"
-        export GATEWAY_NAME="infra-inference-scheduling-inference-gateway"
-        kubectl patch gatewayparameters.gateway.kgateway.dev $GATEWAY_NAME \
-        -n $LLMD_NS \
-        --type='merge' \
-        -p '{"spec":{"kube":{"service":{"type":"NodePort"}}}}'
+    # if [ "$GATEWAY_PROVIDER" == "kgateway" ]; then
+    #     log_info "Patching kgateway service to NodePort"
+    #     export GATEWAY_NAME="infra-inference-scheduling-inference-gateway"
+    #     kubectl patch gatewayparameters.gateway.kgateway.dev $GATEWAY_NAME \
+    #     -n $LLMD_NS \
+    #     --type='merge' \
+    #     -p '{"spec":{"kube":{"service":{"type":"NodePort"}}}}'
+    # fi
+
+    # Patch llm-d-inference-simulator deployment if scale-to-zero is enabled
+    if [ "$ENABLE_SCALE_TO_ZERO" == "true" ]; then
+        # Patch llm-d-inference-simulator deployment to use the correct image
+        log_info "Patching llm-d-inference-simulator deployment to enable flowcontrol and use a new image"
+        export DEPLOYMENT_NAME="gaie-sim-epp"
+        export NEW_IMAGE="ghcr.io/llm-d/llm-d-inference-scheduler:v0.5.0-rc.1"
+        kubectl patch deployment $DEPLOYMENT_NAME -n $LLMD_NS --type='json' -p='[
+            {
+                "op": "replace",
+                "path": "/spec/template/spec/containers/0/image",
+                "value": "'$NEW_IMAGE'"
+            },
+            {
+                "op": "add",
+                "path": "/spec/template/spec/containers/0/env/-",
+                "value": {
+                "name": "ENABLE_EXPERIMENTAL_FLOW_CONTROL_LAYER",
+                "value": "true"
+                }
+            }
+        ]'
     fi
     
     log_info "Waiting for llm-d components to initialize..."
-    kubectl wait --for=condition=Available deployment --all -n $LLMD_NS --timeout=30s || \
+    kubectl wait --for=condition=Available deployment --all -n $LLMD_NS --timeout=60s || \
         log_warning "llm-d components are not ready yet - check 'kubectl get pods -n $LLMD_NS'"
 
     # Deploy second model infrastructure for multi-model testing (limiter e2e tests)

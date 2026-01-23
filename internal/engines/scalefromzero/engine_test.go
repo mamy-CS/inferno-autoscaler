@@ -33,6 +33,7 @@ import (
 	vav1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
 	poolreconciler "github.com/llm-d-incubation/workload-variant-autoscaler/internal/controller"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/datastore"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/utils"
 	unittestutil "github.com/llm-d-incubation/workload-variant-autoscaler/test/utils"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -53,7 +54,7 @@ var (
 	variantCost     = float64(5)
 )
 
-func TestScaleFromZeroEngine(t *testing.T) {
+func TestSingleInactiveVariant(t *testing.T) {
 	gvk := schema.GroupVersionKind{
 		Group:   v1.GroupVersion.Group,
 		Version: v1.GroupVersion.Version,
@@ -137,7 +138,7 @@ func TestScaleFromZeroEngine(t *testing.T) {
 			ctx := context.Background()
 
 			ds := datastore.NewDatastore()
-			inferencePoolReconciler := &poolreconciler.InferencePoolReconciler{Reader: fakeClient, Datastore: ds, PoolGKNN: gknn}
+			inferencePoolReconciler := &poolreconciler.InferencePoolReconciler{Client: fakeClient, Datastore: ds, PoolGKNN: gknn}
 
 			// (1) Reconcile inferencePool and store generated endpointPool in the datastore
 			if _, err := inferencePoolReconciler.Reconcile(ctx, req); err != nil {
@@ -151,11 +152,12 @@ func TestScaleFromZeroEngine(t *testing.T) {
 			mapper := testrestmapper.TestOnlyStaticRESTMapper(scheme, schema.GroupVersion{Group: "apps", Version: "v1"})
 
 			engine := &Engine{
-				client:        fakeClient,
-				executor:      nil,
-				Datastore:     ds,
-				DynamicClient: fakeDynamicClient,
-				Mapper:        mapper,
+				client:         fakeClient,
+				executor:       nil,
+				Datastore:      ds,
+				DynamicClient:  fakeDynamicClient,
+				Mapper:         mapper,
+				maxConcurrency: 30,
 			}
 
 			// Call the optimize function.
@@ -167,4 +169,157 @@ func TestScaleFromZeroEngine(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMultipleInactiveVariants(t *testing.T) {
+	gvk := schema.GroupVersionKind{
+		Group:   v1.GroupVersion.Group,
+		Version: v1.GroupVersion.Version,
+		Kind:    "InferencePool",
+	}
+	pool1 := utiltest.MakeInferencePool("pool1").
+		Namespace(namespace).
+		Selector(selector_v1).
+		TargetPorts(8080).
+		EndpointPickerRef("epp-pool1-svc").ObjRef()
+	pool1.SetGroupVersionKind(gvk)
+
+	// Create multiple VAs with different models
+	va1 := unittestutil.CreateVariantAutoscalingResource(namespace, "resource-1", "model-1", acceleratorName, variantCost)
+	va2 := unittestutil.CreateVariantAutoscalingResource(namespace, "resource-2", "model-2", acceleratorName, variantCost)
+	va3 := unittestutil.CreateVariantAutoscalingResource(namespace, "resource-3", "model-3", acceleratorName, variantCost)
+
+	dp1 := unittestutil.MakeDeployment("resource-1", namespace, 0, selector_v1)
+	dp2 := unittestutil.MakeDeployment("resource-2", namespace, 0, selector_v1)
+	dp3 := unittestutil.MakeDeployment("resource-3", namespace, 0, selector_v1)
+	svc := unittestutil.MakeService("epp-pool1-svc", namespace)
+
+	scheme := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(scheme)
+	_ = v1alpha2.Install(scheme)
+	_ = v1.Install(scheme)
+	_ = vav1alpha1.AddToScheme(scheme)
+	_ = appsV1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+
+	fakeClientInitialObjs := []client.Object{pool1, dp1, dp2, dp3, va1, va2, va3, svc}
+	fakeDynamicClientInitialObject := []runtime.Object{dp1, dp2, dp3}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(fakeClientInitialObjs...).
+		Build()
+
+	fakeDynamicClient := dynamicfake.NewSimpleDynamicClient(scheme, fakeDynamicClientInitialObject...)
+
+	namespacedName := types.NamespacedName{Name: pool1.Name, Namespace: pool1.Namespace}
+	gknn := common.GKNN{
+		NamespacedName: namespacedName,
+		GroupKind: schema.GroupKind{
+			Group: pool1.GroupVersionKind().Group,
+			Kind:  pool1.GroupVersionKind().Kind,
+		},
+	}
+
+	req := ctrl.Request{NamespacedName: namespacedName}
+	ctx := context.Background()
+
+	ds := datastore.NewDatastore()
+	inferencePoolReconciler := &poolreconciler.InferencePoolReconciler{Client: fakeClient, Datastore: ds, PoolGKNN: gknn}
+
+	if _, err := inferencePoolReconciler.Reconcile(ctx, req); err != nil {
+		t.Errorf("Unexpected InferencePool reconcile error: %v", err)
+	}
+
+	mapper := testrestmapper.TestOnlyStaticRESTMapper(scheme, schema.GroupVersion{Group: "apps", Version: "v1"})
+
+	engine := &Engine{
+		client:         fakeClient,
+		executor:       nil,
+		Datastore:      ds,
+		DynamicClient:  fakeDynamicClient,
+		Mapper:         mapper,
+		maxConcurrency: 30,
+	}
+
+	// Get all inactive VAs
+	inactiveVAs, err := utils.InactiveVariantAutoscaling(ctx, fakeClient)
+	require.NoError(t, err)
+	assert.Equal(t, 3, len(inactiveVAs), "Should have 3 inactive VAs")
+
+	// Run optimize - it should handle multiple VAs concurrently
+	err = engine.optimize(ctx)
+	// No error expected when EPP metrics source is not set up (it just skips processing)
+	assert.NoError(t, err)
+}
+
+func TestEmptyInactiveVariants(t *testing.T) {
+	gvk := schema.GroupVersionKind{
+		Group:   v1.GroupVersion.Group,
+		Version: v1.GroupVersion.Version,
+		Kind:    "InferencePool",
+	}
+	pool1 := utiltest.MakeInferencePool("pool1").
+		Namespace(namespace).
+		Selector(selector_v1).
+		TargetPorts(8080).
+		EndpointPickerRef("epp-pool1-svc").ObjRef()
+	pool1.SetGroupVersionKind(gvk)
+
+	// Create VA with non-zero replicas (active)
+	va := unittestutil.CreateVariantAutoscalingResource(namespace, resourceName, modelId, acceleratorName, variantCost)
+	dp := unittestutil.MakeDeployment(resourceName, namespace, 1, selector_v1) // 1 replica = active
+	svc := unittestutil.MakeService("epp-pool1-svc", namespace)
+
+	scheme := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(scheme)
+	_ = v1alpha2.Install(scheme)
+	_ = v1.Install(scheme)
+	_ = vav1alpha1.AddToScheme(scheme)
+	_ = appsV1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+
+	fakeClientInitialObjs := []client.Object{pool1, dp, va, svc}
+	fakeDynamicClientInitialObject := []runtime.Object{dp}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(fakeClientInitialObjs...).
+		Build()
+
+	fakeDynamicClient := dynamicfake.NewSimpleDynamicClient(scheme, fakeDynamicClientInitialObject...)
+
+	namespacedName := types.NamespacedName{Name: pool1.Name, Namespace: pool1.Namespace}
+	gknn := common.GKNN{
+		NamespacedName: namespacedName,
+		GroupKind: schema.GroupKind{
+			Group: pool1.GroupVersionKind().Group,
+			Kind:  pool1.GroupVersionKind().Kind,
+		},
+	}
+
+	req := ctrl.Request{NamespacedName: namespacedName}
+	ctx := context.Background()
+
+	ds := datastore.NewDatastore()
+	inferencePoolReconciler := &poolreconciler.InferencePoolReconciler{Client: fakeClient, Datastore: ds, PoolGKNN: gknn}
+
+	if _, err := inferencePoolReconciler.Reconcile(ctx, req); err != nil {
+		t.Errorf("Unexpected InferencePool reconcile error: %v", err)
+	}
+
+	mapper := testrestmapper.TestOnlyStaticRESTMapper(scheme, schema.GroupVersion{Group: "apps", Version: "v1"})
+
+	engine := &Engine{
+		client:         fakeClient,
+		executor:       nil,
+		Datastore:      ds,
+		DynamicClient:  fakeDynamicClient,
+		Mapper:         mapper,
+		maxConcurrency: 30,
+	}
+
+	// Should complete without error when no inactive VAs exist
+	err := engine.optimize(ctx)
+	assert.NoError(t, err, "Should not error when no inactive VAs exist")
 }

@@ -50,6 +50,8 @@ rules:
   - secrets
   verbs:
   - get
+  - list
+  - watch
 - apiGroups:
   - apps
   resources:
@@ -117,4 +119,9 @@ rules:
   verbs:
   - get
   - update
+- nonResourceURLs:
+  - /metrics
+  - /debug/pprof/*
+  verbs:
+  - get
 {{- end }}

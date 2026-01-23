@@ -101,7 +101,7 @@ func TestInferencePoolReconcile(t *testing.T) {
 			ctx := context.Background()
 
 			ds := datastore.NewDatastore()
-			inferencePoolReconciler := &InferencePoolReconciler{Reader: fakeClient, Datastore: ds, PoolGKNN: gknn}
+			inferencePoolReconciler := &InferencePoolReconciler{Client: fakeClient, Datastore: ds, PoolGKNN: gknn}
 
 			if _, err := inferencePoolReconciler.Reconcile(ctx, req); err != nil {
 				t.Errorf("Unexpected InferencePool reconcile error: %v", err)
@@ -222,7 +222,7 @@ func TestAlphaInferencePoolReconcile(t *testing.T) {
 			ctx := context.Background()
 
 			ds := datastore.NewDatastore()
-			inferencePoolReconciler := &InferencePoolReconciler{Reader: fakeClient, Datastore: ds, PoolGKNN: gknn}
+			inferencePoolReconciler := &InferencePoolReconciler{Client: fakeClient, Datastore: ds, PoolGKNN: gknn}
 
 			if _, err := inferencePoolReconciler.Reconcile(ctx, req); err != nil {
 				t.Errorf("Unexpected InferencePool reconcile error: %v", err)

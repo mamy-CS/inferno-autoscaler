@@ -27,6 +27,9 @@ data:
   # PROMETHEUS_BEARER_TOKEN: "your-token-here"           # Direct bearer token (development/testing)
   # PROMETHEUS_TOKEN_PATH: "/path/to/token/file"        # Path to bearer token file (production with mounted secrets)
 
+  # configuration from scalefromzero
+  EPP_METRIC_READER_BEARER_TOKEN: ""
+
   # Optimization configuration
   GLOBAL_OPT_INTERVAL: {{ .Values.wva.reconcileInterval | quote }}
 

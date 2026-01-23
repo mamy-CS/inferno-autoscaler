@@ -425,7 +425,7 @@ func main() {
 	// Create InferencePool reconciler
 	inferencePoolReconciler := &controller.InferencePoolReconciler{
 		Datastore: ds,
-		Reader:    mgr.GetClient(),
+		Client:    mgr.GetClient(),
 		PoolGKNN:  poolutil.DefaultPoolGKNN(),
 	}
 
