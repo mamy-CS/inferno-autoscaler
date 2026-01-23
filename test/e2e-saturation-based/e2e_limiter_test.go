@@ -11,6 +11,7 @@ import (
 	"github.com/llm-d-incubation/workload-variant-autoscaler/test/utils/resources"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	promoperator "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -82,18 +83,20 @@ var _ = Describe("Test workload-variant-autoscaler - GPU Limiter Feature", Order
 		ctx context.Context
 
 		// Variant 1 resources
-		variant1Name        string
-		variant1DeployName  string
-		variant1ServiceName string
-		variant1HPAName     string
-		variant1AppLabel    string
+		variant1Name           string
+		variant1DeployName     string
+		variant1ServiceName    string
+		variant1ServiceMonName string
+		variant1HPAName        string
+		variant1AppLabel       string
 
 		// Variant 2 resources
-		variant2Name        string
-		variant2DeployName  string
-		variant2ServiceName string
-		variant2HPAName     string
-		variant2AppLabel    string
+		variant2Name           string
+		variant2DeployName     string
+		variant2ServiceName    string
+		variant2ServiceMonName string
+		variant2HPAName        string
+		variant2AppLabel       string
 
 		namespace       string
 		initialReplicas int32
@@ -114,6 +117,7 @@ var _ = Describe("Test workload-variant-autoscaler - GPU Limiter Feature", Order
 		variant1Name = "llm-d-sim-limiter-v1"
 		variant1DeployName = variant1Name + "-deployment"
 		variant1ServiceName = variant1Name + "-service"
+		variant1ServiceMonName = variant1Name + "-servicemonitor"
 		variant1HPAName = variant1Name + "-hpa"
 		variant1AppLabel = variant1Name
 
@@ -121,6 +125,7 @@ var _ = Describe("Test workload-variant-autoscaler - GPU Limiter Feature", Order
 		variant2Name = "llm-d-sim-limiter-v2"
 		variant2DeployName = variant2Name + "-deployment"
 		variant2ServiceName = variant2Name + "-service"
+		variant2ServiceMonName = variant2Name + "-servicemonitor"
 		variant2HPAName = variant2Name + "-hpa"
 		variant2AppLabel = variant2Name
 
@@ -205,6 +210,17 @@ enableLimiter: true`
 		_, err = k8sClient.CoreV1().Services(namespace).Create(ctx, service2, metav1.CreateOptions{})
 		Expect(err).NotTo(HaveOccurred())
 
+		By("creating ServiceMonitors for metrics collection")
+		serviceMonitor1 := resources.CreateLlmdSimServiceMonitor(variant1ServiceMonName, controllerMonitoringNamespace, llmDNamespace, variant1AppLabel)
+		err = crClient.Create(ctx, serviceMonitor1)
+		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to create ServiceMonitor: %s", variant1ServiceMonName))
+		_, _ = fmt.Fprintf(GinkgoWriter, "ServiceMonitor created for Variant1: %s\n", variant1ServiceMonName)
+
+		serviceMonitor2 := resources.CreateLlmdSimServiceMonitor(variant2ServiceMonName, controllerMonitoringNamespace, llmDNamespace, variant2AppLabel)
+		err = crClient.Create(ctx, serviceMonitor2)
+		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to create ServiceMonitor: %s", variant2ServiceMonName))
+		_, _ = fmt.Fprintf(GinkgoWriter, "ServiceMonitor created for Variant2: %s\n", variant2ServiceMonName)
+
 		By("waiting for pods to be running")
 		for _, appLabel := range []string{variant1AppLabel, variant2AppLabel} {
 			Eventually(func(g Gomega) {
@@ -237,6 +253,25 @@ enableLimiter: true`
 		hpa2 := utils.CreateHPAOnDesiredReplicaMetrics(variant2HPAName, namespace, variant2DeployName, variant2DeployName, 10)
 		_, err = k8sClient.AutoscalingV2().HorizontalPodAutoscalers(namespace).Create(ctx, hpa2, metav1.CreateOptions{})
 		Expect(err).NotTo(HaveOccurred())
+
+		By("waiting for metrics pipeline to be ready (DesiredOptimizedAlloc populated)")
+		Eventually(func(g Gomega) {
+			va1 := &v1alpha1.VariantAutoscaling{}
+			err := crClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: variant1DeployName}, va1)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(va1.Status.DesiredOptimizedAlloc.Accelerator).NotTo(BeEmpty(),
+				"VA1 DesiredOptimizedAlloc should be populated with accelerator info")
+		}, 5*time.Minute, 10*time.Second).Should(Succeed())
+		_, _ = fmt.Fprintf(GinkgoWriter, "Metrics pipeline ready - VA1 has DesiredOptimizedAlloc populated\n")
+
+		Eventually(func(g Gomega) {
+			va2 := &v1alpha1.VariantAutoscaling{}
+			err := crClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: variant2DeployName}, va2)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(va2.Status.DesiredOptimizedAlloc.Accelerator).NotTo(BeEmpty(),
+				"VA2 DesiredOptimizedAlloc should be populated with accelerator info")
+		}, 5*time.Minute, 10*time.Second).Should(Succeed())
+		_, _ = fmt.Fprintf(GinkgoWriter, "Metrics pipeline ready - VA2 has DesiredOptimizedAlloc populated\n")
 	})
 
 	AfterAll(func() {
@@ -260,6 +295,14 @@ enableLimiter: true`
 			_ = k8sClient.AutoscalingV2().HorizontalPodAutoscalers(namespace).Delete(ctx, hpaName, metav1.DeleteOptions{})
 		}
 
+		// Delete ServiceMonitors
+		for _, smName := range []string{variant1ServiceMonName, variant2ServiceMonName} {
+			sm := &promoperator.ServiceMonitor{}
+			if err := crClient.Get(ctx, client.ObjectKey{Namespace: controllerMonitoringNamespace, Name: smName}, sm); err == nil {
+				_ = crClient.Delete(ctx, sm)
+			}
+		}
+
 		// Delete Services
 		for _, svcName := range []string{variant1ServiceName, variant2ServiceName} {
 			_ = k8sClient.CoreV1().Services(namespace).Delete(ctx, svcName, metav1.DeleteOptions{})
@@ -269,6 +312,8 @@ enableLimiter: true`
 		for _, deployName := range []string{variant1DeployName, variant2DeployName} {
 			_ = k8sClient.AppsV1().Deployments(namespace).Delete(ctx, deployName, metav1.DeleteOptions{})
 		}
+
+		_, _ = fmt.Fprintf(GinkgoWriter, "Cleanup completed for GPU Limiter E2E test\n")
 	})
 
 	Context("Scenario 1: Limiter enabled - normal operation", func() {
@@ -324,8 +369,9 @@ enableLimiter: true`
 
 			By("checking available GPUs on target node (should be 4)")
 			// With 2 GPUs/replica and 4 GPUs on node, max replicas = 2
+			maxReplicasOnNode := 4 / gpusPerReplicaVariant1
 			_, _ = fmt.Fprintf(GinkgoWriter, "With %d GPUs/replica and 4 GPUs on target node, max replicas = %d\n",
-				gpusPerReplicaVariant1, 4/gpusPerReplicaVariant1)
+				gpusPerReplicaVariant1, maxReplicasOnNode)
 
 			By("generating load to trigger saturation and scale-up request")
 			// Create load generator targeting variant1's model
@@ -346,8 +392,22 @@ enableLimiter: true`
 				_ = utils.StopJob(namespace, loadGenJob, k8sClient, ctx)
 			}()
 
-			By("waiting for saturation detection")
-			time.Sleep(30 * time.Second) // Allow metrics to propagate
+			By("waiting for load generator to be running")
+			Eventually(func(g Gomega) {
+				podList, err := k8sClient.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
+					LabelSelector: fmt.Sprintf("job-name=%s", loadGenJob.Name),
+				})
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(podList.Items).NotTo(BeEmpty(), "Job pod should exist")
+				pod := podList.Items[0]
+				g.Expect(pod.Status.Phase).To(Or(
+					Equal(corev1.PodRunning),
+					Equal(corev1.PodSucceeded),
+				), fmt.Sprintf("Job pod should be running, but is: %s", pod.Status.Phase))
+			}, 5*time.Minute, 5*time.Second).Should(Succeed())
+
+			By("waiting for saturation metrics to be collected")
+			time.Sleep(45 * time.Second) // Allow metrics to propagate through Prometheus
 
 			By("verifying limiter constrains scale-up to max 2 replicas")
 			Eventually(func(g Gomega) {
@@ -356,11 +416,23 @@ enableLimiter: true`
 				g.Expect(err).NotTo(HaveOccurred())
 
 				desiredReplicas := va.Status.DesiredOptimizedAlloc.NumReplicas
-				_, _ = fmt.Fprintf(GinkgoWriter, "DesiredOptimizedAlloc.NumReplicas: %d (max should be 2 due to 4 GPU limit)\n", desiredReplicas)
+				accelerator := va.Status.DesiredOptimizedAlloc.Accelerator
+				_, _ = fmt.Fprintf(GinkgoWriter, "DesiredOptimizedAlloc: NumReplicas=%d, Accelerator=%s (max should be %d due to 4 GPU limit)\n",
+					desiredReplicas, accelerator, maxReplicasOnNode)
+
+				// Verify metrics are flowing - accelerator should be populated
+				g.Expect(accelerator).NotTo(BeEmpty(),
+					"DesiredOptimizedAlloc.Accelerator should be populated when metrics are flowing")
 
 				// With 2 GPUs/replica and only 4 GPUs available, max is 2 replicas
-				g.Expect(desiredReplicas).To(BeNumerically("<=", 2),
-					"Limiter should cap replicas at 2 (4 GPUs / 2 GPUs per replica)")
+				// The limiter should prevent scaling beyond this limit
+				g.Expect(desiredReplicas).To(BeNumerically("<=", maxReplicasOnNode),
+					fmt.Sprintf("Limiter should cap replicas at %d (%d GPUs / %d GPUs per replica)",
+						maxReplicasOnNode, 4, gpusPerReplicaVariant1))
+
+				// Also verify we have at least 1 replica (metrics are working)
+				g.Expect(desiredReplicas).To(BeNumerically(">=", 1),
+					"Should have at least 1 replica when metrics are available")
 			}, 5*time.Minute, 10*time.Second).Should(Succeed())
 
 			_, _ = fmt.Fprintf(GinkgoWriter, "Limiter successfully constrained scale-up to available GPU capacity\n")
@@ -405,24 +477,52 @@ enableLimiter: true`
 				_ = utils.StopJob(namespace, loadGenJob2, k8sClient, ctx)
 			}()
 
-			By("waiting for saturation metrics to populate")
-			time.Sleep(45 * time.Second)
+			By("waiting for load generators to be running")
+			for _, jobName := range []string{loadGenJob1.Name, loadGenJob2.Name} {
+				Eventually(func(g Gomega) {
+					podList, err := k8sClient.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
+						LabelSelector: fmt.Sprintf("job-name=%s", jobName),
+					})
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(podList.Items).NotTo(BeEmpty(), "Job pod should exist")
+					pod := podList.Items[0]
+					g.Expect(pod.Status.Phase).To(Or(
+						Equal(corev1.PodRunning),
+						Equal(corev1.PodSucceeded),
+					), fmt.Sprintf("Job pod %s should be running, but is: %s", jobName, pod.Status.Phase))
+				}, 5*time.Minute, 5*time.Second).Should(Succeed())
+			}
 
-			By("verifying both VAs have scaling decisions")
+			By("waiting for saturation metrics to populate")
+			time.Sleep(60 * time.Second) // Allow metrics to propagate through Prometheus
+
+			By("verifying both VAs have scaling decisions with metrics available")
 			Eventually(func(g Gomega) {
 				va1 := &v1alpha1.VariantAutoscaling{}
 				err := crClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: variant1DeployName}, va1)
 				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(va1.Status.DesiredOptimizedAlloc.NumReplicas).To(BeNumerically(">=", 1))
 
 				va2 := &v1alpha1.VariantAutoscaling{}
 				err = crClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: variant2DeployName}, va2)
 				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(va2.Status.DesiredOptimizedAlloc.NumReplicas).To(BeNumerically(">=", 1))
+
+				// Verify metrics pipeline is working for both VAs
+				g.Expect(va1.Status.DesiredOptimizedAlloc.Accelerator).NotTo(BeEmpty(),
+					"VA1 should have accelerator populated")
+				g.Expect(va2.Status.DesiredOptimizedAlloc.Accelerator).NotTo(BeEmpty(),
+					"VA2 should have accelerator populated")
+
+				// Both should have at least 1 replica
+				g.Expect(va1.Status.DesiredOptimizedAlloc.NumReplicas).To(BeNumerically(">=", 1),
+					"VA1 should have at least 1 replica")
+				g.Expect(va2.Status.DesiredOptimizedAlloc.NumReplicas).To(BeNumerically(">=", 1),
+					"VA2 should have at least 1 replica")
 
 				_, _ = fmt.Fprintf(GinkgoWriter,
-					"Allocation - Variant1 (higher load): %d replicas, Variant2: %d replicas\n",
+					"Allocation - Variant1 (higher load, %s): %d replicas, Variant2 (%s): %d replicas\n",
+					va1.Status.DesiredOptimizedAlloc.Accelerator,
 					va1.Status.DesiredOptimizedAlloc.NumReplicas,
+					va2.Status.DesiredOptimizedAlloc.Accelerator,
 					va2.Status.DesiredOptimizedAlloc.NumReplicas)
 			}, 5*time.Minute, 10*time.Second).Should(Succeed())
 
