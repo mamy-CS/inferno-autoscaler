@@ -210,7 +210,7 @@ func CreateLlmdSimDeploymentWithGPUAndLabels(
 	if len(extraLabels) > 0 {
 		for k, v := range extraLabels {
 			deployment.Spec.Selector.MatchLabels[k] = v
-			deployment.Spec.Template.ObjectMeta.Labels[k] = v
+			deployment.Spec.Template.Labels[k] = v
 		}
 	}
 
