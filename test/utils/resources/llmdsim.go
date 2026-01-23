@@ -169,6 +169,27 @@ func CreateLlmdSimDeploymentWithGPU(namespace, deployName, modelName, appLabel, 
 	}
 }
 
+// CreateLlmdSimDeploymentWithGPUAndNodeSelector creates a deployment with GPU resources
+// and node selector to target specific GPU configurations.
+// nodeSelector maps label keys to values (e.g., "gpu-config": "4H100")
+func CreateLlmdSimDeploymentWithGPUAndNodeSelector(
+	namespace, deployName, modelName, appLabel, port string,
+	avgTTFT, avgITL int, replicas int32,
+	gpusPerReplica int, gpuType string,
+	nodeSelector map[string]string,
+) *appsv1.Deployment {
+	deployment := CreateLlmdSimDeploymentWithGPU(
+		namespace, deployName, modelName, appLabel, port,
+		avgTTFT, avgITL, replicas, gpusPerReplica, gpuType,
+	)
+
+	if len(nodeSelector) > 0 {
+		deployment.Spec.Template.Spec.NodeSelector = nodeSelector
+	}
+
+	return deployment
+}
+
 // creates a service for the llm-d-sim deployment
 func CreateLlmdSimService(namespace, serviceName, appLabel string, nodePort, port int) *corev1.Service {
 	return &corev1.Service{

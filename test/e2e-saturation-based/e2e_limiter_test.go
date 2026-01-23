@@ -24,15 +24,18 @@ const (
 	limiterModel1 = "test/limiter-model-1"
 	limiterModel2 = "test/limiter-model-2"
 
-	// GPUs per replica for testing
-	// CI runs with E2E_GPU_TYPE=nvidia or E2E_GPU_TYPE=amd
-	// This provides 6 GPUs (3 nodes × 2 GPUs each)
-	// Different GPU requirements test limiter prioritization
-	gpusPerReplicaVariant1 = 2 // Variant 1 uses 2 GPUs per replica (higher cost)
-	gpusPerReplicaVariant2 = 1 // Variant 2 uses 1 GPU per replica (lower cost)
+	// GPU configurations - each node has 4 GPUs
+	gpusPerReplicaVariant1 = 2 // Variant 1: 2 GPUs/replica, max 2 replicas on 4-GPU node
+	gpusPerReplicaVariant2 = 1 // Variant 2: 1 GPU/replica, max 4 replicas on 4-GPU node
 
-	// Minimum GPUs required to run these tests
-	minRequiredGPUs = 4 // Need at least 4: initial (2+1) + 1 for scale-up test
+	// Min GPUs per specific GPU type (one node with 4 GPUs)
+	minRequiredGPUsPerType = 4
+
+	// Load generation parameters
+	limiterLoadRate     = 5   // requests per second
+	limiterMaxExecTime  = 120 // seconds
+	limiterInputTokens  = 100
+	limiterOutputTokens = 50
 )
 
 // getGPUResourceName returns the GPU resource name based on E2E_GPU_TYPE env var.
@@ -43,6 +46,35 @@ func getGPUResourceName() corev1.ResourceName {
 		gpuType = "nvidia" // default
 	}
 	return corev1.ResourceName(gpuType + ".com/gpu")
+}
+
+// getGPUNodeSelectors returns node selectors for the given GPU configuration.
+// For nvidia (nvidia-mix cluster): variant1 targets H100, variant2 targets A100
+// For amd (amd-mix cluster): variant1 targets MI300X, variant2 targets MI250
+func getGPUNodeSelectors() (map[string]string, map[string]string, string, string) {
+	gpuType := os.Getenv("E2E_GPU_TYPE")
+	if gpuType == "" {
+		gpuType = "nvidia"
+	}
+
+	var variant1Selector, variant2Selector map[string]string
+	var variant1Acc, variant2Acc string
+
+	if gpuType == "nvidia" {
+		// nvidia-mix cluster: H100, A100, MI300X
+		variant1Selector = map[string]string{"gpu-config": "4H100"}
+		variant2Selector = map[string]string{"gpu-config": "4A100"}
+		variant1Acc = "H100"
+		variant2Acc = "A100"
+	} else {
+		// amd-mix cluster: MI300X, MI250, A100
+		variant1Selector = map[string]string{"gpu-config": "4MI300X"}
+		variant2Selector = map[string]string{"gpu-config": "4MI250"}
+		variant1Acc = "MI300X"
+		variant2Acc = "MI250"
+	}
+
+	return variant1Selector, variant2Selector, variant1Acc, variant2Acc
 }
 
 var _ = Describe("Test workload-variant-autoscaler - GPU Limiter Feature", Ordered, func() {
@@ -110,11 +142,11 @@ var _ = Describe("Test workload-variant-autoscaler - GPU Limiter Feature", Order
 				totalGPUs += gpuQty.Value()
 			}
 		}
-		if totalGPUs < minRequiredGPUs {
-			Skip(fmt.Sprintf("Cluster has only %d %s GPUs, need at least %d. Run: ./deploy/kind-emulator/setup.sh -t %s",
-				totalGPUs, gpuType, minRequiredGPUs, gpuType))
+		if totalGPUs < minRequiredGPUsPerType {
+			Skip(fmt.Sprintf("Cluster has only %d %s GPUs, need at least %d. Run: ./deploy/kind-emulator/setup.sh -t %s-mix -g 4",
+				totalGPUs, gpuType, minRequiredGPUsPerType, gpuType))
 		}
-		_, _ = fmt.Fprintf(GinkgoWriter, "Cluster has %d %s GPUs (minimum required: %d)\n", totalGPUs, gpuType, minRequiredGPUs)
+		_, _ = fmt.Fprintf(GinkgoWriter, "Cluster has %d %s GPUs (minimum required: %d)\n", totalGPUs, gpuType, minRequiredGPUsPerType)
 
 		By("verifying saturation-scaling ConfigMap exists with limiter enabled")
 		Eventually(func(g Gomega) {
@@ -139,15 +171,30 @@ enableLimiter: true`
 		utils.ValidateAppLabelUniqueness(namespace, variant1AppLabel, k8sClient, crClient)
 		utils.ValidateAppLabelUniqueness(namespace, variant2AppLabel, k8sClient, crClient)
 
-		By("creating Variant 1 deployment with 2 GPUs per replica")
-		deployment1 := resources.CreateLlmdSimDeploymentWithGPU(namespace, variant1DeployName, limiterModel1, variant1AppLabel, "8000", avgTTFT, avgITL, initialReplicas, gpusPerReplicaVariant1, gpuType)
+		// Get node selectors and accelerator types for heterogeneous GPU targeting
+		variant1NodeSelector, variant2NodeSelector, variant1Acc, variant2Acc := getGPUNodeSelectors()
+		_, _ = fmt.Fprintf(GinkgoWriter, "Variant1 targeting: %v (accelerator: %s)\n", variant1NodeSelector, variant1Acc)
+		_, _ = fmt.Fprintf(GinkgoWriter, "Variant2 targeting: %v (accelerator: %s)\n", variant2NodeSelector, variant2Acc)
+
+		By("creating Variant 1 deployment with node selector for specific GPU type")
+		deployment1 := resources.CreateLlmdSimDeploymentWithGPUAndNodeSelector(
+			namespace, variant1DeployName, limiterModel1, variant1AppLabel, "8000",
+			avgTTFT, avgITL, initialReplicas, gpusPerReplicaVariant1, gpuType,
+			variant1NodeSelector,
+		)
 		_, err = k8sClient.AppsV1().Deployments(namespace).Create(ctx, deployment1, metav1.CreateOptions{})
 		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to create Deployment: %s", variant1DeployName))
+		_, _ = fmt.Fprintf(GinkgoWriter, "Variant1 deployment created with selector: %v\n", variant1NodeSelector)
 
-		By("creating Variant 2 deployment with 1 GPU per replica")
-		deployment2 := resources.CreateLlmdSimDeploymentWithGPU(namespace, variant2DeployName, limiterModel2, variant2AppLabel, "8001", avgTTFT, avgITL, initialReplicas, gpusPerReplicaVariant2, gpuType)
+		By("creating Variant 2 deployment with node selector for specific GPU type")
+		deployment2 := resources.CreateLlmdSimDeploymentWithGPUAndNodeSelector(
+			namespace, variant2DeployName, limiterModel2, variant2AppLabel, "8001",
+			avgTTFT, avgITL, initialReplicas, gpusPerReplicaVariant2, gpuType,
+			variant2NodeSelector,
+		)
 		_, err = k8sClient.AppsV1().Deployments(namespace).Create(ctx, deployment2, metav1.CreateOptions{})
 		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to create Deployment: %s", variant2DeployName))
+		_, _ = fmt.Fprintf(GinkgoWriter, "Variant2 deployment created with selector: %v\n", variant2NodeSelector)
 
 		By("creating services for both deployments")
 		service1 := resources.CreateLlmdSimService(namespace, variant1ServiceName, variant1AppLabel, 30010, 8000)
@@ -171,14 +218,16 @@ enableLimiter: true`
 			}, 2*time.Minute, 5*time.Second).Should(Succeed())
 		}
 
-		By("creating VariantAutoscaling resources for both variants")
-		va1 := utils.CreateVariantAutoscalingResource(namespace, variant1DeployName, limiterModel1, a100Acc, 30.0)
+		By("creating VariantAutoscaling resources for both variants with correct accelerator types")
+		va1 := utils.CreateVariantAutoscalingResource(namespace, variant1DeployName, limiterModel1, variant1Acc, 30.0)
 		err = crClient.Create(ctx, va1)
 		Expect(err).NotTo(HaveOccurred())
+		_, _ = fmt.Fprintf(GinkgoWriter, "VA1 created with accelerator: %s\n", variant1Acc)
 
-		va2 := utils.CreateVariantAutoscalingResource(namespace, variant2DeployName, limiterModel2, a100Acc, 20.0)
+		va2 := utils.CreateVariantAutoscalingResource(namespace, variant2DeployName, limiterModel2, variant2Acc, 20.0)
 		err = crClient.Create(ctx, va2)
 		Expect(err).NotTo(HaveOccurred())
+		_, _ = fmt.Fprintf(GinkgoWriter, "VA2 created with accelerator: %s\n", variant2Acc)
 
 		By("creating HPAs for both deployments")
 		hpa1 := utils.CreateHPAOnDesiredReplicaMetrics(variant1HPAName, namespace, variant1DeployName, variant1DeployName, 10)
@@ -240,80 +289,144 @@ enableLimiter: true`
 			Expect(err).NotTo(HaveOccurred())
 			Expect(va2.Spec.ModelID).To(Equal(limiterModel2))
 
-			By("verifying deployments have GPU resource requests")
+			By("verifying deployments have GPU resource requests and node selectors")
 			gpuResName := getGPUResourceName()
+			variant1NodeSelector, variant2NodeSelector, _, _ := getGPUNodeSelectors()
+
 			deploy1, err := k8sClient.AppsV1().Deployments(namespace).Get(ctx, variant1DeployName, metav1.GetOptions{})
 			Expect(err).NotTo(HaveOccurred())
 			gpuQty := deploy1.Spec.Template.Spec.Containers[0].Resources.Requests[gpuResName]
 			Expect(gpuQty.Value()).To(Equal(int64(gpusPerReplicaVariant1)))
+			Expect(deploy1.Spec.Template.Spec.NodeSelector).To(Equal(variant1NodeSelector),
+				"Variant1 deployment should have correct node selector for GPU targeting")
 
 			deploy2, err := k8sClient.AppsV1().Deployments(namespace).Get(ctx, variant2DeployName, metav1.GetOptions{})
 			Expect(err).NotTo(HaveOccurred())
 			gpuQty2 := deploy2.Spec.Template.Spec.Containers[0].Resources.Requests[gpuResName]
 			Expect(gpuQty2.Value()).To(Equal(int64(gpusPerReplicaVariant2)))
+			Expect(deploy2.Spec.Template.Spec.NodeSelector).To(Equal(variant2NodeSelector),
+				"Variant2 deployment should have correct node selector for GPU targeting")
 
-			_, _ = fmt.Fprintf(GinkgoWriter, "Limiter enabled and resources verified - Variant1: %d GPUs/replica, Variant2: %d GPUs/replica (resource: %s)\n",
-				gpusPerReplicaVariant1, gpusPerReplicaVariant2, gpuResName)
+			_, _ = fmt.Fprintf(GinkgoWriter, "Limiter enabled and resources verified - Variant1: %d GPUs/replica (selector: %v), Variant2: %d GPUs/replica (selector: %v)\n",
+				gpusPerReplicaVariant1, variant1NodeSelector, gpusPerReplicaVariant2, variant2NodeSelector)
 		})
 	})
 
 	Context("Scenario 2: Limiter constrains scale-up", func() {
 		It("should limit scale-up when GPU capacity is exhausted", func() {
-			gpuResName := getGPUResourceName()
+			variant1NodeSelector, _, _, _ := getGPUNodeSelectors()
 
-			By("checking cluster GPU capacity from node status")
-			nodes, err := k8sClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+			By("verifying Variant1 is constrained to node with 4 GPUs")
+			deploy1, err := k8sClient.AppsV1().Deployments(namespace).Get(ctx, variant1DeployName, metav1.GetOptions{})
 			Expect(err).NotTo(HaveOccurred())
+			Expect(deploy1.Spec.Template.Spec.NodeSelector).To(Equal(variant1NodeSelector))
+			_, _ = fmt.Fprintf(GinkgoWriter, "Variant1 constrained to node with selector: %v\n", variant1NodeSelector)
 
-			totalGPUs := int64(0)
-			for _, node := range nodes.Items {
-				if gpuQty, ok := node.Status.Allocatable[gpuResName]; ok {
-					totalGPUs += gpuQty.Value()
-				}
-			}
-			_, _ = fmt.Fprintf(GinkgoWriter, "Total cluster GPU capacity (%s): %d\n", gpuResName, totalGPUs)
+			By("checking available GPUs on target node (should be 4)")
+			// With 2 GPUs/replica and 4 GPUs on node, max replicas = 2
+			_, _ = fmt.Fprintf(GinkgoWriter, "With %d GPUs/replica and 4 GPUs on target node, max replicas = %d\n",
+				gpusPerReplicaVariant1, 4/gpusPerReplicaVariant1)
 
-			By("calculating current GPU usage")
-			currentUsedGPUs := int64(0)
-			podList, err := k8sClient.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
+			By("generating load to trigger saturation and scale-up request")
+			// Create load generator targeting variant1's model
+			loadGenJob, err := utils.CreateLoadGeneratorJob(
+				namespace,
+				fmt.Sprintf("http://%s:%d", variant1ServiceName, 8000),
+				limiterModel1,
+				limiterLoadRate,
+				limiterMaxExecTime,
+				limiterInputTokens,
+				limiterOutputTokens,
+				k8sClient,
+				ctx,
+			)
 			Expect(err).NotTo(HaveOccurred())
-			for _, pod := range podList.Items {
-				if pod.Status.Phase == corev1.PodRunning || pod.Status.Phase == corev1.PodPending {
-					for _, container := range pod.Spec.Containers {
-						if gpuQty, ok := container.Resources.Requests[gpuResName]; ok {
-							currentUsedGPUs += gpuQty.Value()
-						}
-					}
-				}
-			}
-			_, _ = fmt.Fprintf(GinkgoWriter, "Current GPU usage: %d, Available: %d\n", currentUsedGPUs, totalGPUs-currentUsedGPUs)
+			_, _ = fmt.Fprintf(GinkgoWriter, "Load generator job created: %s\n", loadGenJob.Name)
+			defer func() {
+				_ = utils.StopJob(namespace, loadGenJob, k8sClient, ctx)
+			}()
 
-			Expect(totalGPUs).To(BeNumerically(">=", currentUsedGPUs), "GPU capacity should be at least as much as current usage")
+			By("waiting for saturation detection")
+			time.Sleep(30 * time.Second) // Allow metrics to propagate
+
+			By("verifying limiter constrains scale-up to max 2 replicas")
+			Eventually(func(g Gomega) {
+				va := &v1alpha1.VariantAutoscaling{}
+				err := crClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: variant1DeployName}, va)
+				g.Expect(err).NotTo(HaveOccurred())
+
+				desiredReplicas := va.Status.DesiredOptimizedAlloc.NumReplicas
+				_, _ = fmt.Fprintf(GinkgoWriter, "DesiredOptimizedAlloc.NumReplicas: %d (max should be 2 due to 4 GPU limit)\n", desiredReplicas)
+
+				// With 2 GPUs/replica and only 4 GPUs available, max is 2 replicas
+				g.Expect(desiredReplicas).To(BeNumerically("<=", 2),
+					"Limiter should cap replicas at 2 (4 GPUs / 2 GPUs per replica)")
+			}, 5*time.Minute, 10*time.Second).Should(Succeed())
+
+			_, _ = fmt.Fprintf(GinkgoWriter, "Limiter successfully constrained scale-up to available GPU capacity\n")
 		})
 	})
 
 	Context("Scenario 3: Priority by saturation", func() {
 		It("should prioritize most saturated variant when allocating limited GPUs", func() {
-			By("verifying both VAs exist with different costs")
-			va1 := &v1alpha1.VariantAutoscaling{}
-			err := crClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: variant1DeployName}, va1)
+			By("generating load on both variants simultaneously")
+			// Variant1 gets heavier load to become more saturated
+			loadGenJob1, err := utils.CreateLoadGeneratorJob(
+				namespace,
+				fmt.Sprintf("http://%s:%d", variant1ServiceName, 8000),
+				limiterModel1,
+				limiterLoadRate*2, // Higher load for variant1
+				limiterMaxExecTime,
+				limiterInputTokens,
+				limiterOutputTokens,
+				k8sClient,
+				ctx,
+			)
 			Expect(err).NotTo(HaveOccurred())
+			_, _ = fmt.Fprintf(GinkgoWriter, "Load generator job 1 (high load) created: %s\n", loadGenJob1.Name)
+			defer func() {
+				_ = utils.StopJob(namespace, loadGenJob1, k8sClient, ctx)
+			}()
 
-			va2 := &v1alpha1.VariantAutoscaling{}
-			err = crClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: variant2DeployName}, va2)
+			loadGenJob2, err := utils.CreateLoadGeneratorJob(
+				namespace,
+				fmt.Sprintf("http://%s:%d", variant2ServiceName, 8001),
+				limiterModel2,
+				limiterLoadRate,
+				limiterMaxExecTime,
+				limiterInputTokens,
+				limiterOutputTokens,
+				k8sClient,
+				ctx,
+			)
 			Expect(err).NotTo(HaveOccurred())
+			_, _ = fmt.Fprintf(GinkgoWriter, "Load generator job 2 (normal load) created: %s\n", loadGenJob2.Name)
+			defer func() {
+				_ = utils.StopJob(namespace, loadGenJob2, k8sClient, ctx)
+			}()
 
-			cost1 := va1.Spec.VariantCost
-			cost2 := va2.Spec.VariantCost
-			_, _ = fmt.Fprintf(GinkgoWriter, "Variant costs - V1: %s, V2: %s\n", cost1, cost2)
+			By("waiting for saturation metrics to populate")
+			time.Sleep(45 * time.Second)
 
-			By("checking that limiter uses saturation-based prioritization")
-			cm, err := k8sClient.CoreV1().ConfigMaps(controllerNamespace).Get(ctx, saturationConfigMapName, metav1.GetOptions{})
-			Expect(err).NotTo(HaveOccurred())
-			Expect(cm.Data["default"]).To(ContainSubstring("enableLimiter: true"),
-				"Limiter should be enabled for saturation-based prioritization")
+			By("verifying both VAs have scaling decisions")
+			Eventually(func(g Gomega) {
+				va1 := &v1alpha1.VariantAutoscaling{}
+				err := crClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: variant1DeployName}, va1)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(va1.Status.DesiredOptimizedAlloc.NumReplicas).To(BeNumerically(">=", 1))
 
-			_, _ = fmt.Fprintf(GinkgoWriter, "Saturation-based prioritization is active via enableLimiter\n")
+				va2 := &v1alpha1.VariantAutoscaling{}
+				err = crClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: variant2DeployName}, va2)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(va2.Status.DesiredOptimizedAlloc.NumReplicas).To(BeNumerically(">=", 1))
+
+				_, _ = fmt.Fprintf(GinkgoWriter,
+					"Allocation - Variant1 (higher load): %d replicas, Variant2: %d replicas\n",
+					va1.Status.DesiredOptimizedAlloc.NumReplicas,
+					va2.Status.DesiredOptimizedAlloc.NumReplicas)
+			}, 5*time.Minute, 10*time.Second).Should(Succeed())
+
+			_, _ = fmt.Fprintf(GinkgoWriter, "Saturation-based prioritization test completed\n")
 		})
 	})
 })

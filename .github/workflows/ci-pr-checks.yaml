@@ -55,12 +55,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # NVIDIA GPU cluster with scale-to-zero enabled
-          - gpu_type: nvidia
+          # NVIDIA-focused: H100, A100, AMD MI300X heterogeneous for limiter tests
+          - gpu_type: nvidia-mix
             scale_to_zero: true
-          # AMD GPU cluster with scale-to-zero disabled
-          - gpu_type: amd
+            e2e_gpu_type: nvidia
+          # AMD-focused: MI300X, MI250, NVIDIA A100 heterogeneous for limiter tests
+          - gpu_type: amd-mix
             scale_to_zero: false
+            e2e_gpu_type: amd
     name: e2e-tests (gpu=${{ matrix.gpu_type }}, scale-to-zero=${{ matrix.scale_to_zero }})
     steps:
       - name: Checkout source
@@ -96,6 +98,6 @@ jobs:
         env:
           ENABLE_SCALE_TO_ZERO: ${{ matrix.scale_to_zero }}
           CLUSTER_GPU_TYPE: ${{ matrix.gpu_type }}
-          E2E_GPU_TYPE: ${{ matrix.gpu_type }}
+          E2E_GPU_TYPE: ${{ matrix.e2e_gpu_type }}
         run: |
           make test-e2e
