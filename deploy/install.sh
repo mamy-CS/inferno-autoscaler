@@ -466,6 +466,8 @@ deploy_second_model_infrastructure() {
     local POOL_NAME_2="gaie-sim-2"
     local MS_NAME_2="ms-sim-2"
     local MODEL_LABEL_2="model-2"
+    # Sanitize model name for use in Kubernetes labels (replace / with -)
+    local MODEL_ID_2_SANITIZED=$(echo "$MODEL_ID_2" | tr '/' '-')
 
     # Create second InferencePool with different selector
     log_info "Creating second InferencePool: $POOL_NAME_2"
@@ -557,7 +559,7 @@ spec:
         app: ${MS_NAME_2}-decode
         llm-d.ai/inferenceServing: "true"
         llm-d.ai/model-pool: "$MODEL_LABEL_2"
-        llm-d.ai/model: "${MODEL_ID_2}"
+        llm-d.ai/model: "${MODEL_ID_2_SANITIZED}"
     spec:
       containers:
       - name: vllm
