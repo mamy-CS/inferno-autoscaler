@@ -479,7 +479,6 @@ metadata:
 spec:
   targetPortNumber: 8000
   selector:
-    llm-d.ai/inferenceServing: "true"
     llm-d.ai/model-pool: "$MODEL_LABEL_2"
   extensionRef:
     name: ${POOL_NAME_2}-epp
@@ -551,13 +550,11 @@ spec:
   selector:
     matchLabels:
       app: ${MS_NAME_2}-decode
-      llm-d.ai/inferenceServing: "true"
       llm-d.ai/model-pool: "$MODEL_LABEL_2"
   template:
     metadata:
       labels:
         app: ${MS_NAME_2}-decode
-        llm-d.ai/inferenceServing: "true"
         llm-d.ai/model-pool: "$MODEL_LABEL_2"
         llm-d.ai/model: "${MODEL_ID_2_SANITIZED}"
     spec:
@@ -597,7 +594,6 @@ kind: Service
 metadata:
   name: ${MS_NAME_2}-decode
   labels:
-    llm-d.ai/inferenceServing: "true"
     llm-d.ai/model-pool: "$MODEL_LABEL_2"
 spec:
   selector:
