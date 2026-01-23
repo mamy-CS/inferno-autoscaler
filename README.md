@@ -169,7 +169,16 @@ helm upgrade workload-variant-autoscaler ./charts/workload-variant-autoscaler \
 ### Breaking Changes
 
 #### v0.5.0 (upcoming)
-- **VariantAutoscaling CRD**: Added `scaleTargetRef` field to explicitly specify the target deployment. If not set, the controller infers the target from the `modelID` field.
+- **VariantAutoscaling CRD**: Added `scaleTargetRef` field as **required**. v0.4.1 VariantAutoscaling resources without `scaleTargetRef` must be updated before upgrading:
+  - **Impact on Scale-to-Zero**: VAs without `scaleTargetRef` will not scale to zero properly, even with HPAScaleToZero enabled and HPA `minReplicas: 0`, because the HPA cannot reference the target deployment.
+  - **Migration**: Update existing VAs to include `scaleTargetRef`:
+    ```yaml
+    spec:
+      scaleTargetRef:
+        kind: Deployment
+        name: <your-deployment-name>
+    ```
+  - **Validation**: After CRD update, VAs without `scaleTargetRef` will fail validation.
 
 ### Verifying CRD Version
 
