@@ -200,12 +200,12 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Single Va
 		}, 2*time.Minute, 5*time.Second).Should(Succeed())
 
 		By("creating VariantAutoscaling resource")
-		variantAutoscaling := utils.CreateVariantAutoscalingResource(namespace, deployName, modelName, a100Acc, 10.0)
+		variantAutoscaling := utils.CreateVariantAutoscalingResource(namespace, name, deployName, modelName, a100Acc, 10.0)
 		err = crClient.Create(ctx, variantAutoscaling)
-		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to create VariantAutoscaling for: %s", deployName))
+		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to create VariantAutoscaling: %s", name))
 
 		By("creating HorizontalPodAutoscaler for deployment")
-		hpa := utils.CreateHPAOnDesiredReplicaMetrics(hpaName, namespace, deployName, deployName, 10)
+		hpa := utils.CreateHPAOnDesiredReplicaMetrics(hpaName, namespace, deployName, name, 10)
 		_, err = k8sClient.AutoscalingV2().HorizontalPodAutoscalers(namespace).Create(ctx, hpa, metav1.CreateOptions{})
 		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to create HPA: %s", hpaName))
 	})
@@ -233,12 +233,12 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Single Va
 			va := &v1alpha1.VariantAutoscaling{}
 			err := crClient.Get(ctx, client.ObjectKey{
 				Namespace: namespace,
-				Name:      deployName,
+				Name:      name,
 			}, va)
-			Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to get VariantAutoscaling: %s", deployName))
+			Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to get VariantAutoscaling: %s", name))
 			Expect(va.Spec.ModelID).To(Equal(modelName))
 
-			_, _ = fmt.Fprintf(GinkgoWriter, "VariantAutoscaling resource verified: %s\n", deployName)
+			_, _ = fmt.Fprintf(GinkgoWriter, "VariantAutoscaling resource verified: %s\n", name)
 		})
 
 		It("should have HPA created and configured correctly", func() {
@@ -254,7 +254,7 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Single Va
 			Expect(hpa.Spec.Metrics).To(HaveLen(1), "HPA should have one metric")
 			Expect(hpa.Spec.Metrics[0].Type).To(Equal(autoscalingv2.ExternalMetricSourceType), "HPA should use external metrics")
 			Expect(hpa.Spec.Metrics[0].External.Metric.Name).To(Equal(constants.WVADesiredReplicas), "HPA should use wva_desired_replicas metric")
-			Expect(hpa.Spec.Metrics[0].External.Metric.Selector.MatchLabels["variant_name"]).To(Equal(deployName), "HPA metric should filter by variant_name")
+			Expect(hpa.Spec.Metrics[0].External.Metric.Selector.MatchLabels["variant_name"]).To(Equal(name), "HPA metric should filter by variant_name")
 
 			_, _ = fmt.Fprintf(GinkgoWriter, "HPA %s verified and configured correctly\n", hpaName)
 		})
@@ -267,9 +267,9 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Single Va
 				va := &v1alpha1.VariantAutoscaling{}
 				err := crClient.Get(ctx, client.ObjectKey{
 					Namespace: namespace,
-					Name:      deployName,
+					Name:      name,
 				}, va)
-				g.Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to fetch VariantAutoscaling for: %s", deployName))
+				g.Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to fetch VariantAutoscaling: %s", name))
 
 				// Wait for DesiredOptimizedAlloc to be populated (ensures reconciliation loop is active)
 				g.Expect(va.Status.DesiredOptimizedAlloc.Accelerator).NotTo(BeEmpty(),
@@ -286,7 +286,7 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Single Va
 					DoRaw(ctx)
 				g.Expect(err).NotTo(HaveOccurred(), "Should be able to query external metrics API")
 				g.Expect(string(result)).To(ContainSubstring(constants.WVADesiredReplicas), "Metric should be available")
-				g.Expect(string(result)).To(ContainSubstring(deployName), "Metric should be for the correct variant")
+				g.Expect(string(result)).To(ContainSubstring(name), "Metric should be for the correct variant")
 			}, 2*time.Minute, 5*time.Second).Should(Succeed())
 
 			By("verifying variant has expected initial replicas or scales down (before load)")
@@ -294,7 +294,7 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Single Va
 				va := &v1alpha1.VariantAutoscaling{}
 				err := crClient.Get(ctx, client.ObjectKey{
 					Namespace: namespace,
-					Name:      deployName,
+					Name:      name,
 				}, va)
 				g.Expect(err).NotTo(HaveOccurred())
 
@@ -305,7 +305,7 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Single Va
 			}, 10*time.Minute, 5*time.Second).Should(Succeed())
 
 			By("logging VariantAutoscaling status before load")
-			err := utils.LogVariantAutoscalingStatus(ctx, deployName, namespace, crClient, GinkgoWriter)
+			err := utils.LogVariantAutoscalingStatus(ctx, name, namespace, crClient, GinkgoWriter)
 			Expect(err).NotTo(HaveOccurred(), "Should be able to log VariantAutoscaling status before load")
 		})
 	})
@@ -368,7 +368,7 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Single Va
 				va := &v1alpha1.VariantAutoscaling{}
 				err := crClient.Get(ctx, client.ObjectKey{
 					Namespace: namespace,
-					Name:      deployName,
+					Name:      name,
 				}, va)
 				g.Expect(err).NotTo(HaveOccurred())
 
@@ -381,7 +381,7 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Single Va
 			}, 10*time.Minute, 10*time.Second).Should(Succeed())
 
 			By("logging VariantAutoscaling status after scale-up")
-			err = utils.LogVariantAutoscalingStatus(ctx, deployName, namespace, crClient, GinkgoWriter)
+			err = utils.LogVariantAutoscalingStatus(ctx, name, namespace, crClient, GinkgoWriter)
 			Expect(err).NotTo(HaveOccurred(), "Should be able to log VariantAutoscaling status after scale-up")
 		})
 	})
@@ -418,7 +418,7 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Single Va
 				va := &v1alpha1.VariantAutoscaling{}
 				err := crClient.Get(ctx, client.ObjectKey{
 					Namespace: namespace,
-					Name:      deployName,
+					Name:      name,
 				}, va)
 				g.Expect(err).NotTo(HaveOccurred())
 
@@ -436,7 +436,7 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Single Va
 				va := &v1alpha1.VariantAutoscaling{}
 				err := crClient.Get(ctx, client.ObjectKey{
 					Namespace: namespace,
-					Name:      deployName,
+					Name:      name,
 				}, va)
 				g.Expect(err).NotTo(HaveOccurred())
 
@@ -449,7 +449,7 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Single Va
 			}, 3*time.Minute, 15*time.Second).Should(Succeed())
 
 			By("logging VariantAutoscaling status after stability check")
-			err = utils.LogVariantAutoscalingStatus(ctx, deployName, namespace, crClient, GinkgoWriter)
+			err = utils.LogVariantAutoscalingStatus(ctx, name, namespace, crClient, GinkgoWriter)
 			Expect(err).NotTo(HaveOccurred(), "Should be able to log VariantAutoscaling status after stability check")
 		})
 	})
@@ -463,10 +463,10 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Single Va
 
 		// Delete VariantAutoscaling resource
 		va := &v1alpha1.VariantAutoscaling{}
-		err = crClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: deployName}, va)
-		Expect(client.IgnoreNotFound(err)).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to get VariantAutoscaling: %s", deployName))
+		err = crClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, va)
+		Expect(client.IgnoreNotFound(err)).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to get VariantAutoscaling: %s", name))
 		err = crClient.Delete(ctx, va)
-		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to delete VariantAutoscaling: %s", deployName))
+		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to delete VariantAutoscaling: %s", name))
 
 		// Delete ServiceMonitor
 		serviceMon := &promoperator.ServiceMonitor{}
@@ -612,22 +612,22 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Multiple 
 		}, 2*time.Minute, 5*time.Second).Should(Succeed())
 
 		By("creating VariantAutoscaling resource for A100 variant")
-		variantAutoscalingA100 := utils.CreateVariantAutoscalingResource(namespace, deployNameA100, modelName, a100Acc, a100Cost)
+		variantAutoscalingA100 := utils.CreateVariantAutoscalingResource(namespace, nameA100, deployNameA100, modelName, a100Acc, a100Cost)
 		err = crClient.Create(ctx, variantAutoscalingA100)
-		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to create VariantAutoscaling for: %s", deployNameA100))
+		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to create VariantAutoscaling: %s", nameA100))
 
 		By("creating VariantAutoscaling resource for H100 variant")
-		variantAutoscalingH100 := utils.CreateVariantAutoscalingResource(namespace, deployNameH100, modelName, h100Acc, h100Cost)
+		variantAutoscalingH100 := utils.CreateVariantAutoscalingResource(namespace, nameH100, deployNameH100, modelName, h100Acc, h100Cost)
 		err = crClient.Create(ctx, variantAutoscalingH100)
-		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to create VariantAutoscaling for: %s", deployNameH100))
+		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to create VariantAutoscaling: %s", nameH100))
 
 		By("creating HorizontalPodAutoscaler for A100 deployment")
-		hpaA100 := utils.CreateHPAOnDesiredReplicaMetrics(hpaNameA100, namespace, deployNameA100, deployNameA100, 10)
+		hpaA100 := utils.CreateHPAOnDesiredReplicaMetrics(hpaNameA100, namespace, deployNameA100, nameA100, 10)
 		_, err = k8sClient.AutoscalingV2().HorizontalPodAutoscalers(namespace).Create(ctx, hpaA100, metav1.CreateOptions{})
 		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to create HPA: %s", hpaNameA100))
 
 		By("creating HorizontalPodAutoscaler for H100 deployment")
-		hpaH100 := utils.CreateHPAOnDesiredReplicaMetrics(hpaNameH100, namespace, deployNameH100, deployNameH100, 10)
+		hpaH100 := utils.CreateHPAOnDesiredReplicaMetrics(hpaNameH100, namespace, deployNameH100, nameH100, 10)
 		_, err = k8sClient.AutoscalingV2().HorizontalPodAutoscalers(namespace).Create(ctx, hpaH100, metav1.CreateOptions{})
 		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to create HPA: %s", hpaNameH100))
 	})
@@ -655,18 +655,18 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Multiple 
 			vaA100 := &v1alpha1.VariantAutoscaling{}
 			err := crClient.Get(ctx, client.ObjectKey{
 				Namespace: namespace,
-				Name:      deployNameA100,
+				Name:      nameA100,
 			}, vaA100)
-			Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to get VariantAutoscaling: %s", deployNameA100))
+			Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to get VariantAutoscaling: %s", nameA100))
 			Expect(vaA100.Spec.ModelID).To(Equal(modelName))
 
 			By("verifying H100 VariantAutoscaling exists")
 			vaH100 := &v1alpha1.VariantAutoscaling{}
 			err = crClient.Get(ctx, client.ObjectKey{
 				Namespace: namespace,
-				Name:      deployNameH100,
+				Name:      nameH100,
 			}, vaH100)
-			Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to get VariantAutoscaling: %s", deployNameH100))
+			Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to get VariantAutoscaling: %s", nameH100))
 			Expect(vaH100.Spec.ModelID).To(Equal(modelName))
 		})
 
@@ -693,85 +693,15 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Multiple 
 
 	Context("Before load - initial replica count", func() {
 		It("should have correct initial replica counts before applying load", func() {
-			// TODO: Re-enable once MetricsAvailable condition is properly persisted in saturation mode
-			// By("waiting for A100 variant CurrentAlloc to be populated with metrics data")
-			// Eventually(func(g Gomega) {
-			// 	vaA100 := &v1alpha1.VariantAutoscaling{}
-			// 	err := crClient.Get(ctx, client.ObjectKey{
-			// 		Namespace: namespace,
-			// 		Name:      deployNameA100,
-			// 	}, vaA100)
-			// 	g.Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to fetch VariantAutoscaling for: %s", deployNameA100))
-			//
-			// 	// In saturation mode, wait for MetricsAvailable condition
-			// 	metricsCondition := v1alpha1.GetCondition(vaA100, v1alpha1.TypeMetricsAvailable)
-			// 	g.Expect(metricsCondition).NotTo(BeNil(),
-			// 		fmt.Sprintf("VariantAutoscaling %s should have MetricsAvailable condition", vaA100.Name))
-			// 	g.Expect(metricsCondition.Status).To(Equal(metav1.ConditionTrue),
-			// 		fmt.Sprintf("VariantAutoscaling %s MetricsAvailable condition should be True", vaA100.Name))
-			// }, 4*time.Minute, 10*time.Second).Should(Succeed())
-			//
-			// By("waiting for H100 variant CurrentAlloc to be populated with metrics data")
-			// Eventually(func(g Gomega) {
-			// 	vaH100 := &v1alpha1.VariantAutoscaling{}
-			// 	err := crClient.Get(ctx, client.ObjectKey{
-			// 		Namespace: namespace,
-			// 		Name:      deployNameH100,
-			// 	}, vaH100)
-			// 	g.Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to fetch VariantAutoscaling for: %s", deployNameH100))
-			//
-			// 	// In saturation mode, wait for MetricsAvailable condition
-			// 	metricsCondition := v1alpha1.GetCondition(vaH100, v1alpha1.TypeMetricsAvailable)
-			// 	g.Expect(metricsCondition).NotTo(BeNil(),
-			// 		fmt.Sprintf("VariantAutoscaling %s should have MetricsAvailable condition", vaH100.Name))
-			// 	g.Expect(metricsCondition.Status).To(Equal(metav1.ConditionTrue),
-			// 		fmt.Sprintf("VariantAutoscaling %s MetricsAvailable condition should be True", vaH100.Name))
-			// }, 4*time.Minute, 10*time.Second).Should(Succeed())
-
-			By("waiting for VariantAutoscalings CurrentAlloc to be populated with metrics data")
-			Eventually(func(g Gomega) {
-				vaA100 := &v1alpha1.VariantAutoscaling{}
-				err := crClient.Get(ctx, client.ObjectKey{
-					Namespace: namespace,
-					Name:      deployNameA100,
-				}, vaA100)
-				g.Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to fetch VariantAutoscaling for: %s", deployNameA100))
-
-				// In saturation mode, wait for CurrentAlloc to be populated (no MetricsAvailable condition)
-				// In saturation mode, wait for CurrentAlloc to be populated (no MetricsAvailable condition)
-				// CurrentAlloc removed
-				// g.Expect(vaA100.Status.CurrentAlloc.Accelerator).NotTo(BeEmpty(),
-				// 	"CurrentAlloc should be populated with accelerator info")
-				// g.Expect(vaA100.Status.CurrentAlloc.NumReplicas).To(BeNumerically(">=", 0),
-				// 	"CurrentAlloc should have NumReplicas set")
-			}, 5*time.Minute, 10*time.Second).Should(Succeed())
-
-			Eventually(func(g Gomega) {
-				vaH100 := &v1alpha1.VariantAutoscaling{}
-				err := crClient.Get(ctx, client.ObjectKey{
-					Namespace: namespace,
-					Name:      deployNameH100,
-				}, vaH100)
-				g.Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to fetch VariantAutoscaling for: %s", deployNameH100))
-
-				// In saturation mode, wait for CurrentAlloc to be populated (no MetricsAvailable condition)
-				// CurrentAlloc removed
-				// g.Expect(vaH100.Status.CurrentAlloc.Accelerator).NotTo(BeEmpty(),
-				// 	"CurrentAlloc should be populated with accelerator info")
-				// g.Expect(vaH100.Status.CurrentAlloc.NumReplicas).To(BeNumerically(">=", 0),
-				// 	"CurrentAlloc should have NumReplicas set")
-			}, 10*time.Minute, 10*time.Second).Should(Succeed())
-
 			By("verifying A100 variant has expected initial replicas or scales down (before load)")
 			Eventually(func(g Gomega) {
 				vaA100 := &v1alpha1.VariantAutoscaling{}
 				err := crClient.Get(ctx, client.ObjectKey{
 					Namespace: namespace,
-					Name:      deployNameA100,
+					Name:      nameA100,
 				}, vaA100)
 				g.Expect(err).NotTo(HaveOccurred())
 
-				// Initial replica count should be MinimumReplicas (typically 0 or 1)
 				// Initial replica count should be MinimumReplicas (typically 0 or 1)
 				g.Expect(vaA100.Status.DesiredOptimizedAlloc.NumReplicas).To(BeNumerically("==", MinimumReplicas),
 					fmt.Sprintf("A100 VariantAutoscaling DesiredReplicas should be at %d replicas", MinimumReplicas))
@@ -782,7 +712,7 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Multiple 
 				vaH100 := &v1alpha1.VariantAutoscaling{}
 				err := crClient.Get(ctx, client.ObjectKey{
 					Namespace: namespace,
-					Name:      deployNameH100,
+					Name:      nameH100,
 				}, vaH100)
 				g.Expect(err).NotTo(HaveOccurred())
 
@@ -791,9 +721,9 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Multiple 
 			}, 10*time.Minute, 5*time.Second).Should(Succeed())
 
 			By("logging initial VariantAutoscaling statuses")
-			err := utils.LogVariantAutoscalingStatus(ctx, deployNameA100, namespace, crClient, GinkgoWriter)
+			err := utils.LogVariantAutoscalingStatus(ctx, nameA100, namespace, crClient, GinkgoWriter)
 			Expect(err).NotTo(HaveOccurred(), "Should be able to log VariantAutoscaling status before load")
-			err = utils.LogVariantAutoscalingStatus(ctx, deployNameH100, namespace, crClient, GinkgoWriter)
+			err = utils.LogVariantAutoscalingStatus(ctx, nameH100, namespace, crClient, GinkgoWriter)
 			Expect(err).NotTo(HaveOccurred(), "Should be able to log VariantAutoscaling status before load")
 		})
 	})
@@ -851,19 +781,19 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Multiple 
 
 			By("waiting for saturation detection and scale-up decision")
 			Eventually(func(g Gomega) {
-				// Check A100 variant
+				// Check A100 VariantAutoscaling
 				vaA100 := &v1alpha1.VariantAutoscaling{}
 				err := crClient.Get(ctx, client.ObjectKey{
 					Namespace: namespace,
-					Name:      deployNameA100,
+					Name:      nameA100,
 				}, vaA100)
 				g.Expect(err).NotTo(HaveOccurred())
 
-				// Check H100 variant
+				// Check H100 VariantAutoscaling
 				vaH100 := &v1alpha1.VariantAutoscaling{}
 				err = crClient.Get(ctx, client.ObjectKey{
 					Namespace: namespace,
-					Name:      deployNameH100,
+					Name:      nameH100,
 				}, vaH100)
 				g.Expect(err).NotTo(HaveOccurred())
 
@@ -876,24 +806,12 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Multiple 
 						vaA100.Status.DesiredOptimizedAlloc.NumReplicas,
 						vaH100.Status.DesiredOptimizedAlloc.NumReplicas))
 
-				// Verify metrics are being collected
-				// Verify metrics are being collected
-				// arrivalRateA100, err := strconv.ParseFloat(vaA100.Status.CurrentAlloc.Load.ArrivalRate, 64)
-				// g.Expect(err).NotTo(HaveOccurred(), "Should parse A100 arrival rate")
-
-				// arrivalRateH100, err := strconv.ParseFloat(vaH100.Status.CurrentAlloc.Load.ArrivalRate, 64)
-				// g.Expect(err).NotTo(HaveOccurred(), "Should parse H100 arrival rate")
-
-				// totalArrivalRate := arrivalRateA100 + arrivalRateH100
-				// g.Expect(totalArrivalRate).To(BeNumerically(">", 0),
-				// 	"Total arrival rate should be positive under load")
-
 			}, 10*time.Minute, 10*time.Second).Should(Succeed())
 
 			By("logging VariantAutoscaling statuses after scale-up")
-			err = utils.LogVariantAutoscalingStatus(ctx, deployNameA100, namespace, crClient, GinkgoWriter)
+			err = utils.LogVariantAutoscalingStatus(ctx, nameA100, namespace, crClient, GinkgoWriter)
 			Expect(err).NotTo(HaveOccurred(), "Should be able to log VariantAutoscaling status after scale-up")
-			err = utils.LogVariantAutoscalingStatus(ctx, deployNameH100, namespace, crClient, GinkgoWriter)
+			err = utils.LogVariantAutoscalingStatus(ctx, nameH100, namespace, crClient, GinkgoWriter)
 			Expect(err).NotTo(HaveOccurred(), "Should be able to log VariantAutoscaling status after scale-up")
 		})
 	})
@@ -936,14 +854,14 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Multiple 
 				vaA100 := &v1alpha1.VariantAutoscaling{}
 				err := crClient.Get(ctx, client.ObjectKey{
 					Namespace: namespace,
-					Name:      deployNameA100,
+					Name:      nameA100,
 				}, vaA100)
 				g.Expect(err).NotTo(HaveOccurred())
 
 				vaH100 := &v1alpha1.VariantAutoscaling{}
 				err = crClient.Get(ctx, client.ObjectKey{
 					Namespace: namespace,
-					Name:      deployNameH100,
+					Name:      nameH100,
 				}, vaH100)
 				g.Expect(err).NotTo(HaveOccurred())
 
@@ -963,14 +881,14 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Multiple 
 				vaA100 := &v1alpha1.VariantAutoscaling{}
 				err := crClient.Get(ctx, client.ObjectKey{
 					Namespace: namespace,
-					Name:      deployNameA100,
+					Name:      nameA100,
 				}, vaA100)
 				g.Expect(err).NotTo(HaveOccurred())
 
 				vaH100 := &v1alpha1.VariantAutoscaling{}
 				err = crClient.Get(ctx, client.ObjectKey{
 					Namespace: namespace,
-					Name:      deployNameH100,
+					Name:      nameH100,
 				}, vaH100)
 				g.Expect(err).NotTo(HaveOccurred())
 
@@ -984,9 +902,9 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Multiple 
 			}, 3*time.Minute, 15*time.Second).Should(Succeed())
 
 			By("logging VariantAutoscaling statuses after stability check")
-			err = utils.LogVariantAutoscalingStatus(ctx, deployNameA100, namespace, crClient, GinkgoWriter)
+			err = utils.LogVariantAutoscalingStatus(ctx, nameA100, namespace, crClient, GinkgoWriter)
 			Expect(err).NotTo(HaveOccurred(), "Should be able to log VariantAutoscaling status after stability check")
-			err = utils.LogVariantAutoscalingStatus(ctx, deployNameH100, namespace, crClient, GinkgoWriter)
+			err = utils.LogVariantAutoscalingStatus(ctx, nameH100, namespace, crClient, GinkgoWriter)
 			Expect(err).NotTo(HaveOccurred(), "Should be able to log VariantAutoscaling status after stability check")
 		})
 	})
@@ -1020,14 +938,14 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Multiple 
 				vaA100 := &v1alpha1.VariantAutoscaling{}
 				err := crClient.Get(ctx, client.ObjectKey{
 					Namespace: namespace,
-					Name:      deployNameA100,
+					Name:      nameA100,
 				}, vaA100)
 				g.Expect(err).NotTo(HaveOccurred())
 
 				vaH100 := &v1alpha1.VariantAutoscaling{}
 				err = crClient.Get(ctx, client.ObjectKey{
 					Namespace: namespace,
-					Name:      deployNameH100,
+					Name:      nameH100,
 				}, vaH100)
 				g.Expect(err).NotTo(HaveOccurred())
 
@@ -1061,9 +979,9 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Multiple 
 			}, 5*time.Minute, 10*time.Second).Should(Succeed())
 
 			By("logging VariantAutoscaling statuses after cost-based selection check")
-			err = utils.LogVariantAutoscalingStatus(ctx, deployNameA100, namespace, crClient, GinkgoWriter)
+			err = utils.LogVariantAutoscalingStatus(ctx, nameA100, namespace, crClient, GinkgoWriter)
 			Expect(err).NotTo(HaveOccurred(), "Should be able to log VariantAutoscaling status after cost-based selection check")
-			err = utils.LogVariantAutoscalingStatus(ctx, deployNameH100, namespace, crClient, GinkgoWriter)
+			err = utils.LogVariantAutoscalingStatus(ctx, nameH100, namespace, crClient, GinkgoWriter)
 			Expect(err).NotTo(HaveOccurred(), "Should be able to log VariantAutoscaling status after cost-based selection check")
 		})
 	})
@@ -1080,16 +998,16 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Multiple 
 
 		// Delete VariantAutoscaling resources
 		vaA100 := &v1alpha1.VariantAutoscaling{}
-		err = crClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: deployNameA100}, vaA100)
+		err = crClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: nameA100}, vaA100)
 		Expect(client.IgnoreNotFound(err)).NotTo(HaveOccurred())
 		err = crClient.Delete(ctx, vaA100)
-		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to delete VariantAutoscaling: %s", deployNameA100))
+		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to delete VariantAutoscaling: %s", nameA100))
 
 		vaH100 := &v1alpha1.VariantAutoscaling{}
-		err = crClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: deployNameH100}, vaH100)
+		err = crClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: nameH100}, vaH100)
 		Expect(client.IgnoreNotFound(err)).NotTo(HaveOccurred())
 		err = crClient.Delete(ctx, vaH100)
-		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to delete VariantAutoscaling: %s", deployNameH100))
+		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to delete VariantAutoscaling: %s", nameH100))
 
 		// Delete ServiceMonitors
 		serviceMonitorA100 := &promoperator.ServiceMonitor{}
@@ -1254,7 +1172,7 @@ var _ = Describe("VariantAutoscaling Target Condition", Ordered, func() {
 
 	It("should set TargetResolved=True when target deployment exists", func() {
 		name := "valid-target-va"
-		deployName := name
+		deployName := name + "-deployment"
 		appLabel := name
 		port := 8000
 
@@ -1264,14 +1182,14 @@ var _ = Describe("VariantAutoscaling Target Condition", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		By("creating VariantAutoscaling")
-		va := utils.CreateVariantAutoscalingResource(namespace, deployName, modelName, "A100", variantCost)
+		va := utils.CreateVariantAutoscalingResource(namespace, name, deployName, modelName, a100Acc, variantCost)
 		err = crClient.Create(validCtx, va)
 		Expect(err).NotTo(HaveOccurred())
 
 		By("waiting for TargetResolved=True")
 		Eventually(func(g Gomega) {
 			fetchedVA := &v1alpha1.VariantAutoscaling{}
-			err := crClient.Get(validCtx, client.ObjectKey{Namespace: namespace, Name: deployName}, fetchedVA)
+			err := crClient.Get(validCtx, client.ObjectKey{Namespace: namespace, Name: name}, fetchedVA)
 			g.Expect(err).NotTo(HaveOccurred())
 
 			condition := v1alpha1.GetCondition(fetchedVA, v1alpha1.TypeTargetResolved)
@@ -1290,7 +1208,7 @@ var _ = Describe("VariantAutoscaling Target Condition", Ordered, func() {
 		// No deployment created
 
 		By("creating VariantAutoscaling")
-		va := utils.CreateVariantAutoscalingResource(namespace, name, modelName, "A100", variantCost)
+		va := utils.CreateVariantAutoscalingResource(namespace, name, "", modelName, a100Acc, variantCost)
 		err := crClient.Create(invalidCtx, va)
 		Expect(err).NotTo(HaveOccurred())
 

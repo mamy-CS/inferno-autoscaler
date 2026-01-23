@@ -49,6 +49,7 @@ var (
 	selector_v1     = map[string]string{"app": "vllm_v1"}
 	namespace       = "pool1-ns"
 	resourceName    = "resource-name"
+	deploymentName  = "deployment-name"
 	acceleratorName = "A100"
 	modelId         = "unsloth/Meta-Llama-3.1-8B"
 	variantCost     = float64(5)
@@ -103,8 +104,8 @@ func TestSingleInactiveVariant(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			pool1 := tt.pool
 
-			va := unittestutil.CreateVariantAutoscalingResource(namespace, resourceName, modelId, acceleratorName, variantCost)
-			dp := unittestutil.MakeDeployment(resourceName, namespace, tt.resourceReplicas, tt.labels)
+			va := unittestutil.CreateVariantAutoscalingResource(namespace, resourceName, deploymentName, modelId, acceleratorName, variantCost)
+			dp := unittestutil.MakeDeployment(deploymentName, namespace, tt.resourceReplicas, tt.labels)
 			svc := unittestutil.MakeService("epp-pool1-svc", namespace)
 
 			scheme := runtime.NewScheme()
