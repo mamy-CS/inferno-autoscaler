@@ -190,6 +190,33 @@ func CreateLlmdSimDeploymentWithGPUAndNodeSelector(
 	return deployment
 }
 
+// CreateLlmdSimDeploymentWithGPUAndLabels creates a deployment with GPU resources,
+// node selector, and additional pod labels for InferencePool selection.
+// extraLabels are added to both selector and template labels.
+func CreateLlmdSimDeploymentWithGPUAndLabels(
+	namespace, deployName, modelName, appLabel, port string,
+	avgTTFT, avgITL int, replicas int32,
+	gpusPerReplica int, gpuType string,
+	nodeSelector map[string]string,
+	extraLabels map[string]string,
+) *appsv1.Deployment {
+	deployment := CreateLlmdSimDeploymentWithGPUAndNodeSelector(
+		namespace, deployName, modelName, appLabel, port,
+		avgTTFT, avgITL, replicas, gpusPerReplica, gpuType,
+		nodeSelector,
+	)
+
+	// Add extra labels to both selector and template labels
+	if len(extraLabels) > 0 {
+		for k, v := range extraLabels {
+			deployment.Spec.Selector.MatchLabels[k] = v
+			deployment.Spec.Template.ObjectMeta.Labels[k] = v
+		}
+	}
+
+	return deployment
+}
+
 // creates a service for the llm-d-sim deployment
 func CreateLlmdSimService(namespace, serviceName, appLabel string, nodePort, port int) *corev1.Service {
 	return &corev1.Service{

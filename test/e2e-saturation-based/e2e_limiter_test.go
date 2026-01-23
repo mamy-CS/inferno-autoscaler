@@ -21,9 +21,14 @@ import (
 
 // Limiter test constants
 const (
-	// Test model IDs - different models to test limiter across variants
-	limiterModel1 = "test/limiter-model-1"
-	limiterModel2 = "test/limiter-model-2"
+	// Test model IDs - different models for each variant to ensure metrics separation
+	// These must match the models configured in install.sh (MODEL_ID and MODEL_ID_2)
+	limiterModel1 = "unsloth/Meta-Llama-3.1-8B"
+	limiterModel2 = "unsloth/Llama-3.2-1B"
+
+	// Gateway name for routing load through InferencePools
+	// This is set up by install.sh and matches the saturation tests
+	limiterGatewayName = "infra-sim-inference-gateway-istio"
 
 	// GPU configurations - each node has 4 GPUs
 	gpusPerReplicaVariant1 = 2 // Variant 1: 2 GPUs/replica, max 2 replicas on 4-GPU node
@@ -191,22 +196,26 @@ enableLimiter: true`
 		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to create Deployment: %s", variant1DeployName))
 		_, _ = fmt.Fprintf(GinkgoWriter, "Variant1 deployment created with selector: %v\n", variant1NodeSelector)
 
-		By("creating Variant 2 deployment with node selector for specific GPU type")
-		deployment2 := resources.CreateLlmdSimDeploymentWithGPUAndNodeSelector(
-			namespace, variant2DeployName, limiterModel2, variant2AppLabel, "8001",
+		By("creating Variant 2 deployment with node selector and model-pool label for InferencePool routing")
+		// Variant2 needs the model-pool label to be selected by gaie-sim-2 InferencePool
+		// This enables gateway routing based on model name to the correct pool
+		variant2ExtraLabels := map[string]string{"llm-d.ai/model-pool": "model-2"}
+		deployment2 := resources.CreateLlmdSimDeploymentWithGPUAndLabels(
+			namespace, variant2DeployName, limiterModel2, variant2AppLabel, "8000",
 			avgTTFT, avgITL, initialReplicas, gpusPerReplicaVariant2, gpuType,
 			variant2NodeSelector,
+			variant2ExtraLabels,
 		)
 		_, err = k8sClient.AppsV1().Deployments(namespace).Create(ctx, deployment2, metav1.CreateOptions{})
 		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to create Deployment: %s", variant2DeployName))
-		_, _ = fmt.Fprintf(GinkgoWriter, "Variant2 deployment created with selector: %v\n", variant2NodeSelector)
+		_, _ = fmt.Fprintf(GinkgoWriter, "Variant2 deployment created with selector: %v, extra labels: %v\n", variant2NodeSelector, variant2ExtraLabels)
 
 		By("creating services for both deployments")
 		service1 := resources.CreateLlmdSimService(namespace, variant1ServiceName, variant1AppLabel, 30010, 8000)
 		_, err = k8sClient.CoreV1().Services(namespace).Create(ctx, service1, metav1.CreateOptions{})
 		Expect(err).NotTo(HaveOccurred())
 
-		service2 := resources.CreateLlmdSimService(namespace, variant2ServiceName, variant2AppLabel, 30011, 8001)
+		service2 := resources.CreateLlmdSimService(namespace, variant2ServiceName, variant2AppLabel, 30011, 8000)
 		_, err = k8sClient.CoreV1().Services(namespace).Create(ctx, service2, metav1.CreateOptions{})
 		Expect(err).NotTo(HaveOccurred())
 
@@ -374,10 +383,11 @@ enableLimiter: true`
 				gpusPerReplicaVariant1, maxReplicasOnNode)
 
 			By("generating load to trigger saturation and scale-up request")
-			// Create load generator targeting variant1's model
+			// Create load generator targeting variant1's model through the gateway
+			// The gateway routes requests based on model name to the correct InferencePool
 			loadGenJob, err := utils.CreateLoadGeneratorJob(
 				namespace,
-				fmt.Sprintf("http://%s:%d", variant1ServiceName, 8000),
+				fmt.Sprintf("http://%s:%d", limiterGatewayName, 80),
 				limiterModel1,
 				limiterLoadRate,
 				limiterMaxExecTime,
@@ -432,11 +442,12 @@ enableLimiter: true`
 
 	Context("Scenario 3: Priority by saturation", func() {
 		It("should prioritize most saturated variant when allocating limited GPUs", func() {
-			By("generating load on both variants simultaneously")
+			By("generating load on both variants simultaneously through the gateway")
 			// Variant1 gets heavier load to become more saturated
+			// Both load generators target the gateway, which routes based on model name
 			loadGenJob1, err := utils.CreateLoadGeneratorJob(
 				namespace,
-				fmt.Sprintf("http://%s:%d", variant1ServiceName, 8000),
+				fmt.Sprintf("http://%s:%d", limiterGatewayName, 80),
 				limiterModel1,
 				limiterLoadRate*2, // Higher load for variant1
 				limiterMaxExecTime,
@@ -446,14 +457,14 @@ enableLimiter: true`
 				ctx,
 			)
 			Expect(err).NotTo(HaveOccurred())
-			_, _ = fmt.Fprintf(GinkgoWriter, "Load generator job 1 (high load) created: %s\n", loadGenJob1.Name)
+			_, _ = fmt.Fprintf(GinkgoWriter, "Load generator job 1 (high load, model=%s) created: %s\n", limiterModel1, loadGenJob1.Name)
 			defer func() {
 				_ = utils.StopJob(namespace, loadGenJob1, k8sClient, ctx)
 			}()
 
 			loadGenJob2, err := utils.CreateLoadGeneratorJob(
 				namespace,
-				fmt.Sprintf("http://%s:%d", variant2ServiceName, 8001),
+				fmt.Sprintf("http://%s:%d", limiterGatewayName, 80),
 				limiterModel2,
 				limiterLoadRate,
 				limiterMaxExecTime,
@@ -463,7 +474,7 @@ enableLimiter: true`
 				ctx,
 			)
 			Expect(err).NotTo(HaveOccurred())
-			_, _ = fmt.Fprintf(GinkgoWriter, "Load generator job 2 (normal load) created: %s\n", loadGenJob2.Name)
+			_, _ = fmt.Fprintf(GinkgoWriter, "Load generator job 2 (normal load, model=%s) created: %s\n", limiterModel2, loadGenJob2.Name)
 			defer func() {
 				_ = utils.StopJob(namespace, loadGenJob2, k8sClient, ctx)
 			}()
