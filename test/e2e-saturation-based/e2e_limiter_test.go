@@ -399,7 +399,7 @@ enableLimiter: true`
 			By("waiting for autoscaler to respond to load")
 			time.Sleep(2 * time.Minute) // Allow saturation metrics to accumulate and trigger scaling
 
-			By("verifying limiter constrains scale-up to max 2 replicas")
+			By("verifying saturation triggers scale-up and limiter constrains it")
 			Eventually(func(g Gomega) {
 				va := &v1alpha1.VariantAutoscaling{}
 				err := crClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: variant1DeployName}, va)
@@ -414,16 +414,17 @@ enableLimiter: true`
 				g.Expect(accelerator).NotTo(BeEmpty(),
 					"DesiredOptimizedAlloc.Accelerator should be populated when metrics are flowing")
 
+				// CRITICAL: Verify scale-up was triggered (NumReplicas > initial 1)
+				// This confirms load is reaching pods and saturation is detected
+				g.Expect(desiredReplicas).To(BeNumerically(">", initialReplicas),
+					fmt.Sprintf("Scale-up should be triggered from initial %d replicas under load", initialReplicas))
+
+				// Verify limiter caps the scale-up at max replicas
 				// With 2 GPUs/replica and only 4 GPUs available, max is 2 replicas
-				// The limiter should prevent scaling beyond this limit
 				g.Expect(desiredReplicas).To(BeNumerically("<=", maxReplicasOnNode),
 					fmt.Sprintf("Limiter should cap replicas at %d (%d GPUs / %d GPUs per replica)",
 						maxReplicasOnNode, 4, gpusPerReplicaVariant1))
-
-				// Also verify we have at least 1 replica (metrics are working)
-				g.Expect(desiredReplicas).To(BeNumerically(">=", 1),
-					"Should have at least 1 replica when metrics are available")
-			}, 5*time.Minute, 10*time.Second).Should(Succeed())
+			}, 10*time.Minute, 10*time.Second).Should(Succeed())
 
 			_, _ = fmt.Fprintf(GinkgoWriter, "Limiter successfully constrained scale-up to available GPU capacity\n")
 		})
@@ -476,7 +477,7 @@ enableLimiter: true`
 			By("waiting for autoscaler to respond to load")
 			time.Sleep(2 * time.Minute) // Allow saturation metrics to accumulate and trigger scaling
 
-			By("verifying both VAs have scaling decisions with metrics available")
+			By("verifying saturation triggers scale-up for both variants")
 			Eventually(func(g Gomega) {
 				va1 := &v1alpha1.VariantAutoscaling{}
 				err := crClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: variant1DeployName}, va1)
@@ -492,11 +493,12 @@ enableLimiter: true`
 				g.Expect(va2.Status.DesiredOptimizedAlloc.Accelerator).NotTo(BeEmpty(),
 					"VA2 should have accelerator populated")
 
-				// Both should have at least 1 replica
-				g.Expect(va1.Status.DesiredOptimizedAlloc.NumReplicas).To(BeNumerically(">=", 1),
-					"VA1 should have at least 1 replica")
-				g.Expect(va2.Status.DesiredOptimizedAlloc.NumReplicas).To(BeNumerically(">=", 1),
-					"VA2 should have at least 1 replica")
+				// CRITICAL: Verify scale-up was triggered (NumReplicas > initial 1)
+				// This confirms load is reaching pods and saturation is detected
+				g.Expect(va1.Status.DesiredOptimizedAlloc.NumReplicas).To(BeNumerically(">", initialReplicas),
+					fmt.Sprintf("VA1 scale-up should be triggered from initial %d replicas under load", initialReplicas))
+				g.Expect(va2.Status.DesiredOptimizedAlloc.NumReplicas).To(BeNumerically(">", initialReplicas),
+					fmt.Sprintf("VA2 scale-up should be triggered from initial %d replicas under load", initialReplicas))
 
 				_, _ = fmt.Fprintf(GinkgoWriter,
 					"Allocation - Variant1 (higher load, %s): %d replicas, Variant2 (%s): %d replicas\n",
@@ -504,7 +506,7 @@ enableLimiter: true`
 					va1.Status.DesiredOptimizedAlloc.NumReplicas,
 					va2.Status.DesiredOptimizedAlloc.Accelerator,
 					va2.Status.DesiredOptimizedAlloc.NumReplicas)
-			}, 5*time.Minute, 10*time.Second).Should(Succeed())
+			}, 10*time.Minute, 10*time.Second).Should(Succeed())
 
 			_, _ = fmt.Fprintf(GinkgoWriter, "Saturation-based prioritization test completed\n")
 		})
