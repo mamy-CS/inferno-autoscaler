@@ -46,7 +46,7 @@ CONTROLLER_INSTANCE=${CONTROLLER_INSTANCE:-""}
 # llm-d Configuration
 LLM_D_OWNER=${LLM_D_OWNER:-"llm-d"}
 LLM_D_PROJECT=${LLM_D_PROJECT:-"llm-d"}
-LLM_D_RELEASE=${LLM_D_RELEASE:-"v0.3.0"}
+LLM_D_RELEASE=${LLM_D_RELEASE:-"v0.4.0"}
 LLM_D_MODELSERVICE_NAME=${LLM_D_MODELSERVICE_NAME:-"ms-$WELL_LIT_PATH_NAME-llm-d-modelservice"}
 CLIENT_PREREQ_DIR=${CLIENT_PREREQ_DIR:-"$WVA_PROJECT/$LLM_D_PROJECT/guides/prereq/client-setup"}
 GATEWAY_PREREQ_DIR=${GATEWAY_PREREQ_DIR:-"$WVA_PROJECT/$LLM_D_PROJECT/guides/prereq/gateway-provider"}
@@ -505,7 +505,7 @@ spec:
       serviceAccountName: gaie-sim-sa
       containers:
       - name: epp
-        image: ghcr.io/llm-d/llm-d-inference-scheduler:v0.3.2
+        image: ghcr.io/llm-d/llm-d-inference-scheduler:v0.4.0
         imagePullPolicy: Always
         args:
         - --poolName=$POOL_NAME_2
