@@ -32,11 +32,11 @@ const (
 	// Min GPUs per specific GPU type (one node with 4 GPUs)
 	minRequiredGPUsPerType = 4
 
-	// Load generation parameters
-	limiterLoadRate     = 5   // requests per second
-	limiterMaxExecTime  = 120 // seconds
-	limiterInputTokens  = 100
-	limiterOutputTokens = 50
+	// Load generation parameters - must match saturation tests to ensure enough load
+	limiterLoadRate     = 8   // requests per second (same as saturation tests)
+	limiterMaxExecTime  = 300 // seconds (5 minutes to ensure saturation is detected)
+	limiterInputTokens  = 128 // same as saturation tests
+	limiterOutputTokens = 128 // same as saturation tests
 )
 
 // getGPUResourceName returns the GPU resource name based on E2E_GPU_TYPE env var.
@@ -407,7 +407,7 @@ enableLimiter: true`
 			}, 5*time.Minute, 5*time.Second).Should(Succeed())
 
 			By("waiting for saturation metrics to be collected")
-			time.Sleep(45 * time.Second) // Allow metrics to propagate through Prometheus
+			time.Sleep(90 * time.Second) // Allow metrics to propagate through Prometheus (longer for saturation detection)
 
 			By("verifying limiter constrains scale-up to max 2 replicas")
 			Eventually(func(g Gomega) {
@@ -494,7 +494,7 @@ enableLimiter: true`
 			}
 
 			By("waiting for saturation metrics to populate")
-			time.Sleep(60 * time.Second) // Allow metrics to propagate through Prometheus
+			time.Sleep(90 * time.Second) // Allow metrics to propagate through Prometheus (longer for saturation detection)
 
 			By("verifying both VAs have scaling decisions with metrics available")
 			Eventually(func(g Gomega) {
