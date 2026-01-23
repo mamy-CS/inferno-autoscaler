@@ -178,7 +178,7 @@ query := fmt.Sprintf(`vllm_kv_cache_usage{namespace="%s"}`, escapedNamespace)
 - The controller skips processing VAs without `scaleTargetRef.name` (see `internal/utils/variant.go`).
 
 **Impact on Scale-to-Zero:**
-- **Critical**: Old VAs without `scaleTargetRef` will **not scale to zero** properly, even if:
+- **Critical**: v0.4.1 VAs without `scaleTargetRef` will **not scale to zero** properly, even if:
   - HPAScaleToZero feature gate is enabled
   - HPA has `minReplicas: 0` configured
   - Scale-to-zero is enabled in WVA configuration
