@@ -392,22 +392,12 @@ enableLimiter: true`
 				_ = utils.StopJob(namespace, loadGenJob, k8sClient, ctx)
 			}()
 
-			By("waiting for load generator to be running")
-			Eventually(func(g Gomega) {
-				podList, err := k8sClient.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
-					LabelSelector: fmt.Sprintf("job-name=%s", loadGenJob.Name),
-				})
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(podList.Items).NotTo(BeEmpty(), "Job pod should exist")
-				pod := podList.Items[0]
-				g.Expect(pod.Status.Phase).To(Or(
-					Equal(corev1.PodRunning),
-					Equal(corev1.PodSucceeded),
-				), fmt.Sprintf("Job pod should be running, but is: %s", pod.Status.Phase))
-			}, 5*time.Minute, 5*time.Second).Should(Succeed())
+			By("waiting for load generator to be ready (pod running + pip install complete)")
+			err = utils.WaitForLoadGeneratorReady(ctx, loadGenJob, k8sClient, GinkgoWriter)
+			Expect(err).NotTo(HaveOccurred(), "Load generator should become ready")
 
-			By("waiting for saturation metrics to be collected")
-			time.Sleep(90 * time.Second) // Allow metrics to propagate through Prometheus (longer for saturation detection)
+			By("waiting for autoscaler to respond to load")
+			time.Sleep(2 * time.Minute) // Allow saturation metrics to accumulate and trigger scaling
 
 			By("verifying limiter constrains scale-up to max 2 replicas")
 			Eventually(func(g Gomega) {
@@ -477,24 +467,14 @@ enableLimiter: true`
 				_ = utils.StopJob(namespace, loadGenJob2, k8sClient, ctx)
 			}()
 
-			By("waiting for load generators to be running")
-			for _, jobName := range []string{loadGenJob1.Name, loadGenJob2.Name} {
-				Eventually(func(g Gomega) {
-					podList, err := k8sClient.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
-						LabelSelector: fmt.Sprintf("job-name=%s", jobName),
-					})
-					g.Expect(err).NotTo(HaveOccurred())
-					g.Expect(podList.Items).NotTo(BeEmpty(), "Job pod should exist")
-					pod := podList.Items[0]
-					g.Expect(pod.Status.Phase).To(Or(
-						Equal(corev1.PodRunning),
-						Equal(corev1.PodSucceeded),
-					), fmt.Sprintf("Job pod %s should be running, but is: %s", jobName, pod.Status.Phase))
-				}, 5*time.Minute, 5*time.Second).Should(Succeed())
-			}
+			By("waiting for load generators to be ready (pod running + pip install complete)")
+			err = utils.WaitForLoadGeneratorReady(ctx, loadGenJob1, k8sClient, GinkgoWriter)
+			Expect(err).NotTo(HaveOccurred(), "Load generator 1 should become ready")
+			err = utils.WaitForLoadGeneratorReady(ctx, loadGenJob2, k8sClient, GinkgoWriter)
+			Expect(err).NotTo(HaveOccurred(), "Load generator 2 should become ready")
 
-			By("waiting for saturation metrics to populate")
-			time.Sleep(90 * time.Second) // Allow metrics to propagate through Prometheus (longer for saturation detection)
+			By("waiting for autoscaler to respond to load")
+			time.Sleep(2 * time.Minute) // Allow saturation metrics to accumulate and trigger scaling
 
 			By("verifying both VAs have scaling decisions with metrics available")
 			Eventually(func(g Gomega) {
