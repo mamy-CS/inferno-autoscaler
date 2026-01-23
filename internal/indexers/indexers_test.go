@@ -331,5 +331,37 @@ var _ = Describe("Indexers", Ordered, func() {
 				return found.Name
 			}).Should(Equal("va-with-apiversion"))
 		})
+
+		It("should match VAs without APIVersion (defaults to apps/v1 for Deployment)", func() {
+			deploymentName := "test-deploy-no-apiversion"
+
+			va := &llmdv1alpha1.VariantAutoscaling{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "va-without-apiversion",
+					Namespace: namespace,
+				},
+				Spec: llmdv1alpha1.VariantAutoscalingSpec{
+					ScaleTargetRef: autoscalingv1.CrossVersionObjectReference{
+						// APIVersion is not set - should default to apps/v1
+						Kind: "Deployment",
+						Name: deploymentName,
+					},
+					ModelID: "model-no-apiversion",
+				},
+			}
+			Expect(k8sClient.Create(testCtx, va)).To(Succeed())
+			defer func() {
+				Expect(client.IgnoreNotFound(k8sClient.Delete(testCtx, va))).To(Succeed())
+			}()
+
+			// FindVAForDeployment should still find it since it defaults to apps/v1
+			Eventually(func() string {
+				found, err := FindVAForDeployment(testCtx, mgrClient, deploymentName, namespace)
+				if err != nil || found == nil {
+					return ""
+				}
+				return found.Name
+			}).Should(Equal("va-without-apiversion"))
+		})
 	})
 })
