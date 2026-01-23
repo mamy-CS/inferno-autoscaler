@@ -464,8 +464,6 @@ jobs:
           # HF_TOKEN is inherited from GITHUB_ENV (set in 'Get HF token from cluster secret' step)
           ENVIRONMENT: openshift
           INSTALL_GATEWAY_CTRLPLANE: "false"
-          # Disable benchmark mode - istioBench environment not available in llm-d helmfile
-          BENCHMARK_MODE: "false"
           E2E_TESTS_ENABLED: "true"
           NAMESPACE_SCOPED: "false"
           # Pass PR-specific namespaces to install script
@@ -475,8 +473,6 @@ jobs:
           CONTROLLER_INSTANCE: ${{ env.WVA_NAMESPACE }}
           # vLLM max-num-seqs for e2e testing (lower = easier to saturate)
           VLLM_MAX_NUM_SEQS: ${{ env.MAX_NUM_SEQS }}
-          # Disable benchmark mode - istioBench environment not available in llm-d helmfile
-          BENCHMARK_MODE: "false"
         run: |
           echo "Deploying WVA and llm-d infrastructure..."
           echo "  MODEL_ID: $MODEL_ID"
@@ -517,8 +513,6 @@ jobs:
           # HF_TOKEN is inherited from GITHUB_ENV
           ENVIRONMENT: openshift
           INSTALL_GATEWAY_CTRLPLANE: "false"
-          # Disable benchmark mode - istioBench environment not available in llm-d helmfile
-          BENCHMARK_MODE: "false"
           E2E_TESTS_ENABLED: "true"
           NAMESPACE_SCOPED: "false"
           # Override namespaces for Model B stack
@@ -532,8 +526,6 @@ jobs:
           DEPLOY_HPA: "false"
           # vLLM max-num-seqs for e2e testing (lower = easier to saturate)
           VLLM_MAX_NUM_SEQS: ${{ env.MAX_NUM_SEQS }}
-          # Disable benchmark mode - istioBench environment not available in llm-d helmfile
-          BENCHMARK_MODE: "false"
         run: |
           echo "Deploying Model B infrastructure in $LLMD_NAMESPACE_B..."
           echo "  MODEL_ID: $MODEL_ID"
