@@ -116,7 +116,7 @@ var _ = Describe("PodVAMapper", func() {
 					},
 				},
 			}
-			deployments["llama-deploy"] = deployment
+			deployments["default/llama-va"] = deployment
 
 			va := createVA("llama-va", "default", "llama-deploy")
 			rs := createReplicaSet("llama-deploy-abc123", "default", "llama-deploy")
@@ -153,7 +153,7 @@ var _ = Describe("PodVAMapper", func() {
 					},
 				},
 			}
-			deployments["orphan-deploy"] = deployment
+			deployments["default/orphan-va"] = deployment
 
 			rs := createReplicaSet("orphan-deploy-abc123", "default", "orphan-deploy")
 			pod := createPod("orphan-deploy-abc123-xyz", "default", "orphan-deploy-abc123", map[string]string{"app": "orphan"})
@@ -180,7 +180,7 @@ var _ = Describe("PodVAMapper", func() {
 					},
 				},
 			}
-			deployments["llama-deploy"] = deployment
+			deployments["default/llama-va"] = deployment
 
 			// VA in different namespace should not match
 			va := createVA("llama-va", "production", "llama-deploy")
@@ -201,7 +201,8 @@ var _ = Describe("PodVAMapper", func() {
 			// Setup multiple deployments
 			var objects []client.Object
 			for _, name := range []string{"deploy-a", "deploy-b", "deploy-c"} {
-				deployments[name] = &appsv1.Deployment{
+				vaName := "va-" + name[len("deploy-"):]
+				deployments["default/"+vaName] = &appsv1.Deployment{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      name,
 						Namespace: "default",
@@ -246,7 +247,7 @@ var _ = Describe("PodVAMapper", func() {
 					},
 				},
 			}
-			deployments["cached-deploy"] = deployment
+			deployments["default/cached-va"] = deployment
 
 			va := createVA("cached-va", "default", "cached-deploy")
 			rs := createReplicaSet("cached-deploy-rs", "default", "cached-deploy")
@@ -280,7 +281,7 @@ var _ = Describe("PodVAMapper", func() {
 					},
 				},
 			}
-			deployments["removable-deploy"] = deployment
+			deployments["default/removable-va"] = deployment
 
 			va := createVA("removable-va", "default", "removable-deploy")
 			rs := createReplicaSet("removable-deploy-rs", "default", "removable-deploy")
@@ -296,7 +297,7 @@ var _ = Describe("PodVAMapper", func() {
 			Expect(result1).To(Equal("removable-va"))
 
 			// Remove deployment from map
-			delete(deployments, "removable-deploy")
+			delete(deployments, "default/removable-va")
 
 			// Second lookup - should return empty since deployment is gone from tracked map
 			result2 := mapper.FindVAForPod(ctx, "removable-deploy-pod-xyz", "default", deployments)
@@ -310,7 +311,7 @@ var _ = Describe("PodVAMapper", func() {
 					Namespace: "default",
 				},
 			}
-			deployments["standalone-deploy"] = deployment
+			deployments["default/standalone-va"] = deployment
 
 			// Pod without owner references (standalone pod)
 			pod := &corev1.Pod{
@@ -336,7 +337,6 @@ var _ = Describe("PodVAMapper", func() {
 					Namespace: "namespace-a",
 				},
 			}
-			// Maps are now keyed by namespace/vaName format
 			deployments["namespace-a/va-a"] = deploymentA
 
 			// Deployment in namespace-b (same deployment name, different namespace)
