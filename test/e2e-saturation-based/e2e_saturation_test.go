@@ -253,7 +253,7 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Single Va
 			By("verifying HPA uses external metrics")
 			Expect(hpa.Spec.Metrics).To(HaveLen(1), "HPA should have one metric")
 			Expect(hpa.Spec.Metrics[0].Type).To(Equal(autoscalingv2.ExternalMetricSourceType), "HPA should use external metrics")
-			Expect(hpa.Spec.Metrics[0].External.Metric.Name).To(Equal(constants.InfernoDesiredReplicas), "HPA should use inferno_desired_replicas metric")
+			Expect(hpa.Spec.Metrics[0].External.Metric.Name).To(Equal(constants.WVADesiredReplicas), "HPA should use wva_desired_replicas metric")
 			Expect(hpa.Spec.Metrics[0].External.Metric.Selector.MatchLabels["variant_name"]).To(Equal(deployName), "HPA metric should filter by variant_name")
 
 			_, _ = fmt.Fprintf(GinkgoWriter, "HPA %s verified and configured correctly\n", hpaName)
@@ -282,10 +282,10 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Single Va
 			Eventually(func(g Gomega) {
 				result, err := k8sClient.RESTClient().
 					Get().
-					AbsPath("/apis/external.metrics.k8s.io/v1beta1/namespaces/" + namespace + "/" + constants.InfernoDesiredReplicas).
+					AbsPath("/apis/external.metrics.k8s.io/v1beta1/namespaces/" + namespace + "/" + constants.WVADesiredReplicas).
 					DoRaw(ctx)
 				g.Expect(err).NotTo(HaveOccurred(), "Should be able to query external metrics API")
-				g.Expect(string(result)).To(ContainSubstring(constants.InfernoDesiredReplicas), "Metric should be available")
+				g.Expect(string(result)).To(ContainSubstring(constants.WVADesiredReplicas), "Metric should be available")
 				g.Expect(string(result)).To(ContainSubstring(deployName), "Metric should be for the correct variant")
 			}, 2*time.Minute, 5*time.Second).Should(Succeed())
 
@@ -677,7 +677,7 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Multiple 
 			Expect(hpaA100.Spec.ScaleTargetRef.Name).To(Equal(deployNameA100), "A100 HPA should target correct deployment")
 			Expect(hpaA100.Spec.Metrics).To(HaveLen(1), "A100 HPA should have one metric")
 			Expect(hpaA100.Spec.Metrics[0].Type).To(Equal(autoscalingv2.ExternalMetricSourceType), "A100 HPA should use external metrics")
-			Expect(hpaA100.Spec.Metrics[0].External.Metric.Name).To(Equal(constants.InfernoDesiredReplicas), "A100 HPA should use inferno_desired_replicas")
+			Expect(hpaA100.Spec.Metrics[0].External.Metric.Name).To(Equal(constants.WVADesiredReplicas), "A100 HPA should use wva_desired_replicas")
 
 			By("verifying H100 HPA exists and is configured")
 			hpaH100, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(namespace).Get(ctx, hpaNameH100, metav1.GetOptions{})
@@ -685,7 +685,7 @@ var _ = Describe("Test workload-variant-autoscaler - Saturation Mode - Multiple 
 			Expect(hpaH100.Spec.ScaleTargetRef.Name).To(Equal(deployNameH100), "H100 HPA should target correct deployment")
 			Expect(hpaH100.Spec.Metrics).To(HaveLen(1), "H100 HPA should have one metric")
 			Expect(hpaH100.Spec.Metrics[0].Type).To(Equal(autoscalingv2.ExternalMetricSourceType), "H100 HPA should use external metrics")
-			Expect(hpaH100.Spec.Metrics[0].External.Metric.Name).To(Equal(constants.InfernoDesiredReplicas), "H100 HPA should use inferno_desired_replicas")
+			Expect(hpaH100.Spec.Metrics[0].External.Metric.Name).To(Equal(constants.WVADesiredReplicas), "H100 HPA should use wva_desired_replicas")
 
 			_, _ = fmt.Fprintf(GinkgoWriter, "Both HPAs verified and configured correctly\n")
 		})

@@ -39,10 +39,10 @@ import (
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/source"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/common"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/executor"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/pipeline"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/saturation"
-	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/pipeline"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/utils"
 )
 

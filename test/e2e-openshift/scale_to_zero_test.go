@@ -41,11 +41,11 @@ const (
 
 var _ = Describe("Scale-to-Zero Test", Ordered, func() {
 	var (
-		ctx                      context.Context
-		scaleToZeroEnabled       bool
-		hpaScaleToZeroEnabled    bool
-		originalConfigExists     bool
-		originalConfigData       map[string]string
+		ctx                   context.Context
+		scaleToZeroEnabled    bool
+		hpaScaleToZeroEnabled bool
+		originalConfigExists  bool
+		originalConfigData    map[string]string
 	)
 
 	BeforeAll(func() {

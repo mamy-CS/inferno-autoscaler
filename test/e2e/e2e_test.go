@@ -420,13 +420,13 @@ var _ = Describe("Test workload-variant-autoscaler in emulated environment - sin
 
 			// Verify Prometheus replica metrics
 			// Use DesiredOptimizedAlloc.Accelerator as CurrentAlloc is removed
-			currentReplicasProm, desiredReplicasProm, _, err = utils.GetInfernoReplicaMetrics(va.Name, namespace, va.Status.DesiredOptimizedAlloc.Accelerator)
+			currentReplicasProm, desiredReplicasProm, _, err = utils.GetWVAReplicaMetrics(va.Name, namespace, va.Status.DesiredOptimizedAlloc.Accelerator)
 			g.Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to query Prometheus metrics for: %s - got error: %v", va.Name, err))
 
 			g.Expect(desiredReplicasProm).To(BeNumerically(">", 1),
-				fmt.Sprintf("Prometheus `inferno_desired_replicas` query should show scale-up for VA: %s - actual: %.2f", va.Name, desiredReplicasProm))
+				fmt.Sprintf("Prometheus `wva_desired_replicas` query should show scale-up for VA: %s - actual: %.2f", va.Name, desiredReplicasProm))
 			g.Expect(currentReplicasProm).To(BeNumerically(">=", 1),
-				fmt.Sprintf("Prometheus `inferno_current_replicas` query should show at least 1 replica for VA: %s - actual: %.2f", va.Name, currentReplicasProm))
+				fmt.Sprintf("Prometheus `wva_current_replicas` query should show at least 1 replica for VA: %s - actual: %.2f", va.Name, currentReplicasProm))
 
 			// Verify that the desired number of replicas has same value as Prometheus result
 			g.Expect(va.Status.DesiredOptimizedAlloc.NumReplicas).To(BeNumerically("==", desiredReplicasProm),
@@ -460,7 +460,7 @@ var _ = Describe("Test workload-variant-autoscaler in emulated environment - sin
 				fmt.Sprintf("DesiredOptimizedAlloc for VA %s should stay at %d replicas with constant load", deployName, initialDesiredReplicas))
 
 			// Verify Prometheus replica metrics
-			_, desiredReplicasProm, _, err = utils.GetInfernoReplicaMetrics(va.Name, namespace, va.Status.DesiredOptimizedAlloc.Accelerator)
+			_, desiredReplicasProm, _, err = utils.GetWVAReplicaMetrics(va.Name, namespace, va.Status.DesiredOptimizedAlloc.Accelerator)
 			g.Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to query Prometheus metrics for: %s - got error: %v", va.Name, err))
 
 			// Verify that the desired number of replicas has same value as Prometheus result
@@ -538,7 +538,7 @@ var _ = Describe("Test workload-variant-autoscaler in emulated environment - sin
 				accelerator = "A100" // Fallback for test if needed, or rely on labels
 			}
 
-			_, desiredReplicasProm, _, err = utils.GetInfernoReplicaMetrics(va.Name, namespace, accelerator)
+			_, desiredReplicasProm, _, err = utils.GetWVAReplicaMetrics(va.Name, namespace, accelerator)
 			g.Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to query Prometheus metrics for: %s - got error: %v", va.Name, err))
 
 			// Verify that the desired number of replicas has same value as Prometheus result
@@ -940,7 +940,7 @@ var _ = Describe("Test workload-variant-autoscaler in emulated environment - mul
 				fmt.Sprintf("High load should trigger scale-up recommendation for VA: %s", va1.Name))
 
 			// Verify Prometheus replica metrics
-			_, desiredReplicas1, _, err = utils.GetInfernoReplicaMetrics(va1.Name, namespace, va1.Status.DesiredOptimizedAlloc.Accelerator)
+			_, desiredReplicas1, _, err = utils.GetWVAReplicaMetrics(va1.Name, namespace, va1.Status.DesiredOptimizedAlloc.Accelerator)
 			g.Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to query Prometheus metrics for: %s - got error: %v", va1.Name, err))
 
 			// Verify that the desired number of replicas has same value as Prometheus result
@@ -986,7 +986,7 @@ var _ = Describe("Test workload-variant-autoscaler in emulated environment - mul
 			if acc2 == "" {
 				acc2 = "H100"
 			} // fallback/assumed
-			_, desiredReplicas2, _, err = utils.GetInfernoReplicaMetrics(va2.Name, namespace, acc2)
+			_, desiredReplicas2, _, err = utils.GetWVAReplicaMetrics(va2.Name, namespace, acc2)
 			g.Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to query Prometheus metrics for: %s - got error: %v", va2.Name, err))
 
 			// Verify that the desired number of replicas has same value as Prometheus result
@@ -1126,7 +1126,7 @@ var _ = Describe("Test workload-variant-autoscaler in emulated environment - mul
 				fmt.Sprintf("High load should trigger scale-up recommendation for VA: %s - actual replicas: %d", firstDeployName, va1.Status.DesiredOptimizedAlloc.NumReplicas))
 
 			// Verify Prometheus replica metrics
-			_, desiredReplicas1, _, err = utils.GetInfernoReplicaMetrics(va1.Name, namespace, va1.Status.DesiredOptimizedAlloc.Accelerator)
+			_, desiredReplicas1, _, err = utils.GetWVAReplicaMetrics(va1.Name, namespace, va1.Status.DesiredOptimizedAlloc.Accelerator)
 			g.Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to query Prometheus metrics for: %s - got error: %v", va1.Name, err))
 
 			// Verify that the desired number of replicas has same value as Prometheus result
@@ -1145,7 +1145,7 @@ var _ = Describe("Test workload-variant-autoscaler in emulated environment - mul
 				fmt.Sprintf("High load should trigger scale-up recommendation for VA: %s - actual replicas: %d", secondDeployName, va2.Status.DesiredOptimizedAlloc.NumReplicas))
 
 			// Verify Prometheus replica metrics
-			_, desiredReplicas2, _, err = utils.GetInfernoReplicaMetrics(va2.Name, namespace, va2.Status.DesiredOptimizedAlloc.Accelerator)
+			_, desiredReplicas2, _, err = utils.GetWVAReplicaMetrics(va2.Name, namespace, va2.Status.DesiredOptimizedAlloc.Accelerator)
 			g.Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to query Prometheus metrics for: %s - got error: %v", va2.Name, err))
 
 			// Verify that the desired number of replicas has same value as Prometheus result
@@ -1198,7 +1198,7 @@ var _ = Describe("Test workload-variant-autoscaler in emulated environment - mul
 				fmt.Sprintf("No load should trigger scale-down recommendation to %d for VA: %s", MinimumReplicas, firstDeployName))
 
 			// Verify Prometheus replica metrics
-			_, desiredReplicas1, _, err = utils.GetInfernoReplicaMetrics(va1.Name, namespace, va1.Status.DesiredOptimizedAlloc.Accelerator)
+			_, desiredReplicas1, _, err = utils.GetWVAReplicaMetrics(va1.Name, namespace, va1.Status.DesiredOptimizedAlloc.Accelerator)
 			g.Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to query Prometheus metrics for: %s - got error: %v", va1.Name, err))
 
 			// Verify that the desired number of replicas has same value as Prometheus result
@@ -1217,7 +1217,7 @@ var _ = Describe("Test workload-variant-autoscaler in emulated environment - mul
 				fmt.Sprintf("High load should trigger scale-up recommendation to %d for VA: %s - actual replicas: %d", MinimumReplicas, secondDeployName, va2.Status.DesiredOptimizedAlloc.NumReplicas))
 
 			// Verify Prometheus replica metrics
-			_, desiredReplicas2, _, err = utils.GetInfernoReplicaMetrics(va2.Name, namespace, va2.Status.DesiredOptimizedAlloc.Accelerator)
+			_, desiredReplicas2, _, err = utils.GetWVAReplicaMetrics(va2.Name, namespace, va2.Status.DesiredOptimizedAlloc.Accelerator)
 			g.Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to query Prometheus metrics for: %s - got error: %v", va2.Name, err))
 
 			// Verify that the desired number of replicas has same value as Prometheus result
