@@ -612,8 +612,10 @@ spec:
 EOF
 
     # Create InferenceModel for second model (maps model name to pool)
-    log_info "Creating InferenceModel for second model"
-    cat <<EOF | kubectl apply -n $LLMD_NS -f -
+    # Note: InferenceModel CRD may not be available in all environments
+    if kubectl get crd inferencemodels.inference.networking.x-k8s.io &>/dev/null; then
+        log_info "Creating InferenceModel for second model"
+        cat <<EOF | kubectl apply -n $LLMD_NS -f -
 apiVersion: inference.networking.x-k8s.io/v1alpha2
 kind: InferenceModel
 metadata:
@@ -627,6 +629,10 @@ spec:
   - name: $MODEL_ID_2
     weight: 100
 EOF
+    else
+        log_warning "InferenceModel CRD not available - skipping InferenceModel creation for second model"
+        log_warning "Model routing may need to be configured manually or via HTTPRoute"
+    fi
 
     # Create PodMonitor for second model metrics
     log_info "Creating PodMonitor for second model"
