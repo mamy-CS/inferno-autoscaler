@@ -1,6 +1,6 @@
 # KEDA Integration with the Workload-Variant-Autoscaler
 
-This document describes how to integrate the Kubernetes Event-driven Autoscaler (KEDA) with the Workload-Variant-Autoscaler (WVA) sing the existing deployment environment.
+This document describes how to integrate the Kubernetes Event-driven Autoscaler (KEDA) with the Workload-Variant-Autoscaler (WVA) using the existing deployment environment.
 
 ## Overview
 
