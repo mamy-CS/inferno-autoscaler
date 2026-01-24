@@ -38,18 +38,23 @@ func getGPUResourceName() corev1.ResourceName {
 }
 
 // getGPUNodeSelector returns node selector for targeting specific GPU type.
-// For nvidia (nvidia-mix cluster): targets H100 nodes
-// For amd (amd-mix cluster): targets MI300X nodes
+// Uses GPU product labels set in the Kind cluster with emulated GPU (see deploy/kind-emulator/setup.sh).
 func getGPUNodeSelector() (map[string]string, string) {
 	gpuType := os.Getenv("E2E_GPU_TYPE")
 	if gpuType == "" {
 		gpuType = "nvidia"
 	}
 
-	if gpuType == "nvidia" {
-		return map[string]string{"gpu-config": "4H100"}, "H100"
+	// Use node labels set in the Kind cluster with emulated GPU (see deploy/kind-emulator/setup.sh).
+	switch gpuType {
+	case "nvidia":
+		return map[string]string{"nvidia.com/gpu.product": "NVIDIA-A100-PCIE-80GB"}, "A100"
+	case "amd":
+		return map[string]string{"amd.com/gpu.product": "AMD-MI300X-192G"}, "MI300X"
+	case "intel":
+		return map[string]string{"intel.com/gpu.product": "Intel-Gaudi-2-96GB"}, "Gaudi2"
 	}
-	return map[string]string{"gpu-config": "4MI300X"}, "MI300X"
+	return map[string]string{}, ""
 }
 
 var _ = Describe("Test workload-variant-autoscaler - GPU Limiter Feature", Ordered, func() {
