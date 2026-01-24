@@ -186,13 +186,13 @@ func TestMultipleInactiveVariants(t *testing.T) {
 	pool1.SetGroupVersionKind(gvk)
 
 	// Create multiple VAs with different models
-	va1 := unittestutil.CreateVariantAutoscalingResource(namespace, "resource-1", "model-1", acceleratorName, variantCost)
-	va2 := unittestutil.CreateVariantAutoscalingResource(namespace, "resource-2", "model-2", acceleratorName, variantCost)
-	va3 := unittestutil.CreateVariantAutoscalingResource(namespace, "resource-3", "model-3", acceleratorName, variantCost)
+	va1 := unittestutil.CreateVariantAutoscalingResource(namespace, "resource-1", "resource-1-deployment", "model-1", acceleratorName, variantCost)
+	va2 := unittestutil.CreateVariantAutoscalingResource(namespace, "resource-2", "resource-2-deployment", "model-2", acceleratorName, variantCost)
+	va3 := unittestutil.CreateVariantAutoscalingResource(namespace, "resource-3", "resource-3-deployment", "model-3", acceleratorName, variantCost)
 
-	dp1 := unittestutil.MakeDeployment("resource-1", namespace, 0, selector_v1)
-	dp2 := unittestutil.MakeDeployment("resource-2", namespace, 0, selector_v1)
-	dp3 := unittestutil.MakeDeployment("resource-3", namespace, 0, selector_v1)
+	dp1 := unittestutil.MakeDeployment("resource-1-deployment", namespace, 0, selector_v1)
+	dp2 := unittestutil.MakeDeployment("resource-2-deployment", namespace, 0, selector_v1)
+	dp3 := unittestutil.MakeDeployment("resource-3-deployment", namespace, 0, selector_v1)
 	svc := unittestutil.MakeService("epp-pool1-svc", namespace)
 
 	scheme := runtime.NewScheme()
@@ -268,8 +268,8 @@ func TestEmptyInactiveVariants(t *testing.T) {
 	pool1.SetGroupVersionKind(gvk)
 
 	// Create VA with non-zero replicas (active)
-	va := unittestutil.CreateVariantAutoscalingResource(namespace, resourceName, modelId, acceleratorName, variantCost)
-	dp := unittestutil.MakeDeployment(resourceName, namespace, 1, selector_v1) // 1 replica = active
+	va := unittestutil.CreateVariantAutoscalingResource(namespace, resourceName, resourceName+"-deployment", modelId, acceleratorName, variantCost)
+	dp := unittestutil.MakeDeployment(resourceName+"-deployment", namespace, 1, selector_v1) // 1 replica = active
 	svc := unittestutil.MakeService("epp-pool1-svc", namespace)
 
 	scheme := runtime.NewScheme()

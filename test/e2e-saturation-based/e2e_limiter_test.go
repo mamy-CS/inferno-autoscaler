@@ -169,20 +169,20 @@ enableLimiter: true`
 		}, 2*time.Minute, 5*time.Second).Should(Succeed())
 
 		By("creating VariantAutoscaling resource")
-		va := utils.CreateVariantAutoscalingResource(namespace, deployName, llamaModelId, accelerator, 30.0)
+		va := utils.CreateVariantAutoscalingResource(namespace, name, deployName, llamaModelId, accelerator, 30.0)
 		err = crClient.Create(ctx, va)
 		Expect(err).NotTo(HaveOccurred())
 		_, _ = fmt.Fprintf(GinkgoWriter, "VariantAutoscaling created with accelerator: %s\n", accelerator)
 
 		By("creating HPA for deployment")
-		hpa := utils.CreateHPAOnDesiredReplicaMetrics(hpaName, namespace, deployName, deployName, 10)
+		hpa := utils.CreateHPAOnDesiredReplicaMetrics(hpaName, namespace, deployName, name, 10)
 		_, err = k8sClient.AutoscalingV2().HorizontalPodAutoscalers(namespace).Create(ctx, hpa, metav1.CreateOptions{})
 		Expect(err).NotTo(HaveOccurred())
 
 		By("waiting for metrics pipeline to be ready")
 		Eventually(func(g Gomega) {
 			va := &v1alpha1.VariantAutoscaling{}
-			err := crClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: deployName}, va)
+			err := crClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, va)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(va.Status.DesiredOptimizedAlloc.Accelerator).NotTo(BeEmpty(),
 				"VariantAutoscaling DesiredOptimizedAlloc should be populated")
@@ -200,7 +200,7 @@ enableLimiter: true`
 
 		// Delete VA
 		va := &v1alpha1.VariantAutoscaling{}
-		if err := crClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: deployName}, va); err == nil {
+		if err := crClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, va); err == nil {
 			_ = crClient.Delete(ctx, va)
 		}
 
@@ -315,7 +315,7 @@ enableLimiter: true`
 				va := &v1alpha1.VariantAutoscaling{}
 				err := crClient.Get(ctx, client.ObjectKey{
 					Namespace: namespace,
-					Name:      deployName,
+					Name:      name,
 				}, va)
 				g.Expect(err).NotTo(HaveOccurred())
 
@@ -341,7 +341,7 @@ enableLimiter: true`
 			}, 10*time.Minute, 10*time.Second).Should(Succeed())
 
 			By("logging VariantAutoscaling status after scale-up")
-			err = utils.LogVariantAutoscalingStatus(ctx, deployName, namespace, crClient, GinkgoWriter)
+			err = utils.LogVariantAutoscalingStatus(ctx, name, namespace, crClient, GinkgoWriter)
 			Expect(err).NotTo(HaveOccurred(), "Should be able to log VariantAutoscaling status")
 
 			_, _ = fmt.Fprintf(GinkgoWriter, "Limiter successfully constrained scale-up: final replicas = %d (max = %d)\n",
