@@ -135,6 +135,31 @@ enableLimiter: true`
 		_, err = k8sClient.CoreV1().ConfigMaps(controllerNamespace).Update(ctx, cm, metav1.UpdateOptions{})
 		Expect(err).NotTo(HaveOccurred(), "Should be able to update saturation ConfigMap to enable limiter")
 
+		By("restarting controller-manager pods to load limiter configuration")
+		podList, err := k8sClient.CoreV1().Pods(controllerNamespace).List(ctx, metav1.ListOptions{
+			LabelSelector: "app.kubernetes.io/name=workload-variant-autoscaler",
+		})
+		Expect(err).NotTo(HaveOccurred(), "Should be able to list manager pods")
+
+		for _, pod := range podList.Items {
+			err = k8sClient.CoreV1().Pods(controllerNamespace).Delete(ctx, pod.Name, metav1.DeleteOptions{})
+			Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to delete pod %s", pod.Name))
+		}
+
+		// Wait for new controller pods to be running
+		Eventually(func(g Gomega) {
+			newPodList, err := k8sClient.CoreV1().Pods(controllerNamespace).List(ctx, metav1.ListOptions{
+				LabelSelector: "app.kubernetes.io/name=workload-variant-autoscaler",
+			})
+			g.Expect(err).NotTo(HaveOccurred(), "Should be able to list manager pods")
+			g.Expect(newPodList.Items).NotTo(BeEmpty(), "Pod list should not be empty")
+			for _, pod := range newPodList.Items {
+				g.Expect(pod.Status.Phase).To(Equal(corev1.PodRunning), fmt.Sprintf("Pod %s is not running", pod.Name))
+			}
+		}, 2*time.Minute, 1*time.Second).Should(Succeed())
+
+		_, _ = fmt.Fprintf(GinkgoWriter, "Controller pods restarted with limiter enabled\n")
+
 		By("ensuring unique app label for deployment")
 		utils.ValidateAppLabelUniqueness(namespace, appLabel, k8sClient, crClient)
 
