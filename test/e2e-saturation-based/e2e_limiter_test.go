@@ -61,7 +61,7 @@ var _ = Describe("Test workload-variant-autoscaler - GPU Limiter Feature", Order
 	var (
 		ctx context.Context
 
-		// Resource names - following saturation test pattern
+		// Resource names
 		name           string
 		deployName     string
 		serviceName    string
@@ -258,7 +258,6 @@ enableLimiter: true`
 
 	Context("Scenario 2: Scale-up under load with limiter constraint", func() {
 		It("should scale up when saturation is detected but be constrained by GPU capacity", func() {
-			// Following saturation test pattern exactly
 			By("setting up port-forward to Prometheus service")
 			prometheusPortForwardCmd := utils.SetUpPortForward(k8sClient, ctx, "kube-prometheus-stack-prometheus", controllerMonitoringNamespace, prometheusLocalPort, 9090)
 			defer func() {
@@ -338,12 +337,27 @@ enableLimiter: true`
 				g.Expect(finalReplicas).To(BeNumerically(">", int(initialReplicas)),
 					fmt.Sprintf("Should scale up from %d under load", initialReplicas))
 
-				// Limiter should cap the scale-up at max replicas for the GPU type
-				g.Expect(finalReplicas).To(BeNumerically("<=", maxReplicasOnNode),
-					fmt.Sprintf("Limiter should cap replicas at %d (%d GPUs / %d GPUs per replica)",
-						maxReplicasOnNode, 4, gpusPerReplicaLimiter))
-
 			}, 10*time.Minute, 10*time.Second).Should(Succeed())
+
+			By("verifying scale-up is constrained by GPU capacity via limiter")
+			Consistently(func(g Gomega) {
+				va := &v1alpha1.VariantAutoscaling{}
+				err := crClient.Get(ctx, client.ObjectKey{
+					Namespace: namespace,
+					Name:      name,
+				}, va)
+				g.Expect(err).NotTo(HaveOccurred())
+
+				finalReplicas = va.Status.DesiredOptimizedAlloc.NumReplicas
+				_, _ = fmt.Fprintf(GinkgoWriter, "Checking DesiredOptimizedAlloc.NumReplicas=%d against max=%d\n",
+					finalReplicas, maxReplicasOnNode)
+
+				// Final replicas should not exceed max allowed by GPU capacity
+				g.Expect(finalReplicas).To(BeNumerically("<=", maxReplicasOnNode),
+					fmt.Sprintf("Final replicas %d should be less than or equal to max %d due to GPU limiter",
+						finalReplicas, maxReplicasOnNode))
+
+			}, 2*time.Minute, 10*time.Second).Should(Succeed())
 
 			By("logging VariantAutoscaling status after scale-up")
 			err = utils.LogVariantAutoscalingStatus(ctx, name, namespace, crClient, GinkgoWriter)
