@@ -95,6 +95,9 @@ var _ = Describe("Test workload-variant-autoscaler - GPU Limiter Feature", Order
 		if gpuType == "" {
 			gpuType = "nvidia"
 		}
+		if gpuType != "nvidia" {
+			Skip("Skipping limiter test: only NVIDIA is supported by current discovery")
+		}
 		_, _ = fmt.Fprintf(GinkgoWriter, "GPU type for this test run: %s (resource: %s)\n", gpuType, gpuResourceName)
 
 		By(fmt.Sprintf("checking cluster has sufficient %s GPUs", gpuType))
