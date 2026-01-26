@@ -771,36 +771,32 @@ deploy_llm_d_infrastructure() {
     helmfile apply -e $GATEWAY_PROVIDER -n ${LLMD_NS}
     kubectl apply -f httproute.yaml -n ${LLMD_NS}
 
-    # if [ "$GATEWAY_PROVIDER" == "kgateway" ]; then
-    #     log_info "Patching kgateway service to NodePort"
-    #     export GATEWAY_NAME="infra-inference-scheduling-inference-gateway"
-    #     kubectl patch gatewayparameters.gateway.kgateway.dev $GATEWAY_NAME \
-    #     -n $LLMD_NS \
-    #     --type='merge' \
-    #     -p '{"spec":{"kube":{"service":{"type":"NodePort"}}}}'
-    # fi
-
-    # Patch llm-d-inference-simulator deployment if scale-to-zero is enabled and simulator is deployed
-    if [ "$ENABLE_SCALE_TO_ZERO" == "true" ] && kubectl get deployment gaie-sim-epp -n $LLMD_NS &>/dev/null; then
-        # Patch llm-d-inference-simulator deployment to use the correct image
+    # Patch llm-d-inference-simulator deployment if scale-to-zero is enabled and llm-d-inference-simulator is used and simulator is deployed
+    if [ "$ENABLE_SCALE_TO_ZERO" == "true" ] && [ "$DEPLOY_LLM_D_INFERENCE_SIM" == "true" ] && kubectl get deployment gaie-sim-epp -n $LLMD_NS &>/dev/null; then
+        # Patch llm-d-inference-simulator Deployment to use the correct image
         log_info "Patching llm-d-inference-simulator deployment to enable flowcontrol and use a new image"
         export DEPLOYMENT_NAME="gaie-sim-epp"
+        # TODO: refactor and update once llm-d-inference-scheduler v0.5.0 is released
         export NEW_IMAGE="ghcr.io/llm-d/llm-d-inference-scheduler:v0.5.0-rc.1"
-        kubectl patch deployment $DEPLOYMENT_NAME -n $LLMD_NS --type='json' -p='[
-            {
-                "op": "replace",
-                "path": "/spec/template/spec/containers/0/image",
-                "value": "'$NEW_IMAGE'"
-            },
-            {
-                "op": "add",
-                "path": "/spec/template/spec/containers/0/env/-",
-                "value": {
-                "name": "ENABLE_EXPERIMENTAL_FLOW_CONTROL_LAYER",
-                "value": "true"
+        if kubectl get deployment "$DEPLOYMENT_NAME" -n "$LLMD_NS" &> /dev/null; then
+            kubectl patch deployment $DEPLOYMENT_NAME -n $LLMD_NS --type='json' -p='[
+                {
+                    "op": "replace",
+                    "path": "/spec/template/spec/containers/0/image",
+                    "value": "'$NEW_IMAGE'"
+                },
+                {
+                    "op": "add",
+                    "path": "/spec/template/spec/containers/0/env/-",
+                    "value": {
+                    "name": "ENABLE_EXPERIMENTAL_FLOW_CONTROL_LAYER",
+                    "value": "true"
+                    }
                 }
-            }
-        ]'
+            ]'
+        else
+            log_warning "Skipping simulator patch: deployment $DEPLOYMENT_NAME not found in $LLMD_NS"
+        fi
     fi
     
     log_info "Waiting for llm-d components to initialize..."
