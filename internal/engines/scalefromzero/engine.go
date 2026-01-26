@@ -128,44 +128,65 @@ func (e *Engine) optimize(ctx context.Context) error {
 	sem := make(chan struct{}, e.maxConcurrency)
 	errorCh := make(chan error, e.maxConcurrency)
 
+	// Start error aggregation in a separate goroutine to prevent deadlock
+	var aggregatedErrors []error
+	var errorWg sync.WaitGroup
+	errorWg.Add(1)
+	go func() {
+		defer errorWg.Done()
+		for err := range errorCh {
+			if err != nil {
+				aggregatedErrors = append(aggregatedErrors, err)
+			}
+		}
+	}()
+
+	contextCancelled := false
 	for _, va := range inactiveVAs {
+		// Check if context is cancelled, but don't return immediately
 		select {
 		case <-ctx.Done():
-			logger.V(logging.DEBUG).Info("Context cancelled, exiting optimize loop")
-			return ctx.Err()
+			logger.V(logging.DEBUG).Info("Context cancelled, stopping new work")
+			contextCancelled = true
 		default:
-			logger.V(logging.DEBUG).Info("Processing variant", "name", va.Name)
-			wg.Add(1)
-
-			// This call blocks if the channel is full (concurrency limit reached)
-			sem <- struct{}{}
-			go func() {
-				defer wg.Done()
-				defer func() { <-sem }()
-
-				err := e.processInactiveVariant(ctx, va, 1)
-				if err != nil {
-					logger.V(logging.DEBUG).Error(err, "Error Processing variant", "name", va.Name)
-					errorCh <- err
-				} else {
-					errorCh <- nil
-				}
-			}()
 		}
 
+		// If context was cancelled, stop scheduling new work
+		if contextCancelled {
+			break
+		}
+
+		logger.V(logging.DEBUG).Info("Processing variant", "name", va.Name)
+		wg.Add(1)
+
+		// This call blocks if the channel is full (concurrency limit reached)
+		sem <- struct{}{}
+		go func(variant wvav1alpha1.VariantAutoscaling) {
+			defer wg.Done()
+			defer func() { <-sem }()
+
+			err := e.processInactiveVariant(ctx, variant, 1)
+			if err != nil {
+				logger.V(logging.DEBUG).Error(err, "Error Processing variant", "name", variant.Name)
+				errorCh <- err
+			} else {
+				errorCh <- nil
+			}
+		}(va)
 	}
 
-	// Wait for all goroutines to complete
+	// Wait for all goroutines to complete, then close error channel
 	wg.Wait()
 	close(errorCh)
 
-	// Aggregate errors
-	var aggregatedErrors []error
-	for err := range errorCh {
-		if err != nil {
-			aggregatedErrors = append(aggregatedErrors, err)
-		}
+	// Wait for error aggregation to complete
+	errorWg.Wait()
+
+	// After all work is done, if the context was cancelled, return that error
+	if err := ctx.Err(); err != nil {
+		return err
 	}
+
 	if len(aggregatedErrors) > 0 {
 		return errors.Join(aggregatedErrors...)
 	}
