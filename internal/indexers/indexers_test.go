@@ -273,6 +273,57 @@ var _ = Describe("Indexers", Ordered, func() {
 			}).Should(Equal("va-targets-statefulset"))
 		})
 
+		It("should return an error when multiple VAs target the same scale target", func() {
+			sharedName := "dup-target"
+
+			va1 := &llmdv1alpha1.VariantAutoscaling{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "va-dup-1",
+					Namespace: namespace,
+				},
+				Spec: llmdv1alpha1.VariantAutoscalingSpec{
+					ScaleTargetRef: autoscalingv1.CrossVersionObjectReference{
+						APIVersion: "apps/v1",
+						Kind:       "Deployment",
+						Name:       sharedName,
+					},
+					ModelID: "model-dup-1",
+				},
+			}
+			Expect(k8sClient.Create(testCtx, va1)).To(Succeed())
+			defer func() {
+				Expect(client.IgnoreNotFound(k8sClient.Delete(testCtx, va1))).To(Succeed())
+			}()
+
+			va2 := &llmdv1alpha1.VariantAutoscaling{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "va-dup-2",
+					Namespace: namespace,
+				},
+				Spec: llmdv1alpha1.VariantAutoscalingSpec{
+					ScaleTargetRef: autoscalingv1.CrossVersionObjectReference{
+						APIVersion: "apps/v1",
+						Kind:       "Deployment",
+						Name:       sharedName,
+					},
+					ModelID: "model-dup-2",
+				},
+			}
+			Expect(k8sClient.Create(testCtx, va2)).To(Succeed())
+			defer func() {
+				Expect(client.IgnoreNotFound(k8sClient.Delete(testCtx, va2))).To(Succeed())
+			}()
+
+			Eventually(func() error {
+				_, err := FindVAForScaleTarget(testCtx, mgrClient, autoscalingv1.CrossVersionObjectReference{
+					APIVersion: "apps/v1",
+					Kind:       "Deployment",
+					Name:       sharedName,
+				}, namespace)
+				return err
+			}).Should(MatchError(ContainSubstring("multiple VariantAutoscalings found")))
+		})
+
 		It("should handle VA with empty scaleTargetRef name", func() {
 			vaEmpty := &llmdv1alpha1.VariantAutoscaling{
 				ObjectMeta: metav1.ObjectMeta{
