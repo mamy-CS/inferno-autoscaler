@@ -2,7 +2,6 @@ package discovery
 
 import (
 	"context"
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -233,8 +232,7 @@ func TestDiscover_WithNodeSelector(t *testing.T) {
 	discoverer := NewK8sWithGpuOperator(client)
 
 	// Set node selector to only match shard-a
-	os.Setenv("WVA_NODE_SELECTOR", "wva.llmd.ai/shard=a")
-	defer os.Unsetenv("WVA_NODE_SELECTOR")
+	t.Setenv("WVA_NODE_SELECTOR", "wva.llmd.ai/shard=a")
 
 	result, err := discoverer.Discover(context.Background())
 	require.NoError(t, err)
