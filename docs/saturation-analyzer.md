@@ -69,7 +69,7 @@ The Saturation Analyzer is a **fast, reactive, and safe saturation guardrail** t
 
 ## Analysis Algorithm
 
-### Step 1: Identify Non-Saturated Replicas
+### Identify Non-Saturated Replicas
 
 A replica is **non-saturated** if:
 ```
@@ -80,7 +80,7 @@ kv_cache_usage < kvCacheThreshold AND queue_length < queueLengthThreshold
 - `kvCacheThreshold`: 0.80 (80%)
 - `queueLengthThreshold`: 5
 
-### Step 2: Calculate Spare Capacity
+### Calculate Spare Capacity
 
 For each non-saturated replica:
 ```
@@ -88,7 +88,7 @@ spare_kv_i = kvCacheThreshold - kv_cache_usage_i
 spare_queue_i = queueLengthThreshold - queue_length_i
 ```
 
-### Step 3: Average Spare Capacity
+### Average Spare Capacity
 
 Across all non-saturated replicas:
 ```
@@ -96,7 +96,7 @@ avg_spare_kv = Σ spare_kv_i / N_non_sat
 avg_spare_queue = Σ spare_queue_i / N_non_sat
 ```
 
-### Step 4: Scale-Up Decision
+### Scale-Up Decision
 
 Trigger scale-up if:
 ```
@@ -107,7 +107,7 @@ avg_spare_kv < kvSpareTrigger OR avg_spare_queue < queueSpareTrigger
 - `kvSpareTrigger`: 0.1 (10%)
 - `queueSpareTrigger`: 3
 
-### Step 5: Scale-Down Safety Simulation
+### Scale-Down Safety Simulation
 
 Before allowing scale-down, simulate total load redistribution across remaining replicas:
 
@@ -302,7 +302,7 @@ T+90s: All 5 pods now ready, but we have 3 extra replicas (over-provisioned)
 **How It Works:**
 1. **Replica State Tracking**: Controller maintains `VariantReplicaState` with:
    - `CurrentReplicas`: Total pods (from Deployment)
-   - `DesiredReplicas`: Target from previous optimizer run (from CRD status)
+   - `DesiredReplicas`: Target from previous run (from CRD status)
    - `PendingReplicas`: Pods that exist but aren't ready (`CurrentReplicas - ReadyReplicas`)
 
 2. **Scale-Up Selection**: When saturation triggers scale-up:
@@ -310,7 +310,7 @@ T+90s: All 5 pods now ready, but we have 3 extra replicas (over-provisioned)
    // Pseudo-code from internal/saturation/analyzer.go
    for each variant:
        if variant has preserved desired replicas:
-           skip  // Already has optimizer guidance
+           skip  // Already has decision from previous run
        if variant.PendingReplicas > 0:
            skip  // Wait for pending pods to become ready
        if variant.Cost < cheapest.Cost:
