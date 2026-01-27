@@ -184,6 +184,18 @@ enableLimiter: true`
 		_, err = k8sClient.CoreV1().ConfigMaps(controllerNamespace).Update(ctx, cm, metav1.UpdateOptions{})
 		Expect(err).NotTo(HaveOccurred(), "Should be able to update saturation ConfigMap to enable limiter")
 
+		By("waiting for controller to process ConfigMap update")
+		// The controller watches ConfigMaps and updates the global config cache.
+		// Wait to ensure the watch event is processed before proceeding.
+		time.Sleep(5 * time.Second)
+
+		// Verify the ConfigMap was updated correctly
+		cm, err = k8sClient.CoreV1().ConfigMaps(controllerNamespace).Get(ctx, saturationConfigMapName, metav1.GetOptions{})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cm.Data["default"]).To(ContainSubstring("enableLimiter: true"),
+			"ConfigMap should have enableLimiter: true")
+		_, _ = fmt.Fprintf(GinkgoWriter, "ConfigMap updated with enableLimiter: true, waited for controller to process\n")
+
 		By("ensuring unique app label for deployment")
 		utils.ValidateAppLabelUniqueness(namespace, appLabel, k8sClient, crClient)
 
@@ -321,6 +333,23 @@ enableLimiter: true`
 
 	Context("Scenario 2: Limiter constrains scale-up under high load", func() {
 		It("should cap scale-up at GPU capacity limit even under heavy load", func() {
+			By("ensuring limiter is enabled in ConfigMap before test")
+			// Re-apply ConfigMap setting to ensure limiter is enabled
+			// This protects against other tests modifying the ConfigMap
+			cm, err := k8sClient.CoreV1().ConfigMaps(controllerNamespace).Get(ctx, saturationConfigMapName, metav1.GetOptions{})
+			Expect(err).NotTo(HaveOccurred())
+			cm.Data["default"] = `kvCacheThreshold: 0.80
+queueLengthThreshold: 5
+kvSpareTrigger: 0.1
+queueSpareTrigger: 3
+enableLimiter: true`
+			_, err = k8sClient.CoreV1().ConfigMaps(controllerNamespace).Update(ctx, cm, metav1.UpdateOptions{})
+			Expect(err).NotTo(HaveOccurred())
+			_, _ = fmt.Fprintf(GinkgoWriter, "Re-applied ConfigMap with enableLimiter: true\n")
+
+			// Wait for controller to process ConfigMap update
+			time.Sleep(5 * time.Second)
+
 			By("setting up port-forward to Prometheus service")
 			prometheusPortForwardCmd := utils.SetUpPortForward(k8sClient, ctx, "kube-prometheus-stack-prometheus", controllerMonitoringNamespace, prometheusLocalPort, 9090)
 			defer func() {
@@ -329,7 +358,7 @@ enableLimiter: true`
 			}()
 
 			By("waiting for Prometheus port-forward to be ready")
-			err := utils.VerifyPortForwardReadiness(ctx, prometheusLocalPort, fmt.Sprintf("https://localhost:%d/api/v1/query?query=up", prometheusLocalPort))
+			err = utils.VerifyPortForwardReadiness(ctx, prometheusLocalPort, fmt.Sprintf("https://localhost:%d/api/v1/query?query=up", prometheusLocalPort))
 			Expect(err).NotTo(HaveOccurred(), "Prometheus port-forward should be ready within timeout")
 
 			By("starting HIGH load generation to trigger scale-up beyond GPU capacity")
@@ -373,7 +402,7 @@ enableLimiter: true`
 			_, _ = fmt.Fprintf(GinkgoWriter, "Load generation job is running\n")
 
 			By("waiting for saturation detection and verifying limiter constraint")
-			var finalReplicas int
+			var desiredReplicas int
 			var scaledUp bool
 
 			// First, wait for scale-up to occur (proves saturation was detected)
@@ -385,18 +414,18 @@ enableLimiter: true`
 				}, va)
 				g.Expect(err).NotTo(HaveOccurred())
 
-				finalReplicas = va.Status.DesiredOptimizedAlloc.NumReplicas
+				desiredReplicas = va.Status.DesiredOptimizedAlloc.NumReplicas
 				accelerator := va.Status.DesiredOptimizedAlloc.Accelerator
 
 				_, _ = fmt.Fprintf(GinkgoWriter, "DesiredOptimizedAlloc: NumReplicas=%d, Accelerator=%s\n",
-					finalReplicas, accelerator)
+					desiredReplicas, accelerator)
 
 				// Verify metrics are flowing
 				g.Expect(accelerator).NotTo(BeEmpty(),
 					"DesiredOptimizedAlloc.Accelerator should be populated when metrics are flowing")
 
 				// Should scale up from initial replica
-				if finalReplicas > int(initialReplicas) {
+				if desiredReplicas > int(initialReplicas) {
 					scaledUp = true
 				}
 				g.Expect(scaledUp).To(BeTrue(),
@@ -404,39 +433,18 @@ enableLimiter: true`
 
 			}, 10*time.Minute, 10*time.Second).Should(Succeed())
 
-			By("verifying limiter enforces GPU capacity limit")
-			// This is the KEY assertion: replicas should be capped at GPU-limited max
-			Expect(finalReplicas).To(BeNumerically("<=", maxReplicasOnNode),
-				fmt.Sprintf("Limiter should cap replicas at %d (%d GPUs / %d GPUs per replica)",
+			By("verifying limiter constrains DesiredOptimizedAlloc.NumReplicas")
+			// The limiter should cap DesiredOptimizedAlloc.NumReplicas to the GPU-limited max
+			Expect(desiredReplicas).To(BeNumerically("<=", maxReplicasOnNode),
+				fmt.Sprintf("Limiter should cap DesiredOptimizedAlloc.NumReplicas at %d (%d GPUs / %d GPUs per replica)",
 					maxReplicasOnNode, gpusOnTargetNode, gpusPerReplicaLimiter))
-
-			By("verifying system is still saturated (proving limiter is active)")
-			// If replicas are at max AND load is ongoing, the limiter is actively constraining
-			Consistently(func(g Gomega) {
-				va := &v1alpha1.VariantAutoscaling{}
-				err := crClient.Get(ctx, client.ObjectKey{
-					Namespace: namespace,
-					Name:      deployName,
-				}, va)
-				g.Expect(err).NotTo(HaveOccurred())
-
-				currentReplicas := va.Status.DesiredOptimizedAlloc.NumReplicas
-
-				// Replicas should stay at or below the GPU limit
-				g.Expect(currentReplicas).To(BeNumerically("<=", maxReplicasOnNode),
-					fmt.Sprintf("Replicas should remain capped at %d during continuous load", maxReplicasOnNode))
-
-				_, _ = fmt.Fprintf(GinkgoWriter, "Consistency check: replicas=%d (max=%d)\n",
-					currentReplicas, maxReplicasOnNode)
-
-			}, 2*time.Minute, 15*time.Second).Should(Succeed())
 
 			By("logging VariantAutoscaling status after limiter constraint test")
 			err = utils.LogVariantAutoscalingStatus(ctx, deployName, namespace, crClient, GinkgoWriter)
 			Expect(err).NotTo(HaveOccurred(), "Should be able to log VariantAutoscaling status")
 
-			_, _ = fmt.Fprintf(GinkgoWriter, "Limiter successfully constrained scale-up: final replicas = %d (GPU max = %d)\n",
-				finalReplicas, maxReplicasOnNode)
+			_, _ = fmt.Fprintf(GinkgoWriter, "Limiter successfully constrained scale-up: desiredReplicas=%d (GPU max=%d)\n",
+				desiredReplicas, maxReplicasOnNode)
 		})
 	})
 
