@@ -119,7 +119,7 @@ For complete field documentation, see the [CRD Reference](crd-reference.md).
 
 ## Operating Mode
 
-WVA operates in **saturation mode**, which is the default and recommended for production.
+WVA operates in **saturation mode**.
 
 ### Saturation Mode
 
