@@ -28,7 +28,7 @@ const (
 	minRequiredGPUsPerType = 4
 
 	// Higher load rate to ensure saturation requests scale beyond GPU limits
-	limiterLoadRatePerSecond = 15 // Higher than regular saturation test
+	limiterLoadRatePerSecond = 30 // 2x higher to ensure saturation triggers scale-up
 	limiterInputTokens       = 128
 	limiterOutputTokens      = 128
 	limiterMaxExecutionTime  = 600
