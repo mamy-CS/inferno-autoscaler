@@ -268,6 +268,9 @@ jobs:
     needs: gate
     # Only run this check if gate allows the workflow to proceed
     if: needs.gate.outputs.should_run == 'true'
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       has_code_changes: ${{ steps.filter.outputs.code }}
     steps:

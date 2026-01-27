@@ -10,6 +10,8 @@ jobs:
   # Check if PR contains code changes (not just docs/metadata)
   check-code-changes:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       has_code_changes: ${{ steps.filter.outputs.code }}
     steps:
