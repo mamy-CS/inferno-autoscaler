@@ -36,7 +36,6 @@ Understanding how WVA works:
 
 - **[Modeling & Optimization](design/modeling-optimization.md)** - Queue theory models and optimization algorithms
 - **[Controller Behavior](design/controller-behavior.md)** - Event handling and reconciliation behavior
-- **[Architecture Limitations](design/architecture-limitations.md)** - **Important:** Model architecture assumptions and limitations (READ THIS if using HSSM, MoE, or non-standard architectures)
 - **[Architecture Diagrams](design/diagrams/)** - System architecture and workflows
 
 ### Developer Guide
