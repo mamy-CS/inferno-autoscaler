@@ -6,7 +6,7 @@
 The Saturation Analyzer is a **fast, reactive, and safe saturation guardrail** that prevents capacity exhaustion by monitoring live vLLM metrics. It uses a **two-step decision architecture**:
 
 **Step 1: Calculate Capacity Targets** - Pure saturation-based target replicas per variant
-**Step 2: Arbitrate with Model-Based Optimizer** (optional) - Hybrid decision matrix
+**Step 2: Arbitrate with Model-Based Optimizer** (optional) - Arbitration decision matrix
 
 **Key Features:**
 - ✅ Operates from live vLLM metrics (no offline profiling required)
@@ -74,7 +74,7 @@ The Saturation Analyzer is a **fast, reactive, and safe saturation guardrail** t
    ↓                        ↓
 ┌──────────────────────────────────┐
 │ STEP 2: ArbitrateWithModelBased  │  ← ModelBased Targets: map[variantName]targetReplicas
-│ - Hybrid decision matrix         │
+│ - Arbitration decision matrix    │
 │ - Capacity safety overrides      │
 └────────┬─────────────────────────┘
          │ VariantDecision[] (one per variant)
@@ -185,7 +185,7 @@ Note: v2-a100 has 4 current replicas but only 3 are ready (reporting metrics).
 
 `ArbitrateWithModelBased(capacityAnalysis, capacityTargets, modelBasedTargets, variantStates) → []VariantDecision`
 
-Only runs when model-based optimizer provides per-variant targets. Applies hybrid decision matrix:
+Only runs when model-based optimizer provides per-variant targets. Applies arbitration decision matrix:
 
 | Capacity Target | Model-Based Target | Final Decision | Reason |
 |----------------|-------------------|----------------|--------|
@@ -576,7 +576,7 @@ The saturation analyzer is integrated into the controller's reconciliation loop 
 
 5. **STEP 2: Arbitrate with model-based optimizer** (if available)
    - Get model-based targets from optimizer: `map[variantName]targetReplicas`
-   - Call `ArbitrateWithModelBased` to apply hybrid decision matrix
+   - Call `ArbitrateWithModelBased` to apply arbitration decision matrix
    - Returns `[]VariantDecision` with safety overrides applied
 
 6. **Apply final decisions** per variant
