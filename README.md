@@ -80,7 +80,6 @@ See the [Installation Guide](docs/user-guide/installation.md) for detailed instr
 
 ### Design & Architecture
 - [Architecture Overview](docs/design/modeling-optimization.md)
-- [**Architecture Limitations**](docs/design/architecture-limitations.md) - **Important:** Read this if using HSSM, MoE, or non-standard architectures
 - [Architecture Diagrams](docs/design/diagrams/) - Visual architecture and workflow diagrams
 -->
 <!-- 

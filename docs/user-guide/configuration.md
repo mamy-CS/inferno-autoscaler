@@ -2,15 +2,6 @@
 
 This guide explains how to configure Workload-Variant-Autoscaler for your workloads.
 
-> **Important: Architecture Limitations**
-> 
-> WVA's performance model is designed and calibrated for **dense transformer architectures**. If you are using:
-> - **Hybrid State Space Models (HSSM)**
-> - **Mixture of Experts (MoE)** - e.g., Mixtral, DeepSeek MoE variants
-> - **Other optimized/custom architectures**
-> 
-> Please read the [Architecture Limitations documentation](../design/architecture-limitations.md) to understand how these models may behave differently and what additional considerations are needed.
-
 ## Deployment Lifecycle Management
 
 ### Creating VariantAutoscaling Resources
