@@ -283,8 +283,8 @@ retention_period: %s`, modelName, retentionPeriodShort),
 				namespace,
 				fmt.Sprintf("http://%s:%d", gatewayName, 80),
 				modelName,
-				loadRatePerSecond,
-				maxExecutionTimeSec,
+				5,  // Reduced rate (was loadRatePerSecond=8)
+				10, // Drastically reduced duration to prevent queue backlog (was 60s)
 				inputTokens,
 				outputTokens,
 				k8sClient,
