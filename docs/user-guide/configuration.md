@@ -119,9 +119,9 @@ For complete field documentation, see the [CRD Reference](crd-reference.md).
 
 ## Operating Mode
 
-WVA operates in **CAPACITY-ONLY mode**, which is the default and recommended for production.
+WVA operates in **saturation mode**, which is the default and recommended for production.
 
-### CAPACITY-ONLY Mode
+### Saturation Mode
 
 - **Behavior**: Reactive scaling based on saturation detection
 - **How It Works**: Monitors KV cache usage and queue lengths, scales when thresholds exceeded

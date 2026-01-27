@@ -27,7 +27,7 @@ The Saturation Analyzer is a **fast, reactive, and safe saturation guardrail** t
 - Implements spare capacity calculations
 - Performs worst-case scale-down safety simulation
 - Makes **per-variant** scaling decisions with cost-awareness
-- Supports capacity-only mode with optional model-based optimization
+- Supports saturation mode with optional model-based optimization
 
 **2. Metrics Collector (`internal/collector/capacity_metrics.go`)**
 - Collects vLLM metrics from Prometheus using `max_over_time[1m]` queries
@@ -356,7 +356,7 @@ for _, va := range analysis.VariantAnalyses {
 // → variant-2 (H100) will be scaled up (cheaper at $15 vs $20)
 // → Target = readyReplicas + 1 (prevents excessive scale-up for not-yet-ready pods)
 //
-// If capacity allows scale-down in capacity-only mode:
+// If capacity allows scale-down in saturation mode:
 // → variant-1 (A100) will be scaled down (more expensive at $20)
 ```
 
