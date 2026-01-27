@@ -294,19 +294,23 @@ jobs:
             PR_NUM="${{ needs.gate.outputs.pr_number }}"
             if [ -n "$PR_NUM" ] && [ "$PR_NUM" != "" ]; then
               # Fetch PR details to get the base branch
-              if BASE_REF=$(gh pr view "$PR_NUM" --json baseRefName --jq '.baseRefName' 2>&1); then
+              if BASE_REF=$(gh pr view "$PR_NUM" --json baseRefName --jq '.baseRefName'); then
                 echo "Detected base branch: $BASE_REF"
-                if ! git fetch origin "$BASE_REF:$BASE_REF" 2>&1; then
-                  echo "Warning: Failed to fetch branch $BASE_REF, using origin/$BASE_REF reference"
+                if git fetch origin "$BASE_REF:$BASE_REF" 2>&1; then
+                  echo "Successfully fetched branch $BASE_REF"
+                else
+                  echo "Warning: Failed to fetch branch $BASE_REF, will use origin/$BASE_REF reference"
                 fi
                 echo "base=origin/$BASE_REF" >> $GITHUB_OUTPUT
               else
-                echo "Warning: Failed to fetch PR details for PR #$PR_NUM: $BASE_REF"
+                echo "Warning: Failed to fetch PR details for PR #$PR_NUM"
                 # Fallback to default branch
                 DEFAULT_BRANCH=$(gh repo view --json defaultBranchRef --jq '.defaultBranchRef.name')
                 echo "Using default branch: $DEFAULT_BRANCH"
-                if ! git fetch origin "$DEFAULT_BRANCH:$DEFAULT_BRANCH" 2>&1; then
-                  echo "Warning: Failed to fetch default branch $DEFAULT_BRANCH, using origin/$DEFAULT_BRANCH reference"
+                if git fetch origin "$DEFAULT_BRANCH:$DEFAULT_BRANCH" 2>&1; then
+                  echo "Successfully fetched default branch $DEFAULT_BRANCH"
+                else
+                  echo "Warning: Failed to fetch default branch $DEFAULT_BRANCH, will use origin/$DEFAULT_BRANCH reference"
                 fi
                 echo "base=origin/$DEFAULT_BRANCH" >> $GITHUB_OUTPUT
               fi
@@ -315,8 +319,10 @@ jobs:
               # Fallback: use repository default branch
               DEFAULT_BRANCH=$(gh repo view --json defaultBranchRef --jq '.defaultBranchRef.name')
               echo "Using default branch: $DEFAULT_BRANCH"
-              if ! git fetch origin "$DEFAULT_BRANCH:$DEFAULT_BRANCH" 2>&1; then
-                echo "Warning: Failed to fetch default branch $DEFAULT_BRANCH, using origin/$DEFAULT_BRANCH reference"
+              if git fetch origin "$DEFAULT_BRANCH:$DEFAULT_BRANCH" 2>&1; then
+                echo "Successfully fetched default branch $DEFAULT_BRANCH"
+              else
+                echo "Warning: Failed to fetch default branch $DEFAULT_BRANCH, will use origin/$DEFAULT_BRANCH reference"
               fi
               echo "base=origin/$DEFAULT_BRANCH" >> $GITHUB_OUTPUT
             fi
