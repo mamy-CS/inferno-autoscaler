@@ -423,10 +423,16 @@ func main() {
 	// +kubebuilder:scaffold:builder
 
 	// Create InferencePool reconciler
+	poolGroupEnv := os.Getenv("POOL_GROUP")
+	poolGKNN, err := poolutil.GetPoolGKNN(poolGroupEnv)
+	if err != nil {
+		setupLog.Error(err, "unable to create default pool GKNN from POOL_GROUP", "poolGroup", poolGroupEnv)
+		os.Exit(1)
+	}
 	inferencePoolReconciler := &controller.InferencePoolReconciler{
 		Datastore: ds,
 		Client:    mgr.GetClient(),
-		PoolGKNN:  poolutil.DefaultPoolGKNN(),
+		PoolGKNN:  poolGKNN,
 	}
 
 	if err = inferencePoolReconciler.SetupWithManager(mgr); err != nil {
