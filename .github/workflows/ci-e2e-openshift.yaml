@@ -261,13 +261,43 @@ jobs:
               }
             }
 
+  # Check if PR contains code changes (not just docs/metadata)
+  # Skip e2e tests if only docs/metadata files are changed
+  check-code-changes:
+    runs-on: ubuntu-latest
+    needs: gate
+    # Only run this check if gate allows the workflow to proceed
+    if: needs.gate.outputs.should_run == 'true'
+    outputs:
+      has_code_changes: ${{ steps.filter.outputs.code }}
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          # Use PR head SHA from gate (works for both pull_request and issue_comment)
+          ref: ${{ needs.gate.outputs.pr_head_sha }}
+      
+      - name: Check for code changes
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            code:
+              - '!docs/**'
+              - '!README.md'
+              - '!CONTRIBUTING.md'
+              - '!LICENSE'
+              - '!OWNERS'
+              - '!PROJECT'
+
   # Build the WVA controller image on GitHub-hosted runner (has proper Docker setup)
   # Note: Skip for fork PRs on pull_request event (no secrets access).
   # For fork PRs, build-image runs via issue_comment trigger (/ok-to-test).
   build-image:
-    needs: gate
+    needs: [gate, check-code-changes]
     if: |
       needs.gate.outputs.should_run == 'true' &&
+      needs.check-code-changes.outputs.has_code_changes == 'true' &&
       (needs.gate.outputs.is_fork_pr != 'true' || github.event_name != 'pull_request')
     runs-on: ubuntu-latest
     outputs:
@@ -311,8 +341,10 @@ jobs:
   # Run e2e tests on OpenShift self-hosted runner
   e2e-openshift:
     runs-on: [self-hosted, openshift]
-    needs: [gate, build-image]
-    if: needs.gate.outputs.should_run == 'true'
+    needs: [gate, build-image, check-code-changes]
+    if: |
+      needs.gate.outputs.should_run == 'true' &&
+      needs.check-code-changes.outputs.has_code_changes == 'true'
     env:
       MODEL_ID: ${{ github.event.inputs.model_id || 'unsloth/Meta-Llama-3.1-8B' }}
       ACCELERATOR_TYPE: ${{ github.event.inputs.accelerator_type || 'A100' }}
