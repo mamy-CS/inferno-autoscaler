@@ -261,97 +261,13 @@ jobs:
               }
             }
 
-  # Check if PR contains code changes (not just docs/metadata)
-  # Skip e2e tests if only docs/metadata files are changed
-  check-code-changes:
-    runs-on: ubuntu-latest
-    needs: gate
-    # Only run this check if gate allows the workflow to proceed
-    if: needs.gate.outputs.should_run == 'true'
-    permissions:
-      contents: read
-      pull-requests: read
-    outputs:
-      has_code_changes: ${{ steps.filter.outputs.code }}
-    steps:
-      - name: Checkout source
-        uses: actions/checkout@v4
-        with:
-          # Use PR head SHA from gate (works for both pull_request and issue_comment)
-          ref: ${{ needs.gate.outputs.pr_head_sha }}
-          # Fetch enough history to get the base branch
-          fetch-depth: 0
-      
-      - name: Get base ref
-        id: get-base
-        run: |
-          # For pull_request event, get base ref from event
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            echo "base=${{ github.event.pull_request.base.sha }}" >> $GITHUB_OUTPUT
-          else
-            # For issue_comment event (e.g., /ok-to-test), fetch PR details to get base branch
-            # PR number comes from gate job output
-            PR_NUM="${{ needs.gate.outputs.pr_number }}"
-            if [ -n "$PR_NUM" ] && [ "$PR_NUM" != "" ]; then
-              # Fetch PR details to get the base branch
-              if BASE_REF=$(gh pr view "$PR_NUM" --json baseRefName --jq '.baseRefName'); then
-                echo "Detected base branch: $BASE_REF"
-                if git fetch origin "$BASE_REF:$BASE_REF" 2>&1; then
-                  echo "Successfully fetched branch $BASE_REF"
-                else
-                  echo "Warning: Failed to fetch branch $BASE_REF, will use origin/$BASE_REF reference"
-                fi
-                echo "base=origin/$BASE_REF" >> $GITHUB_OUTPUT
-              else
-                echo "Warning: Failed to fetch PR details for PR #$PR_NUM"
-                # Fallback to default branch
-                DEFAULT_BRANCH=$(gh repo view --json defaultBranchRef --jq '.defaultBranchRef.name')
-                echo "Using default branch: $DEFAULT_BRANCH"
-                if git fetch origin "$DEFAULT_BRANCH:$DEFAULT_BRANCH" 2>&1; then
-                  echo "Successfully fetched default branch $DEFAULT_BRANCH"
-                else
-                  echo "Warning: Failed to fetch default branch $DEFAULT_BRANCH, will use origin/$DEFAULT_BRANCH reference"
-                fi
-                echo "base=origin/$DEFAULT_BRANCH" >> $GITHUB_OUTPUT
-              fi
-            else
-              echo "Warning: PR number is empty or not available"
-              # Fallback: use repository default branch
-              DEFAULT_BRANCH=$(gh repo view --json defaultBranchRef --jq '.defaultBranchRef.name')
-              echo "Using default branch: $DEFAULT_BRANCH"
-              if git fetch origin "$DEFAULT_BRANCH:$DEFAULT_BRANCH" 2>&1; then
-                echo "Successfully fetched default branch $DEFAULT_BRANCH"
-              else
-                echo "Warning: Failed to fetch default branch $DEFAULT_BRANCH, will use origin/$DEFAULT_BRANCH reference"
-              fi
-              echo "base=origin/$DEFAULT_BRANCH" >> $GITHUB_OUTPUT
-            fi
-          fi
-        env:
-          GH_TOKEN: ${{ github.token }}
-      
-      - name: Check for code changes
-        uses: dorny/paths-filter@v3
-        id: filter
-        with:
-          base: ${{ steps.get-base.outputs.base }}
-          filters: |
-            code:
-              - '!docs/**'
-              - '!README.md'
-              - '!CONTRIBUTING.md'
-              - '!LICENSE'
-              - '!OWNERS'
-              - '!PROJECT'
-
   # Build the WVA controller image on GitHub-hosted runner (has proper Docker setup)
   # Note: Skip for fork PRs on pull_request event (no secrets access).
   # For fork PRs, build-image runs via issue_comment trigger (/ok-to-test).
   build-image:
-    needs: [gate, check-code-changes]
+    needs: gate
     if: |
       needs.gate.outputs.should_run == 'true' &&
-      needs.check-code-changes.outputs.has_code_changes == 'true' &&
       (needs.gate.outputs.is_fork_pr != 'true' || github.event_name != 'pull_request')
     runs-on: ubuntu-latest
     outputs:
@@ -395,10 +311,8 @@ jobs:
   # Run e2e tests on OpenShift self-hosted runner
   e2e-openshift:
     runs-on: [self-hosted, openshift]
-    needs: [gate, build-image, check-code-changes]
-    if: |
-      needs.gate.outputs.should_run == 'true' &&
-      needs.check-code-changes.outputs.has_code_changes == 'true'
+    needs: [gate, build-image]
+    if: needs.gate.outputs.should_run == 'true'
     env:
       MODEL_ID: ${{ github.event.inputs.model_id || 'unsloth/Meta-Llama-3.1-8B' }}
       ACCELERATOR_TYPE: ${{ github.event.inputs.accelerator_type || 'A100' }}
