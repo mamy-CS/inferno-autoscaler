@@ -292,17 +292,32 @@ jobs:
             # For issue_comment event (e.g., /ok-to-test), fetch PR details to get base branch
             # PR number comes from gate job output
             PR_NUM="${{ needs.gate.outputs.pr_number }}"
-            if [ -n "$PR_NUM" ]; then
+            if [ -n "$PR_NUM" ] && [ "$PR_NUM" != "" ]; then
               # Fetch PR details to get the base branch
-              BASE_REF=$(gh pr view "$PR_NUM" --json baseRefName --jq '.baseRefName')
-              echo "Detected base branch: $BASE_REF"
-              git fetch origin "$BASE_REF:$BASE_REF" 2>/dev/null || true
-              echo "base=origin/$BASE_REF" >> $GITHUB_OUTPUT
+              if BASE_REF=$(gh pr view "$PR_NUM" --json baseRefName --jq '.baseRefName' 2>&1); then
+                echo "Detected base branch: $BASE_REF"
+                if ! git fetch origin "$BASE_REF:$BASE_REF" 2>&1; then
+                  echo "Warning: Failed to fetch branch $BASE_REF, using origin/$BASE_REF reference"
+                fi
+                echo "base=origin/$BASE_REF" >> $GITHUB_OUTPUT
+              else
+                echo "Warning: Failed to fetch PR details for PR #$PR_NUM: $BASE_REF"
+                # Fallback to default branch
+                DEFAULT_BRANCH=$(gh repo view --json defaultBranchRef --jq '.defaultBranchRef.name')
+                echo "Using default branch: $DEFAULT_BRANCH"
+                if ! git fetch origin "$DEFAULT_BRANCH:$DEFAULT_BRANCH" 2>&1; then
+                  echo "Warning: Failed to fetch default branch $DEFAULT_BRANCH, using origin/$DEFAULT_BRANCH reference"
+                fi
+                echo "base=origin/$DEFAULT_BRANCH" >> $GITHUB_OUTPUT
+              fi
             else
+              echo "Warning: PR number is empty or not available"
               # Fallback: use repository default branch
               DEFAULT_BRANCH=$(gh repo view --json defaultBranchRef --jq '.defaultBranchRef.name')
               echo "Using default branch: $DEFAULT_BRANCH"
-              git fetch origin "$DEFAULT_BRANCH:$DEFAULT_BRANCH" 2>/dev/null || true
+              if ! git fetch origin "$DEFAULT_BRANCH:$DEFAULT_BRANCH" 2>&1; then
+                echo "Warning: Failed to fetch default branch $DEFAULT_BRANCH, using origin/$DEFAULT_BRANCH reference"
+              fi
               echo "base=origin/$DEFAULT_BRANCH" >> $GITHUB_OUTPUT
             fi
           fi
