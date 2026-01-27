@@ -276,11 +276,30 @@ jobs:
         with:
           # Use PR head SHA from gate (works for both pull_request and issue_comment)
           ref: ${{ needs.gate.outputs.pr_head_sha }}
+          # Fetch enough history to get the base branch
+          fetch-depth: 0
+      
+      - name: Get base ref
+        id: get-base
+        run: |
+          # For pull_request event, get base ref from event
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "base=${{ github.event.pull_request.base.sha }}" >> $GITHUB_OUTPUT
+          else
+            # For issue_comment event, determine base from target branch
+            # The gate job should have validated this is a PR
+            # Default to main if we can't determine
+            git fetch origin main:main 2>/dev/null || true
+            git fetch origin dev:dev 2>/dev/null || true
+            # Use main as base (adjust if your default branch is different)
+            echo "base=origin/main" >> $GITHUB_OUTPUT
+          fi
       
       - name: Check for code changes
         uses: dorny/paths-filter@v3
         id: filter
         with:
+          base: ${{ steps.get-base.outputs.base }}
           filters: |
             code:
               - '!docs/**'
