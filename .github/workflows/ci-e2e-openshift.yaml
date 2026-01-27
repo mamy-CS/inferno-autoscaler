@@ -286,14 +286,25 @@ jobs:
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             echo "base=${{ github.event.pull_request.base.sha }}" >> $GITHUB_OUTPUT
           else
-            # For issue_comment event, determine base from target branch
-            # The gate job should have validated this is a PR
-            # Default to main if we can't determine
-            git fetch origin main:main 2>/dev/null || true
-            git fetch origin dev:dev 2>/dev/null || true
-            # Use main as base (adjust if your default branch is different)
-            echo "base=origin/main" >> $GITHUB_OUTPUT
+            # For issue_comment event (e.g., /ok-to-test), fetch PR details to get base branch
+            # PR number comes from gate job output
+            PR_NUM="${{ needs.gate.outputs.pr_number }}"
+            if [ -n "$PR_NUM" ]; then
+              # Fetch PR details to get the base branch
+              BASE_REF=$(gh pr view "$PR_NUM" --json baseRefName --jq '.baseRefName')
+              echo "Detected base branch: $BASE_REF"
+              git fetch origin "$BASE_REF:$BASE_REF" 2>/dev/null || true
+              echo "base=origin/$BASE_REF" >> $GITHUB_OUTPUT
+            else
+              # Fallback: use repository default branch
+              DEFAULT_BRANCH=$(gh repo view --json defaultBranchRef --jq '.defaultBranchRef.name')
+              echo "Using default branch: $DEFAULT_BRANCH"
+              git fetch origin "$DEFAULT_BRANCH:$DEFAULT_BRANCH" 2>/dev/null || true
+              echo "base=origin/$DEFAULT_BRANCH" >> $GITHUB_OUTPUT
+            fi
           fi
+        env:
+          GH_TOKEN: ${{ github.token }}
       
       - name: Check for code changes
         uses: dorny/paths-filter@v3
