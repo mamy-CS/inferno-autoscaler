@@ -780,7 +780,7 @@ deploy_llm_d_infrastructure() {
         # Patch llm-d-inference-scheduler to enable flowcontrol and use new image
         log_info "Patching llm-d-inference-scheduler deployment to enable flowcontrol and use a new image"
         if kubectl get deployment "$LLM_D_EPP_NAME" -n "$LLMD_NS" &> /dev/null; then
-            kubectl patch deployment $LLM_D_EPP_NAME -n $LLMD_NS --type='json' -p='[
+            kubectl patch deployment "$LLM_D_EPP_NAME" -n "$LLMD_NS" --type='json' -p='[
                 {
                     "op": "replace",
                     "path": "/spec/template/spec/containers/0/image",
