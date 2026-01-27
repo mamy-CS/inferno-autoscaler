@@ -27,7 +27,7 @@ The Saturation Analyzer is a **fast, reactive, and safe saturation guardrail** t
 - Implements spare capacity calculations
 - Performs worst-case scale-down safety simulation
 - Makes **per-variant** scaling decisions with cost-awareness
-- Supports capacity-only mode and hybrid mode with model-based optimization
+- Supports capacity-only mode with optional model-based optimization
 
 **2. Metrics Collector (`internal/collector/capacity_metrics.go`)**
 - Collects vLLM metrics from Prometheus using `max_over_time[1m]` queries
@@ -269,7 +269,7 @@ for variantName, target := range capacityTargets {
 }
 ```
 
-### Step 1 + Step 2: Hybrid Mode (With Model-Based Optimizer)
+### Step 1 + Step 2: With Model-Based Optimizer
 
 ```go
 // === STEP 1: Calculate saturation-based targets ===
@@ -411,7 +411,7 @@ T+90s: variant-1 pod becomes ready (PendingReplicas=0), now eligible for scale-u
 - ✅ Prevents excessive scale-up during model loading periods (2-7 minutes)
 - ✅ Reduces infrastructure costs by avoiding over-provisioning
 - ✅ Maintains cost-optimized scaling across multiple variants
-- ✅ Works with both saturation-only and hybrid (model-based + saturation) modes
+- ✅ Works with saturation-only mode and with optional model-based optimization
 
 **Note:** Scale-down operations are not affected by pending replicas, as removing capacity is always safe when replicas are starting up.
 
