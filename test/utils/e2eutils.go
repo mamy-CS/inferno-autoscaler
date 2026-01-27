@@ -283,7 +283,7 @@ func IsCertManagerCRDsInstalled() bool {
 
 // LoadImageToKindClusterWithName loads a local docker image to the kind cluster
 func LoadImageToKindClusterWithName(name string, maxGPUs int) error {
-	cluster, err := CheckIfClusterExistsOrCreate(maxGPUs)
+	cluster, err := CheckIfClusterExistsOrCreate(maxGPUs, "mix")
 	if err != nil {
 		return err
 	}
@@ -293,7 +293,7 @@ func LoadImageToKindClusterWithName(name string, maxGPUs int) error {
 	return err
 }
 
-func CheckIfClusterExistsOrCreate(maxGPUs int) (string, error) {
+func CheckIfClusterExistsOrCreate(maxGPUs int, gpuType string) (string, error) {
 	// Check if the kind cluster exists
 	existsCmd := exec.Command("kind", "get", "clusters")
 	output, err := Run(existsCmd)
@@ -312,7 +312,7 @@ func CheckIfClusterExistsOrCreate(maxGPUs int) (string, error) {
 	// Create the kind cluster if it doesn't exist
 	expectedVersion := os.Getenv("K8S_EXPECTED_VERSION")
 	if !clusterExists {
-		scriptCmd := exec.Command("bash", "deploy/kind-emulator/setup.sh", "-g", fmt.Sprintf("%d", maxGPUs), "K8S_VERSION="+expectedVersion)
+		scriptCmd := exec.Command("bash", "deploy/kind-emulator/setup.sh", "-g", fmt.Sprintf("%d", maxGPUs), "-t", gpuType, "K8S_VERSION="+expectedVersion)
 		if _, err := Run(scriptCmd); err != nil {
 			return "", fmt.Errorf("failed to create kind cluster: %v", err)
 		}
@@ -1240,7 +1240,7 @@ func SetupTestEnvironment(image string, numNodes, gpusPerNode int, gpuTypes stri
 	gom.Expect(os.Setenv("CLUSTER_NAME", clusterName)).To(gom.Succeed())
 	setEnvIfNotSet("CLUSTER_NODES", fmt.Sprintf("%d", numNodes))
 	setEnvIfNotSet("CLUSTER_GPUS", fmt.Sprintf("%d", gpusPerNode))
-	setEnvIfNotSet("CLUSTER_GPU_TYPE", gpuTypes) // Use CLUSTER_GPU_TYPE to match Makefile
+	setEnvIfNotSet("CLUSTER_GPU_TYPE", gpuTypes)                                     // Use CLUSTER_GPU_TYPE to match Makefile
 	gom.Expect(os.Setenv("WVA_IMAGE_PULL_POLICY", "IfNotPresent")).To(gom.Succeed()) // The image is built locally by the tests
 	gom.Expect(os.Setenv("CREATE_CLUSTER", "true")).To(gom.Succeed())                // Always create a new cluster for E2E tests
 

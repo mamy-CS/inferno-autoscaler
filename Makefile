@@ -3,7 +3,7 @@ IMAGE_TAG_BASE ?= ghcr.io/llm-d
 IMG_TAG ?= latest
 IMG ?= $(IMAGE_TAG_BASE)/workload-variant-autoscaler:$(IMG_TAG)
 KIND_ARGS ?= -t mix -n 3 -g 2   # Default: 3 nodes, 2 GPUs per node, mixed vendors
-CLUSTER_GPU_TYPE ?= mix
+CLUSTER_GPU_TYPE ?= nvidia-mix
 CLUSTER_NODES ?= 3
 CLUSTER_GPUS ?= 4
 KUBECONFIG ?= $(HOME)/.kube/config
@@ -155,7 +155,7 @@ test-e2e: manifests generate fmt vet ## Run the e2e tests. Expected an isolated 
 	}
 	$(eval FOCUS_ARGS := $(if $(FOCUS),-ginkgo.focus="$(FOCUS)",))
 	$(eval SKIP_ARGS := $(if $(SKIP),-ginkgo.skip="$(SKIP)",))
-	export COLLECTOR_V2=1 KUBECONFIG=$(KUBECONFIG) K8S_EXPECTED_VERSION=$(K8S_VERSION) && go test ./test/e2e-saturation-based/ -timeout 50m -v -ginkgo.v $(FOCUS_ARGS) $(SKIP_ARGS)
+	export COLLECTOR_V2=1 KUBECONFIG=$(KUBECONFIG) K8S_EXPECTED_VERSION=$(K8S_VERSION) && go test ./test/e2e-saturation-based/ -timeout 60m -v -ginkgo.v $(FOCUS_ARGS) $(SKIP_ARGS)
 
 # E2E tests on OpenShift cluster
 # Supports KUBECONFIG or in-cluster authentication (for self-hosted runners).

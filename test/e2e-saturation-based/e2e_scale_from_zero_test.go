@@ -73,7 +73,7 @@ var _ = Describe("Test workload-variant-autoscaler - Scale-From-Zero Feature", O
 		appLabel = name
 		namespace = llmDNamespace
 		port = 8000
-		modelName = llamaModelId + "-sfz"
+		modelName = llamaModelId
 		gatewayService = "infra-sim-inference-gateway"
 
 		// Start with 0 replicas to test scale-from-zero
