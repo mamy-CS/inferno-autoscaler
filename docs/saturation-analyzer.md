@@ -5,15 +5,13 @@
 
 The Saturation Analyzer is a **fast, reactive, and safe saturation guardrail** that prevents capacity exhaustion by monitoring live vLLM metrics.
 
-**Step 1: Calculate Capacity Targets** - Pure saturation-based target replicas per variant
-
 **Key Features:**
 - ✅ Operates from live vLLM metrics (no offline profiling required)
 - ✅ Detects imminent capacity exhaustion (KV-cache or request queue)
 - ✅ Makes **per-variant** target replica calculations with cost-awareness
 - ✅ Uses ready replicas (those reporting metrics) to avoid excessive scale-up
 - ✅ **Prevents cascade scaling** by blocking scale-up when replicas are pending
-- ✅ Preserves desired replicas from previous runs (in Step 1)
+- ✅ Preserves desired replicas from previous runs
 - ✅ Analyzes capacity across all variants of the same model
 
 ## Architecture
@@ -58,7 +56,7 @@ The Saturation Analyzer is a **fast, reactive, and safe saturation guardrail** t
          │ ModelCapacityAnalysis (with per-variant breakdown)
          ↓
 ┌─────────────────────────────┐
-│ STEP 1: CalculateCapacityTargets  │  ← VariantReplicaState[] (current/desired from CRD)
+│ CalculateCapacityTargets    │  ← VariantReplicaState[] (current/desired from CRD)
 │ - Preserves desired replicas      │
 │ - Cost-aware variant selection    │
 └────────┬──────────────────────────┘
@@ -376,20 +374,13 @@ go test -v
 - ✅ Scale-up trigger conditions
 - ✅ Scale-down safety simulation (total load redistribution)
 - ✅ Multi-variant aggregation
-- ✅ **Step 1: CalculateCapacityTargets**
+- ✅ **CalculateCapacityTargets**
   - ✅ Scale-up cheapest variant
   - ✅ Scale-down most expensive variant
   - ✅ Preserve desired replicas (desired ≠ current)
   - ✅ All variants preserved scenario
   - ✅ Equal costs with deterministic tie-breaking
   - ✅ Scale-down below minimum (prevents scaling to 0)
-- ✅ **Step 2: ArbitrateWithModelBased**
-  - ✅ Capacity veto (capacity wants up, model-based wants down)
-  - ✅ Safety block (model-based wants down, but unsafe)
-  - ✅ Follow model-based (when capacity allows)
-  - ✅ Capacity-driven (capacity needs scale-up)
-  - ✅ Both capacity and model-based agree
-  - ✅ Nil analysis safety
 - ✅ Saturated replica identification
 - ✅ Edge cases (empty metrics, single replica, nil analysis)
 
