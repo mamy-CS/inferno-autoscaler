@@ -245,7 +245,6 @@ spec:
 **Behavior:**
 - Saturation analyzer uses `variantCost` when deciding which variant to scale
 - If costs are equal, chooses variant with most available capacity
-- Does not affect model-based optimization (uses accelerator unit costs)
 
 ### Advanced Options
 

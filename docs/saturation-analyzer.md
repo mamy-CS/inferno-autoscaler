@@ -3,10 +3,9 @@
 
 ## Overview
 
-The Saturation Analyzer is a **fast, reactive, and safe saturation guardrail** that prevents capacity exhaustion by monitoring live vLLM metrics. It uses a **two-step decision architecture**:
+The Saturation Analyzer is a **fast, reactive, and safe saturation guardrail** that prevents capacity exhaustion by monitoring live vLLM metrics.
 
 **Step 1: Calculate Capacity Targets** - Pure saturation-based target replicas per variant
-**Step 2: Arbitrate with Model-Based Optimizer** (optional) - Arbitration decision matrix
 
 **Key Features:**
 - ✅ Operates from live vLLM metrics (no offline profiling required)
@@ -14,8 +13,7 @@ The Saturation Analyzer is a **fast, reactive, and safe saturation guardrail** t
 - ✅ Makes **per-variant** target replica calculations with cost-awareness
 - ✅ Uses ready replicas (those reporting metrics) to avoid excessive scale-up
 - ✅ **Prevents cascade scaling** by blocking scale-up when replicas are pending
-- ✅ Preserves desired replicas from previous optimizer runs (in Step 1)
-- ✅ Arbitrates with model-based optimizer targets (in Step 2) using safety overrides
+- ✅ Preserves desired replicas from previous runs (in Step 1)
 - ✅ Analyzes capacity across all variants of the same model
 
 ## Architecture
@@ -27,7 +25,6 @@ The Saturation Analyzer is a **fast, reactive, and safe saturation guardrail** t
 - Implements spare capacity calculations
 - Performs worst-case scale-down safety simulation
 - Makes **per-variant** scaling decisions with cost-awareness
-- Supports saturation mode with optional model-based optimization
 
 **2. Metrics Collector (`internal/collector/capacity_metrics.go`)**
 - Collects vLLM metrics from Prometheus using `max_over_time[1m]` queries
@@ -66,18 +63,6 @@ The Saturation Analyzer is a **fast, reactive, and safe saturation guardrail** t
 │ - Cost-aware variant selection    │
 └────────┬──────────────────────────┘
          │ Capacity Targets: map[variantName]targetReplicas
-         ↓
-   ┌─────┴──────────────────┐
-   │                        │
-   │ (if model-based        │
-   │  optimizer available)  │
-   ↓                        ↓
-┌──────────────────────────────────┐
-│ STEP 2: ArbitrateWithModelBased  │  ← ModelBased Targets: map[variantName]targetReplicas
-│ - Arbitration decision matrix    │
-│ - Capacity safety overrides      │
-└────────┬─────────────────────────┘
-         │ VariantDecision[] (one per variant)
          ↓
 ┌──────────────────┐
 │    Controller    │
@@ -151,9 +136,9 @@ remaining_spare_queue >= queueSpareTrigger AND
 N_non_sat >= 2
 ```
 
-## Two-Step Decision Logic
+## Decision Logic
 
-### Step 1: Calculate Capacity Targets
+### Calculate Capacity Targets
 
 `CalculateCapacityTargets(capacityAnalysis, variantStates) → map[variantName]targetReplicas`
 
@@ -161,7 +146,7 @@ For each variant, determines target replicas based on **capacity needs only**:
 
 | Condition | Target Replicas | Rationale |
 |-----------|----------------|-----------|
-| **desired ≠ 0 AND desired ≠ current** | target = **desired** | Preserve previous optimizer decision (from CRD status) |
+| **desired ≠ 0 AND desired ≠ current** | target = **desired** | Preserve previous decision (from CRD status) |
 | Capacity needs scale-up | **Cheapest** non-preserved variant: readyReplicas + 1 | Cost-optimized capacity expansion (deterministic: alphabetically first variant on tie) |
 | Capacity allows scale-down | **Most expensive** non-preserved variant: readyReplicas - 1 | Cost-optimized capacity reduction (deterministic: alphabetically last variant on tie) |
 | Otherwise | target = readyReplicas | No capacity action needed |
@@ -170,7 +155,7 @@ For each variant, determines target replicas based on **capacity needs only**:
 
 **Cascade Scaling Prevention:** Variants with pending replicas (pods that exist but are not yet ready) are skipped during scale-up selection. This prevents the controller from repeatedly scaling up the same variant while previous scale-up operations are still in progress. Pod startup can take 2-7 minutes depending on model size and hardware (container initialization, model loading, health checks).
 
-**Example - Step 1 Output:**
+**Example Output:**
 ```
 Model: llama-70b
 Variants:
@@ -181,33 +166,16 @@ Note: v2-a100 has 4 current replicas but only 3 are ready (reporting metrics).
       Target is set to desired=4 because desired ≠ current.
 ```
 
-### Step 2: Arbitrate with Model-Based Optimizer (Optional)
-
-`ArbitrateWithModelBased(capacityAnalysis, capacityTargets, modelBasedTargets, variantStates) → []VariantDecision`
-
-Only runs when model-based optimizer provides per-variant targets. Applies arbitration decision matrix:
-
-| Capacity Target | Model-Based Target | Final Decision | Reason |
-|----------------|-------------------|----------------|--------|
-| Scale-up (4) | Scale-down (2) | **No change** (veto) | Capacity veto: needs more capacity |
-| No change (3) | Scale-down (2) | **No change** (block) if unsafe | Safety block: capacity analysis says unsafe |
-| Scale-up (4) | No change (3) | **Scale-up to 4** | Capacity-driven: model-based doesn't object |
-| No change (3) | Scale-up (5) | **Scale-up to 5** | Model-based-driven: capacity allows |
-| No change (3) | Scale-down (2) | **Scale-down to 2** if safe | Model-based-driven: capacity approved |
-
 **Key Principles:**
-1. **Ready replicas only** (Step 1): Use replicas reporting metrics to avoid scaling up for not-yet-ready pods
-2. **Preserve desired replicas** (Step 1): When desired ≠ current, always use desired as capacity target
-3. **Cost-aware selection** (Step 1): Cheapest variant for scale-up, most expensive for scale-down
-4. **Deterministic tie-breaking** (Step 1): When variants have equal costs, alphabetically first for scale-up, last for scale-down
-5. **Pending replica awareness** (Step 1): Skip variants with pending replicas during scale-up to prevent cascade scaling
-6. **Capacity veto** (Step 2): Capacity needs override model-based scale-down suggestions
-7. **Safety block** (Step 2): Unsafe scale-down blocked regardless of model-based recommendation
-8. **Model-based priority** (Step 2): When capacity allows, follow model-based recommendations
+1. **Ready replicas only**: Use replicas reporting metrics to avoid scaling up for not-yet-ready pods
+2. **Preserve desired replicas**: When desired ≠ current, always use desired as capacity target
+3. **Cost-aware selection**: Cheapest variant for scale-up, most expensive for scale-down
+4. **Deterministic tie-breaking**: When variants have equal costs, alphabetically first for scale-up, last for scale-down
+5. **Pending replica awareness**: Skip variants with pending replicas during scale-up to prevent cascade scaling
 
 ## Usage Examples
 
-### Complete Two-Step Flow
+### Complete Flow
 
 ```go
 import (
@@ -234,11 +202,11 @@ analysis, err := analyzer.AnalyzeModelCapacity(ctx, modelID, namespace, replicaM
 // Build variant states (current replicas from pod count, desired from CRD status)
 // PendingReplicas = CurrentReplicas - ReadyReplicas (pods that exist but aren't ready yet)
 variantStates := []interfaces.VariantReplicaState{
-    {VariantName: "v1-l4", CurrentReplicas: 2, DesiredReplicas: 0, PendingReplicas: 0},    // no previous optimizer run, all ready
-    {VariantName: "v2-a100", CurrentReplicas: 4, DesiredReplicas: 4, PendingReplicas: 1},  // optimizer wanted 4, 1 pod still starting
+    {VariantName: "v1-l4", CurrentReplicas: 2, DesiredReplicas: 0, PendingReplicas: 0},    // no previous run, all ready
+    {VariantName: "v2-a100", CurrentReplicas: 4, DesiredReplicas: 4, PendingReplicas: 1},  // wanted 4, 1 pod still starting
 }
 
-// === STEP 1: Calculate saturation-based targets ===
+// Calculate saturation-based targets
 capacityTargets := analyzer.CalculateCapacityTargets(analysis, variantStates)
 
 log.Printf("Capacity targets: %+v", capacityTargets)
@@ -247,7 +215,7 @@ log.Printf("Capacity targets: %+v", capacityTargets)
 // - v2-a100: preserved at 4 (desired ≠ current)
 ```
 
-### Step 1 Only: Saturation-Based Targets (No Model-Based Optimizer)
+### Applying Saturation-Based Targets
 
 ```go
 // Calculate capacity targets
@@ -265,50 +233,6 @@ for variantName, target := range capacityTargets {
         // Apply scale-down
     } else {
         log.Printf("No change for %s: %d", variantName, target)
-    }
-}
-```
-
-### Step 1 + Step 2: With Model-Based Optimizer
-
-```go
-// === STEP 1: Calculate saturation-based targets ===
-capacityTargets := analyzer.CalculateCapacityTargets(analysis, variantStates)
-
-// === Get model-based optimizer targets (from your optimizer) ===
-modelBasedTargets := map[string]int{
-    "v1-l4":   5,  // optimizer wants to scale up v1-l4
-    "v2-a100": 2,  // optimizer wants to scale down v2-a100
-}
-
-// === STEP 2: Arbitrate between capacity and model-based ===
-decisions := analyzer.ArbitrateWithModelBased(
-    analysis,
-    capacityTargets,
-    modelBasedTargets,
-    variantStates,
-)
-
-// Apply final decisions
-for _, decision := range decisions {
-    log.Printf("Variant: %s", decision.VariantName)
-    log.Printf("  Current: %d", decision.CurrentReplicas)
-    log.Printf("  Capacity target: %d", capacityTargets[decision.VariantName])
-    log.Printf("  Model-based target: %d", modelBasedTargets[decision.VariantName])
-    log.Printf("  Final target: %d", decision.TargetReplicas)
-    log.Printf("  Reason: %s", decision.Reason)
-
-    if decision.SafetyOverride {
-        log.Printf("  ⚠️  Capacity safety override applied")
-    }
-
-    switch decision.Action {
-    case interfaces.ActionScaleUp:
-        // Apply scale-up to decision.TargetReplicas
-    case interfaces.ActionScaleDown:
-        // Apply scale-down to decision.TargetReplicas
-    case interfaces.ActionNoChange:
-        // No action needed
     }
 }
 ```
@@ -411,7 +335,6 @@ T+90s: variant-1 pod becomes ready (PendingReplicas=0), now eligible for scale-u
 - ✅ Prevents excessive scale-up during model loading periods (2-7 minutes)
 - ✅ Reduces infrastructure costs by avoiding over-provisioning
 - ✅ Maintains cost-optimized scaling across multiple variants
-- ✅ Works with saturation-only mode and with optional model-based optimization
 
 **Note:** Scale-down operations are not affected by pending replicas, as removing capacity is always safe when replicas are starting up.
 
@@ -498,20 +421,7 @@ DEBUG Scale-down unsafe: insufficient headroom after redistribution
   queueSafe=false
 ```
 
-**Decision arbitration (deprecated ArbitrateDecision):**
-```
-INFO Saturation decision arbitrated
-  modelID=llama-70b
-  namespace=prod
-  currentReplicas=3
-  modelBasedReplicas=2
-  action=no-change
-  targetReplicas=3
-  reason=capacity veto: KV spare capacity low (model-based wanted scale-down to 2)
-  safetyOverride=true
-```
-
-**Capacity target calculation (Step 1):**
+**Capacity target calculation:**
 ```
 INFO Capacity target: scale-up cheapest variant
   variant=v1-l4
@@ -520,18 +430,6 @@ INFO Capacity target: scale-up cheapest variant
   readyReplicas=2       (replicas reporting metrics)
   target=3
   reason=KV spare capacity low
-```
-
-**Per-variant decision arbitration (Step 2):**
-```
-INFO Variant decision arbitrated
-  variant=v1-l4
-  current=2
-  capacityTarget=3
-  modelBasedTarget=2
-  action=no-change
-  targetReplicas=3
-  reason=capacity veto: capacity needs scale-up (capacity=3, model-based=2)
 ```
 
 ## Performance Characteristics
@@ -556,7 +454,7 @@ INFO Variant decision arbitrated
 
 ### Controller Integration
 
-The saturation analyzer is integrated into the controller's reconciliation loop using the two-step architecture:
+The saturation analyzer is integrated into the controller's reconciliation loop:
 
 1. **Collect metrics** for all pods of a model (across all variants)
    - Enrich with cost from CRD spec (default: 10)
@@ -567,20 +465,15 @@ The saturation analyzer is integrated into the controller's reconciliation loop 
 
 3. **Build variant states** with current and desired replicas
    - Current replicas: from actual pod count
-   - Desired replicas: from CRD status field (previous optimizer run), 0 if not set
+   - Desired replicas: from CRD status field (previous run), 0 if not set
 
-4. **STEP 1: Calculate capacity targets** using `CalculateCapacityTargets`
+4. **Calculate capacity targets** using `CalculateCapacityTargets`
    - Preserves desired replicas when desired ≠ current
    - Uses cost-based selection (cheapest/most expensive) for capacity actions
    - Returns `map[variantName]targetReplicas`
 
-5. **STEP 2: Arbitrate with model-based optimizer** (if available)
-   - Get model-based targets from optimizer: `map[variantName]targetReplicas`
-   - Call `ArbitrateWithModelBased` to apply arbitration decision matrix
-   - Returns `[]VariantDecision` with safety overrides applied
-
-6. **Apply final decisions** per variant
-   - Scale each variant to its final target replicas
+5. **Apply decisions** per variant
+   - Scale each variant to its target replicas
 
 ### Metrics Requirements
 
@@ -599,14 +492,14 @@ The analyzer requires two fields from the CRD:
 
 **Spec fields:**
 - `cost` (float64, optional): Cost per replica for this variant (default: 10)
-  - Used for cost-aware variant selection in Step 1
+  - Used for cost-aware variant selection
   - Cheapest variant scaled up, most expensive scaled down
 
 **Status fields:**
-- `desiredReplicas` (int, optional): Target replicas from previous optimizer run
-  - Set to 0 or omit if no optimizer has run yet
-  - Used in Step 1 to preserve previous optimizer decisions
-  - When `desired ≠ 0 AND desired ≠ current`: Step 1 sets `capacityTarget = desired`
+- `desiredReplicas` (int, optional): Target replicas from previous run
+  - Set to 0 or omit if not set yet
+  - Used to preserve previous decisions
+  - When `desired ≠ 0 AND desired ≠ current`: sets `capacityTarget = desired`
 
 ## Limitations
 
