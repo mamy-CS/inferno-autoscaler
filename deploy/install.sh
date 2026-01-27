@@ -796,7 +796,7 @@ deploy_llm_d_infrastructure() {
                 }
             ]'
         else
-            log_warning "Skipping scheduler patch: deployment $LLM_D_EPP_NAME not found in $LLMD_NS"
+            log_warning "Skipping inference-scheduler patch for SCALE_TO_ZERO: Deployment $LLM_D_EPP_NAME not found in $LLMD_NS"
         fi
     fi
     
