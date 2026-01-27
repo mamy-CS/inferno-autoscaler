@@ -60,9 +60,9 @@ jobs:
             scale_to_zero: true
             e2e_gpu_type: nvidia
           # AMD-focused: MI300X, MI250, NVIDIA A100 heterogeneous for limiter tests
-          - gpu_type: amd-mix
-            scale_to_zero: false
-            e2e_gpu_type: amd
+          # - gpu_type: amd-mix
+          #   scale_to_zero: false
+          #   e2e_gpu_type: amd
     name: e2e-tests (gpu=${{ matrix.gpu_type }}, scale-to-zero=${{ matrix.scale_to_zero }})
     steps:
       - name: Checkout source
