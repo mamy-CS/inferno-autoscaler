@@ -141,19 +141,14 @@ func (e *Engine) optimize(ctx context.Context) error {
 		}
 	}()
 
-	contextCancelled := false
+variantLoop:
 	for _, va := range inactiveVAs {
 		// Check if context is cancelled, but don't return immediately
 		select {
 		case <-ctx.Done():
 			logger.V(logging.DEBUG).Info("Context cancelled, stopping new work")
-			contextCancelled = true
+			break variantLoop
 		default:
-		}
-
-		// If context was cancelled, stop scheduling new work
-		if contextCancelled {
-			break
 		}
 
 		logger.V(logging.DEBUG).Info("Processing variant", "name", va.Name)
