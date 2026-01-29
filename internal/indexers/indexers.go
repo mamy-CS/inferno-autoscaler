@@ -20,11 +20,12 @@ import (
 	"context"
 	"fmt"
 
+	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
 	autoscalingv1 "k8s.io/api/autoscaling/v1"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
-
-	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
 )
 
 const (
@@ -47,6 +48,8 @@ func scaleTargetIndexKey(namespace string, ref autoscalingv1.CrossVersionObjectR
 		// Note: add other Kinds when support to other scaleTargetRefs is added
 		// By default, assume 'apps/v1' for unsupported Kinds
 		default:
+			logger := ctrl.LoggerFrom(context.TODO())
+			logger.V(logging.DEBUG).Info("APIVersion not specified for scale target; defaulting to apps/v1", "kind", ref.Kind, "name", ref.Name)
 			ref.APIVersion = "apps/v1"
 		}
 	}
