@@ -317,7 +317,7 @@ var _ = Describe("ShareGPT Scale-Up Test", Ordered, func() {
 						DoRaw(ctx)
 					g.Expect(err).NotTo(HaveOccurred(), "Should be able to query external metrics API")
 					g.Expect(string(result)).To(ContainSubstring(constants.WVADesiredReplicas), "Metric should be available")
-					g.Expect(string(result)).To(ContainSubstring(model.deployment), "Metric should be for the correct variant")
+					g.Expect(string(result)).To(ContainSubstring(vaName), "Metric should be for the correct variant")
 				}, 5*time.Minute, 5*time.Second).Should(Succeed())
 			})
 
