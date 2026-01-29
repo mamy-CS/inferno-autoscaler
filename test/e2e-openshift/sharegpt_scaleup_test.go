@@ -700,53 +700,6 @@ func deleteParallelLoadJobs(ctx context.Context, baseName, namespace string, num
 	}
 }
 
-// logLoadGenJobLogs captures and logs output from load generation pods for debugging
-func logLoadGenJobLogs(ctx context.Context, baseName, namespace string, numWorkers int) {
-	_, _ = fmt.Fprintf(GinkgoWriter, "\n=== LOAD GENERATION JOB LOGS (debugging zero arrival rate) ===\n")
-
-	podList, err := k8sClient.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: fmt.Sprintf("experiment=%s", baseName),
-	})
-	if err != nil {
-		_, _ = fmt.Fprintf(GinkgoWriter, "Failed to list load gen pods: %v\n", err)
-		return
-	}
-
-	if len(podList.Items) == 0 {
-		_, _ = fmt.Fprintf(GinkgoWriter, "No load gen pods found with label experiment=%s\n", baseName)
-		return
-	}
-
-	// Log status and logs for first 3 pods (to avoid too much output)
-	maxPods := 3
-	if len(podList.Items) < maxPods {
-		maxPods = len(podList.Items)
-	}
-
-	for i := 0; i < maxPods; i++ {
-		pod := podList.Items[i]
-		_, _ = fmt.Fprintf(GinkgoWriter, "\n--- Pod: %s (Phase: %s) ---\n", pod.Name, pod.Status.Phase)
-
-		// Get pod logs
-		logOpts := &corev1.PodLogOptions{
-			TailLines: ptr(int64(50)), // Last 50 lines
-		}
-		logs, err := k8sClient.CoreV1().Pods(namespace).GetLogs(pod.Name, logOpts).DoRaw(ctx)
-		if err != nil {
-			_, _ = fmt.Fprintf(GinkgoWriter, "Failed to get logs: %v\n", err)
-			continue
-		}
-		_, _ = fmt.Fprintf(GinkgoWriter, "%s\n", string(logs))
-	}
-
-	_, _ = fmt.Fprintf(GinkgoWriter, "=== END LOAD GENERATION JOB LOGS ===\n\n")
-}
-
-// ptr returns a pointer to the given value (helper for int64)
-func ptr(i int64) *int64 {
-	return &i
-}
-
 // PodScrapingSource tests using existing EPP pods in OpenShift cluster
 var _ = Describe("PodScrapingSource - OpenShift Existing EPP Pods", Ordered, func() {
 	var (
