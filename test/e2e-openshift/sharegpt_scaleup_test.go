@@ -444,9 +444,7 @@ exit 1`,
 				By("waiting for load generation to ramp up (30 seconds)")
 				time.Sleep(30 * time.Second)
 
-				By("monitoring VariantAutoscaling and HPA for scale-up")
-				zeroArrivalCount := 0
-				loadGenLogsShown := false
+				By("monitoring VariantAutoscaling for scale-up")
 				Eventually(func(g Gomega) {
 					va := &v1alpha1.VariantAutoscaling{}
 					err := crClient.Get(ctx, client.ObjectKey{
@@ -456,27 +454,13 @@ exit 1`,
 					g.Expect(err).NotTo(HaveOccurred(), "Should be able to get VariantAutoscaling")
 
 					scaledOptimized = int32(va.Status.DesiredOptimizedAlloc.NumReplicas)
-					// currentRateStr := va.Status.DesiredOptimizedAlloc.Load.ArrivalRate (Load not in status)
-					currentRateStr := "unknown"
 
-					_, _ = fmt.Fprintf(GinkgoWriter, "VA optimized replicas: %d (initial: %d, minReplicas: %d), arrival rate: %s\n",
-						scaledOptimized, initialOptimized, hpaMinReplicas, currentRateStr)
+					_, _ = fmt.Fprintf(GinkgoWriter, "VA optimized replicas: %d (initial: %d, minReplicas: %d)\n",
+						scaledOptimized, initialOptimized, hpaMinReplicas)
 
 					// Log queue metrics for observability
 					if podQueues, totalQueue, qErr := utils.GetQueueMetrics(model.namespace); qErr == nil {
 						_, _ = fmt.Fprintf(GinkgoWriter, "Queue metrics: total=%.0f, per-pod=%v\n", totalQueue, podQueues)
-					}
-
-					// Log load gen job output if arrival rate stays at 0 for too long (debugging)
-					if currentRateStr == "0.00" || currentRateStr == "" {
-						zeroArrivalCount++
-						// After 6 iterations (60s) with zero arrival rate, log load gen jobs
-						if zeroArrivalCount >= 6 && !loadGenLogsShown {
-							loadGenLogsShown = true
-							logLoadGenJobLogs(ctx, jobBaseName, model.namespace, scaledLoadWorkers)
-						}
-					} else {
-						zeroArrivalCount = 0 // Reset counter when we see traffic
 					}
 
 					if !lowLoad {
@@ -487,7 +471,10 @@ exit 1`,
 					} else {
 						_, _ = fmt.Fprintf(GinkgoWriter, "Low load detected, skipping scale-up recommendation check\n")
 					}
+				}, 5*time.Minute, 10*time.Second).Should(Succeed())
 
+				By("monitoring HPA for scale-up")
+				Eventually(func(g Gomega) {
 					hpa, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(model.namespace).Get(ctx, hpaName, metav1.GetOptions{})
 					g.Expect(err).NotTo(HaveOccurred(), "Should be able to get HPA")
 
@@ -499,7 +486,6 @@ exit 1`,
 						g.Expect(hpa.Status.DesiredReplicas).To(BeNumerically(">", initialOptimized),
 							fmt.Sprintf("HPA should desire more replicas than initial (desired: %d, initial: %d)", hpa.Status.DesiredReplicas, initialOptimized))
 					}
-
 				}, 5*time.Minute, 10*time.Second).Should(Succeed())
 
 				_, _ = fmt.Fprintf(GinkgoWriter, "WVA detected load and recommended %d replicas (up from %d)\n", scaledOptimized, initialOptimized)
