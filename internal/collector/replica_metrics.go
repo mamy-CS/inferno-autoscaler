@@ -66,7 +66,7 @@ func NewReplicaMetricsCollector(metricsSource source.MetricsSource, k8sClient cl
 //   - ctx: Context for the operation
 //   - modelID: The model identifier to collect metrics for
 //   - namespace: The namespace where the model is deployed
-//   - deployments: Map of VariantAutoscaling namespace/name to Deployment
+//   - deployments: Map of Deployment namespace/name to Deployment
 //   - variantAutoscalings: Map of VariantAutoscaling namespace/name to VariantAutoscaling object
 //   - variantCosts: Map of VariantAutoscaling namespace/name to cost value
 //

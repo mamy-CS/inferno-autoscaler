@@ -330,7 +330,7 @@ func (e *Engine) BuildVariantStates(
 
 		// Try to look up in provided map first (optimization)
 		if deployments != nil {
-			deploy, found = deployments[utils.GetVariantKey(va.Namespace, va.Name)]
+			deploy, found = deployments[utils.GetDeploymentKey(va.Namespace, va.GetScaleTargetName())]
 		}
 
 		if !found {
@@ -528,9 +528,12 @@ func (e *Engine) RunSaturationAnalysis(
 			}
 		}
 
+		// Populate maps indexed by Deployment namespace/name
+		deploymentKey := utils.GetDeploymentKey(va.Namespace, va.GetScaleTargetName())
+		deployments[deploymentKey] = &deploy
+
 		// Populate maps indexed by VariantAutoscaling namespace/name
 		variantKey := utils.GetVariantKey(va.Namespace, va.Name)
-		deployments[variantKey] = &deploy
 		variantAutoscalings[variantKey] = va
 		variantCosts[variantKey] = cost
 	}

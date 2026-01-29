@@ -68,7 +68,7 @@ func (m *PodVAMapper) findDeploymentForPod(
 
 	pod := &corev1.Pod{}
 	if err := m.k8sClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: podName}, pod); err != nil {
-		logger.Error(err, "failed to get pod", "pod", podName, "namespace", namespace)
+		logger.V(logging.DEBUG).Error(err, "failed to get pod", "pod", podName, "namespace", namespace)
 		return ""
 	}
 
@@ -80,7 +80,7 @@ func (m *PodVAMapper) findDeploymentForPod(
 
 	rs := &appsv1.ReplicaSet{}
 	if err := m.k8sClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: owner.Name}, rs); err != nil {
-		logger.Error(err, "failed to get ReplicaSet", "replicaset", owner.Name, "namespace", namespace)
+		logger.V(logging.DEBUG).Error(err, "failed to get ReplicaSet", "replicaset", owner.Name, "namespace", namespace)
 		return ""
 	}
 
@@ -91,10 +91,9 @@ func (m *PodVAMapper) findDeploymentForPod(
 	}
 
 	// Verify the Deployment is in our map of tracked Deployments
-	for _, deploy := range deployments {
-		if deploy != nil && deploy.Name == rsOwner.Name && deploy.Namespace == namespace {
-			return rsOwner.Name
-		}
+	deploymentKey := namespace + "/" + rsOwner.Name
+	if deploy, ok := deployments[deploymentKey]; ok && deploy != nil && deploy.Namespace == namespace {
+		return rsOwner.Name
 	}
 	return ""
 }
