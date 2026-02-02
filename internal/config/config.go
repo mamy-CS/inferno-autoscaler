@@ -4,6 +4,8 @@ import (
 	"sync"
 	"time"
 
+	ctrl "sigs.k8s.io/controller-runtime"
+
 	interfaces "github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
 )
 
@@ -138,19 +140,31 @@ func (c *Config) UpdateDynamicConfig(dynamic DynamicConfig) {
 // Thread-safe.
 func (c *Config) UpdateOptimizationInterval(interval time.Duration) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	oldInterval := c.Dynamic.OptimizationInterval
 	c.Dynamic.OptimizationInterval = interval
+	c.mu.Unlock()
+	if oldInterval != interval {
+		ctrl.Log.Info("Updated optimization interval", "old", oldInterval, "new", interval)
+	}
 }
 
 // UpdateSaturationConfig updates the saturation scaling configuration.
 // Thread-safe. Takes a copy of the provided map to prevent external modifications.
 func (c *Config) UpdateSaturationConfig(config map[string]interfaces.SaturationScalingConfig) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	oldCount := len(c.Dynamic.SaturationConfig)
+	c.mu.Unlock()
 	// Make a copy to prevent external modifications
-	c.Dynamic.SaturationConfig = make(map[string]interfaces.SaturationScalingConfig, len(config))
+	newConfig := make(map[string]interfaces.SaturationScalingConfig, len(config))
 	for k, v := range config {
-		c.Dynamic.SaturationConfig[k] = v
+		newConfig[k] = v
+	}
+	c.mu.Lock()
+	c.Dynamic.SaturationConfig = newConfig
+	newCount := len(c.Dynamic.SaturationConfig)
+	c.mu.Unlock()
+	if oldCount != newCount {
+		ctrl.Log.Info("Updated saturation config", "oldEntries", oldCount, "newEntries", newCount)
 	}
 }
 
@@ -158,11 +172,19 @@ func (c *Config) UpdateSaturationConfig(config map[string]interfaces.SaturationS
 // Thread-safe. Takes a copy of the provided map to prevent external modifications.
 func (c *Config) UpdateScaleToZeroConfig(config ScaleToZeroConfigData) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	oldCount := len(c.Dynamic.ScaleToZeroConfig)
+	c.mu.Unlock()
 	// Make a copy to prevent external modifications
-	c.Dynamic.ScaleToZeroConfig = make(ScaleToZeroConfigData, len(config))
+	newConfig := make(ScaleToZeroConfigData, len(config))
 	for k, v := range config {
-		c.Dynamic.ScaleToZeroConfig[k] = v
+		newConfig[k] = v
+	}
+	c.mu.Lock()
+	c.Dynamic.ScaleToZeroConfig = newConfig
+	newCount := len(c.Dynamic.ScaleToZeroConfig)
+	c.mu.Unlock()
+	if oldCount != newCount {
+		ctrl.Log.Info("Updated scale-to-zero config", "oldModels", oldCount, "newModels", newCount)
 	}
 }
 
@@ -186,4 +208,36 @@ func (c *Config) GetDynamicConfig() DynamicConfig {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.Dynamic
+}
+
+// NewTestConfig creates a minimal Config for testing purposes.
+// It provides sensible defaults for all required fields.
+// This helper is intended for use in unit tests, integration tests, and e2e tests
+// where a valid Config instance is needed but full configuration is not required.
+// NOTE: This function is exported for testing purposes only and should not be used in production code.
+func NewTestConfig() *Config {
+	return &Config{
+		Static: StaticConfig{
+			MetricsAddr:                 "0",
+			ProbeAddr:                   ":8081",
+			EnableLeaderElection:        false,
+			LeaderElectionID:            "test-election-id",
+			LeaseDuration:               60 * time.Second,
+			RenewDeadline:               50 * time.Second,
+			RetryPeriod:                 10 * time.Second,
+			RestTimeout:                 60 * time.Second,
+			SecureMetrics:               false,
+			EnableHTTP2:                 false,
+			WatchNamespace:              "",
+			LoggerVerbosity:             0,
+			ScaleToZeroEnabled:          false,
+			LimitedModeEnabled:          false,
+			ScaleFromZeroMaxConcurrency: 10,
+		},
+		Dynamic: DynamicConfig{
+			OptimizationInterval: 60 * time.Second,
+			SaturationConfig:     make(map[string]interfaces.SaturationScalingConfig),
+			ScaleToZeroConfig:    make(ScaleToZeroConfigData),
+		},
+	}
 }

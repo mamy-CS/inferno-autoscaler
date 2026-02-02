@@ -284,7 +284,36 @@ func (r *VariantAutoscalingReconciler) SetupWithManager(mgr ctrl.Manager) error 
 				}
 
 				if name == config.GetConfigMapName() {
-					// Optimization Config (Global Interval)
+					// Check for immutable parameter changes first
+					immutableChanges, err := config.DetectImmutableParameterChanges(r.Config, cm.Data)
+					if err != nil {
+						// Immutable parameters detected - emit warning event and log error
+						logger.Error(err, "Attempted to change immutable parameters via ConfigMap",
+							"configmap", fmt.Sprintf("%s/%s", namespace, name),
+							"changes", immutableChanges)
+
+						// Emit Kubernetes Warning event
+						if r.Recorder != nil {
+							var changeList []string
+							for _, change := range immutableChanges {
+								changeList = append(changeList, fmt.Sprintf("%s (old: %q, new: %q)", change.Parameter, change.OldValue, change.NewValue))
+							}
+							r.Recorder.Eventf(
+								cm,
+								corev1.EventTypeWarning,
+								"ImmutableConfigChangeRejected",
+								"ConfigMap %s/%s attempted to change immutable parameters that require controller restart: %s. These changes were rejected. Please restart the controller to apply these changes.",
+								namespace,
+								name,
+								fmt.Sprintf("%v", changeList),
+							)
+						}
+
+						// Don't apply any changes - return early
+						return nil
+					}
+
+					// Optimization Config (Global Interval) - mutable parameter
 					if interval, ok := cm.Data["GLOBAL_OPT_INTERVAL"]; ok {
 						if parsedInterval, err := time.ParseDuration(interval); err == nil {
 							r.Config.UpdateOptimizationInterval(parsedInterval)

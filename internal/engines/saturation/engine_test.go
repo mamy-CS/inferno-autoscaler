@@ -35,7 +35,6 @@ import (
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/source"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/source/prometheus"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/config"
-	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/common"
 	interfaces "github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
 	utils "github.com/llm-d-incubation/workload-variant-autoscaler/internal/utils"
@@ -44,9 +43,7 @@ import (
 
 var _ = Describe("Saturation Engine", func() {
 
-	var getNamespace = func() string {
-		return "workload-variant-autoscaler-system"
-	}
+	// Use config.GetNamespace() instead of local function
 
 	// CreateServiceClassConfigMap creates a service class ConfigMap for testing
 	var CreateServiceClassConfigMap = func(controllerNamespace string, models ...string) *v1.ConfigMap {
@@ -82,7 +79,7 @@ data:
 
 	Context("When validating configurations", func() {
 		const configMapName = "workload-variant-autoscaler-variantautoscaling-config"
-		var configMapNamespace = getNamespace()
+		var configMapNamespace = config.GetNamespace()
 
 		BeforeEach(func() {
 			logging.NewTestLogger()
@@ -247,7 +244,7 @@ data:
 	Context("When handling multiple VariantAutoscalings", func() {
 		const totalVAs = 3
 		const configMapName = "workload-variant-autoscaler-variantautoscaling-config"
-		var configMapNamespace = getNamespace()
+		var configMapNamespace = config.GetNamespace()
 
 		BeforeEach(func() {
 			logging.NewTestLogger()
@@ -393,7 +390,7 @@ data:
 			sourceRegistry := source.NewSourceRegistry()
 			promSource := prometheus.NewPrometheusSource(ctx, mockPromAPI, prometheus.DefaultPrometheusSourceConfig())
 			sourceRegistry.Register("prometheus", promSource) // nolint:errcheck
-			// Create minimal test config
+			// Create minimal test config with saturation config
 			testConfig := &config.Config{
 				Static: config.StaticConfig{
 					ScaleToZeroEnabled:          false,
@@ -402,16 +399,13 @@ data:
 				},
 				Dynamic: config.DynamicConfig{
 					OptimizationInterval: 60 * time.Second,
-					SaturationConfig:     make(map[string]interfaces.SaturationScalingConfig),
-					ScaleToZeroConfig:    make(config.ScaleToZeroConfigData),
+					SaturationConfig: map[string]interfaces.SaturationScalingConfig{
+						"default": {},
+					},
+					ScaleToZeroConfig: make(config.ScaleToZeroConfigData),
 				},
 			}
 			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, sourceRegistry, testConfig)
-
-			// Populate global config
-			common.Config.UpdateSaturationConfig(map[string]interfaces.SaturationScalingConfig{
-				"default": {},
-			})
 
 			By("Performing optimization loop")
 			err := engine.optimize(ctx)
@@ -504,7 +498,7 @@ data:
 	Context("Source Infrastructure Optimization Tests", func() {
 		const totalVAs = 3
 		const configMapName = "workload-variant-autoscaler-variantautoscaling-config"
-		var configMapNamespace = getNamespace()
+		var configMapNamespace = config.GetNamespace()
 		var sourceRegistry *source.SourceRegistry
 		var mockPromAPI *testutils.MockPromAPI
 
@@ -659,7 +653,7 @@ data:
 		It("should successfully run optimization with source infrastructure", func() {
 
 			// Initialize legacy MetricsCollector for non-saturation metrics
-			// Create minimal test config
+			// Create minimal test config with saturation config
 			testConfig := &config.Config{
 				Static: config.StaticConfig{
 					ScaleToZeroEnabled:          false,
@@ -668,16 +662,13 @@ data:
 				},
 				Dynamic: config.DynamicConfig{
 					OptimizationInterval: 60 * time.Second,
-					SaturationConfig:     make(map[string]interfaces.SaturationScalingConfig),
-					ScaleToZeroConfig:    make(config.ScaleToZeroConfigData),
+					SaturationConfig: map[string]interfaces.SaturationScalingConfig{
+						"default": {},
+					},
+					ScaleToZeroConfig: make(config.ScaleToZeroConfigData),
 				},
 			}
 			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, sourceRegistry, testConfig)
-
-			// Populate global config
-			common.Config.UpdateSaturationConfig(map[string]interfaces.SaturationScalingConfig{
-				"default": {},
-			})
 
 			By("Performing optimization loop with source infrastructure")
 			err := engine.optimize(ctx)
