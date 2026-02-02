@@ -22,6 +22,15 @@ wva:
   namespaceScoped: true
 
   reconcileInterval: 60s
+
+  # ConfigMap settings
+  configMap:
+    # If true, makes the ConfigMap immutable (cannot be updated after creation).
+    # This provides security benefits by preventing accidental or malicious changes
+    # to configuration, but disables runtime config updates (dynamic config changes
+    # will require recreating the ConfigMap and restarting the controller).
+    # Default: false (allows runtime updates for dynamic configuration)
+    immutable: false
     
   prometheus:
     monitoringNamespace: openshift-user-workload-monitoring

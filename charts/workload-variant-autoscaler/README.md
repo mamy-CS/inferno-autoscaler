@@ -28,6 +28,7 @@ Helm chart for Workload-Variant-Autoscaler (WVA) - GPU-aware autoscaler for LLM 
 | vllmService.interval | string | `"15s"` |  |
 | vllmService.nodePort | int | `30000` |  |
 | vllmService.scheme | string | `"http"` |  |
+| wva.configMap.immutable | bool | `false` | If true, makes the ConfigMap immutable (cannot be updated after creation). Provides security benefits by preventing accidental or malicious configuration changes, but disables runtime config updates. See [Configuration Guide](../../docs/user-guide/configuration.md) |
 | wva.controllerInstance | string | `""` | Controller instance label for multi-controller isolation. When set, adds `controller_instance` label to all metrics and filters VariantAutoscaling resources by matching label. Use for parallel testing or multi-tenant environments. See [Multi-Controller Isolation](../../docs/user-guide/multi-controller-isolation.md) |
 | wva.enabled | bool | `true` |  |
 | wva.image.repository | string | `"ghcr.io/llm-d-incubation/workload-variant-autoscaler"` |  |
@@ -227,6 +228,30 @@ helm install workload-variant-autoscaler ./workload-variant-autoscaler \
   --set wva.prometheus.tls.insecureSkipVerify=true \
   --set wva.image.tag=v0.0.1-dev
 ```
+
+#### Immutable ConfigMap (Security Hardening)
+```bash
+# Enable immutable ConfigMap for enhanced security
+# This prevents accidental or malicious configuration changes
+# Note: Disables runtime config updates (requires ConfigMap recreation for changes)
+helm install workload-variant-autoscaler ./workload-variant-autoscaler \
+  -n workload-variant-autoscaler-system \
+  --values values.yaml \
+  --set wva.configMap.immutable=true
+```
+
+**Security Benefits:**
+- Prevents accidental configuration changes
+- Protects against malicious modifications
+- Ensures configuration integrity
+- Reduces attack surface
+
+**Trade-offs:**
+- Runtime config updates are disabled
+- Configuration changes require:
+  1. Deleting the ConfigMap
+  2. Updating Helm values and upgrading
+  3. Restarting the controller pod
 
 ### Multi-Controller Isolation
 

@@ -296,6 +296,42 @@ data:
   GLOBAL_OPT_INTERVAL: "120s"  # Applied immediately
 ```
 
+### Immutable ConfigMap (Security Hardening)
+
+For enhanced security, you can make the entire ConfigMap immutable using the Helm chart option `wva.configMap.immutable: true`. This provides additional protection beyond the controller's runtime validation.
+
+**Security Benefits:**
+- **Prevents accidental changes**: Kubernetes will reject any update attempts
+- **Protects against malicious modifications**: Even with RBAC access, the ConfigMap cannot be modified
+- **Ensures configuration integrity**: Configuration can only be changed through controlled Helm upgrades
+- **Reduces attack surface**: Eliminates runtime configuration as a potential attack vector
+
+**Trade-offs:**
+- **Runtime updates disabled**: All configuration changes (including mutable parameters) require ConfigMap recreation
+- **Change process**: To update configuration:
+  1. Delete the ConfigMap: `kubectl delete configmap <name> -n <namespace>`
+  2. Update Helm values and upgrade: `helm upgrade ... --set wva.configMap.immutable=false ...`
+  3. Restart the controller pod
+
+**Enable Immutable ConfigMap:**
+```bash
+# Via Helm values
+helm install workload-variant-autoscaler ./charts/workload-variant-autoscaler \
+  -n workload-variant-autoscaler-system \
+  --set wva.configMap.immutable=true
+```
+
+**When to Use:**
+- **Production environments** with strict security requirements
+- **Multi-tenant clusters** where configuration tampering is a concern
+- **Compliance requirements** that mandate immutable infrastructure
+- **High-security deployments** where configuration changes should be audited and controlled
+
+**When NOT to Use:**
+- **Development environments** where rapid iteration is needed
+- **Scenarios requiring frequent runtime config updates** (e.g., A/B testing, dynamic tuning)
+- **Environments where ConfigMap updates are part of normal operations**
+
 ### Main Configuration ConfigMap
 
 The main configuration ConfigMap (`workload-variant-autoscaler-variantautoscaling-config`) supports both static and dynamic settings:

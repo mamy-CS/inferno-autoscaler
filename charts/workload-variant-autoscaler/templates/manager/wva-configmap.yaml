@@ -6,6 +6,9 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "workload-variant-autoscaler.labels" . | nindent 4 }}
+{{- if and .Values.wva.configMap .Values.wva.configMap.immutable }}
+immutable: true
+{{- end }}
 data:
   # ============================================================================
   # UNIFIED CONFIGURATION SYSTEM
@@ -98,4 +101,15 @@ data:
   # ============================================================================
   # For more information about immutable vs mutable parameters, see:
   # https://github.com/llm-d-incubation/workload-variant-autoscaler/blob/main/docs/user-guide/configuration.md#unified-configuration-system
+  #
+  # IMMUTABLE CONFIGMAP:
+  # If wva.configMap.immutable is set to true, this ConfigMap becomes immutable
+  # after creation. This provides security benefits:
+  #   - Prevents accidental configuration changes
+  #   - Protects against malicious modifications
+  #   - Ensures configuration integrity
+  # However, this disables runtime config updates. To change configuration:
+  #   1. Delete the ConfigMap (kubectl delete configmap <name>)
+  #   2. Update Helm values and upgrade the release
+  #   3. Restart the controller pod
 {{- end }}
