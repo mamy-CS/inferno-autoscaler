@@ -11,38 +11,7 @@ Notes:
 
 
 ## Deploy configmaps and VA object
-Create accelerator configmap (`oc apply -f configmap-accelerator-unitcost.yaml`):
-```yaml
-# configmap-accelerator-unitcost.yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: accelerator-unit-costs
-  namespace: workload-variant-autoscaler-system
-data:
-  A100: |
-    {
-    "device": "NVIDIA-A100-PCIE-80GB",
-    "cost": "40.00"
-    }
-  MI300X: |
-    {
-    "device": "AMD-MI300X-192GB",
-    "cost": "65.00"
-    }
-  G2: |
-    {
-    "device": "Intel-Gaudi-2-96GB",
-    "cost": "23.00"
-    }
-  H100: |
-    {
-    "device": "NVIDIA-H100-80GB-HBM3",
-    "cost": "100.0"
-    } 
-```
-
-Create service class config map `oc apply -f configmap-serviceclass.yaml`
+Create service class configmap (`oc apply -f configmap-serviceclass.yaml`):
 ```yaml
 apiVersion: v1
 kind: ConfigMap

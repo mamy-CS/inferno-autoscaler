@@ -94,8 +94,6 @@ data:
 			configMap := testutils.CreateServiceClassConfigMap(ns.Name)
 			Expect(k8sClient.Create(ctx, configMap)).NotTo(HaveOccurred())
 
-			configMap = testutils.CreateAcceleratorUnitCostConfigMap(ns.Name)
-			Expect(k8sClient.Create(ctx, configMap)).NotTo(HaveOccurred())
 
 			configMap = testutils.CreateVariantAutoscalingConfigMap(configMapName, ns.Name)
 			Expect(k8sClient.Create(ctx, configMap)).NotTo(HaveOccurred())
@@ -110,15 +108,6 @@ data:
 				},
 			}
 			err := k8sClient.Delete(ctx, configMap)
-			Expect(client.IgnoreNotFound(err)).NotTo(HaveOccurred())
-
-			configMap = &v1.ConfigMap{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "accelerator-unit-costs",
-					Namespace: configMapNamespace,
-				},
-			}
-			err = k8sClient.Delete(ctx, configMap)
 			Expect(client.IgnoreNotFound(err)).NotTo(HaveOccurred())
 
 			configMap = &v1.ConfigMap{
@@ -265,8 +254,6 @@ data:
 			configMap := CreateServiceClassConfigMap(ns.Name, modelNames...)
 			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
 
-			configMap = testutils.CreateAcceleratorUnitCostConfigMap(ns.Name)
-			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
 
 			configMap = testutils.CreateVariantAutoscalingConfigMap(configMapName, ns.Name)
 			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
@@ -333,15 +320,6 @@ data:
 				},
 			}
 			err := k8sClient.Delete(ctx, configMap)
-			Expect(client.IgnoreNotFound(err)).NotTo(HaveOccurred())
-
-			configMap = &v1.ConfigMap{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "accelerator-unit-costs",
-					Namespace: configMapNamespace,
-				},
-			}
-			err = k8sClient.Delete(ctx, configMap)
 			Expect(client.IgnoreNotFound(err)).NotTo(HaveOccurred())
 
 			configMap = &v1.ConfigMap{
@@ -534,8 +512,6 @@ data:
 			configMap := CreateServiceClassConfigMap(ns.Name, modelNames...)
 			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
 
-			configMap = testutils.CreateAcceleratorUnitCostConfigMap(ns.Name)
-			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
 
 			configMap = testutils.CreateVariantAutoscalingConfigMap(configMapName, ns.Name)
 			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
@@ -602,15 +578,6 @@ data:
 				},
 			}
 			err := k8sClient.Delete(ctx, configMap)
-			Expect(client.IgnoreNotFound(err)).NotTo(HaveOccurred())
-
-			configMap = &v1.ConfigMap{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "accelerator-unit-costs",
-					Namespace: configMapNamespace,
-				},
-			}
-			err = k8sClient.Delete(ctx, configMap)
 			Expect(client.IgnoreNotFound(err)).NotTo(HaveOccurred())
 
 			configMap = &v1.ConfigMap{

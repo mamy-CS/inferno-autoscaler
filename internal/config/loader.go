@@ -39,10 +39,9 @@ type StaticConfigFlags struct {
 }
 
 const (
-	// Default optimization interval
+	// defaultOptimizationInterval is the default optimization interval used when
+	// GLOBAL_OPT_INTERVAL is not specified in the ConfigMap.
 	defaultOptimizationInterval = 60 * time.Second
-
-	// Default saturation config map name
 )
 
 // Load loads and validates the unified configuration.
@@ -218,8 +217,6 @@ func loadDynamicConfig(ctx context.Context, dynamic *DynamicConfig, k8sClient cl
 
 	return nil
 }
-
-// validateConfig validates required configuration fields
 
 // Helper functions for precedence resolution
 

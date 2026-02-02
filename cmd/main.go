@@ -394,13 +394,10 @@ func main() {
 		sourceRegistry := source.NewSourceRegistry()
 		setupLog.Info("Initializing metrics source registry")
 
-		// Read Prometheus cache configuration from ConfigMap
-		// TODO(LV): Uncomment and implement cache configuration reading
-		// cacheConfig, err := config.ReadPrometheusCacheConfig(context.Background(), mgr.GetClient())
-		// if err != nil {
-		// 	setupLog.Error(err, "Failed to read Prometheus cache config from ConfigMap, using defaults")
-		// 	cacheConfig = nil // Use defaults
-		// }
+		// Prometheus cache configuration is loaded via unified Config during startup.
+		// The cache config is available in cfg.Dynamic.PrometheusCache and is updated
+		// automatically when the ConfigMap changes. We use the default config here
+		// as the unified Config system handles cache configuration loading.
 
 		// Register PrometheusSource with default config
 		promSource := prometheus.NewPrometheusSource(ctx, promAPI, prometheus.DefaultPrometheusSourceConfig())

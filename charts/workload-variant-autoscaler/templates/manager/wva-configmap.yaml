@@ -7,7 +7,30 @@ metadata:
   labels:
     {{- include "workload-variant-autoscaler.labels" . | nindent 4 }}
 data:
-  # Prometheus configuration - REQUIRED: Set your Prometheus server URL
+  # ============================================================================
+  # UNIFIED CONFIGURATION SYSTEM
+  # ============================================================================
+  # This ConfigMap contains both static (immutable) and dynamic (mutable) settings.
+  #
+  # IMMUTABLE PARAMETERS (require controller restart to change):
+  #   - PROMETHEUS_BASE_URL: Prometheus connection endpoint
+  #   - TLS certificate paths (security-sensitive)
+  #   - Metrics/Probe bind addresses (infrastructure)
+  #   - Leader election ID (coordination)
+  #
+  # MUTABLE PARAMETERS (can be changed at runtime via ConfigMap updates):
+  #   - GLOBAL_OPT_INTERVAL: Optimization interval
+  #   - WVA_SCALE_TO_ZERO: Feature flag (can be changed, but may require restart for full effect)
+  #   - Prometheus cache settings
+  #
+  # Attempts to change immutable parameters at runtime will be rejected and emit
+  # Warning events. See documentation for details.
+  # ============================================================================
+
+  # ----------------------------------------------------------------------------
+  # IMMUTABLE: Prometheus Configuration (requires restart to change)
+  # ----------------------------------------------------------------------------
+  # REQUIRED: Set your Prometheus server URL
   # Examples:
   # - General: "https://prometheus:9090"
   # - OpenShift: "https://thanos-querier.openshift-monitoring.svc.cluster.local:9091"
@@ -27,16 +50,29 @@ data:
   # PROMETHEUS_BEARER_TOKEN: "your-token-here"           # Direct bearer token (development/testing)
   # PROMETHEUS_TOKEN_PATH: "/path/to/token/file"        # Path to bearer token file (production with mounted secrets)
 
-  # configuration from scalefromzero
+  # ----------------------------------------------------------------------------
+  # MUTABLE: EPP Integration Configuration (runtime-updatable)
+  # ----------------------------------------------------------------------------
+  # EPP metric reader bearer token for pod scraping
   EPP_METRIC_READER_BEARER_TOKEN: ""
 
-  # Optimization configuration
+  # ----------------------------------------------------------------------------
+  # MUTABLE: Optimization Configuration (runtime-updatable)
+  # ----------------------------------------------------------------------------
+  # Global optimization interval - how often the controller runs optimization cycles
+  # Can be changed at runtime via ConfigMap updates (no restart required)
   GLOBAL_OPT_INTERVAL: {{ .Values.wva.reconcileInterval | quote }}
 
+  # ----------------------------------------------------------------------------
+  # MUTABLE: Feature Flags (runtime-updatable, but may require restart for full effect)
+  # ----------------------------------------------------------------------------
   # Option to scale variants to zero replicas (default: false)
+  # Note: While this can be changed at runtime, some features may require restart
   WVA_SCALE_TO_ZERO: {{ .Values.wva.scaleToZero | default "false" | quote }}
 
-  # Prometheus metrics cache configuration
+  # ----------------------------------------------------------------------------
+  # MUTABLE: Prometheus Metrics Cache Configuration (runtime-updatable)
+  # ----------------------------------------------------------------------------
   # Each collector (Prometheus, EPP, etc.) has its own cache configuration
   # Enable/disable Prometheus metrics caching (default: "true") - this is for debugging purposes, can be removed in the future
   PROMETHEUS_METRICS_CACHE_ENABLED: {{ if and .Values.wva.prometheus .Values.wva.prometheus.metricsCache }}{{ .Values.wva.prometheus.metricsCache.enabled | default "true" | quote }}{{ else }}"true"{{ end }}
@@ -57,4 +93,9 @@ data:
   # EPP_METRICS_CACHE_TTL: "15s"
   # EPP_METRICS_CACHE_MAX_SIZE: "500"
   # EPP_METRICS_CACHE_CLEANUP_INTERVAL: "30s"
+  # ============================================================================
+  # END OF CONFIGURATION
+  # ============================================================================
+  # For more information about immutable vs mutable parameters, see:
+  # https://github.com/llm-d-incubation/workload-variant-autoscaler/blob/main/docs/user-guide/configuration.md#unified-configuration-system
 {{- end }}

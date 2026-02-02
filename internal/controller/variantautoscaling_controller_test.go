@@ -69,8 +69,6 @@ var _ = Describe("VariantAutoscalings Controller", func() {
 			configMap := testutils.CreateServiceClassConfigMap(ns.Name)
 			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
 
-			configMap = testutils.CreateAcceleratorUnitCostConfigMap(ns.Name)
-			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
 
 			configMap = testutils.CreateVariantAutoscalingConfigMap(config.DefaultConfigMapName, ns.Name)
 			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
@@ -110,15 +108,6 @@ var _ = Describe("VariantAutoscalings Controller", func() {
 			configMap := &v1.ConfigMap{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "service-classes-config",
-					Namespace: "workload-variant-autoscaler-system",
-				},
-			}
-			err = k8sClient.Delete(ctx, configMap)
-			Expect(client.IgnoreNotFound(err)).NotTo(HaveOccurred())
-
-			configMap = &v1.ConfigMap{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "accelerator-unit-costs",
 					Namespace: "workload-variant-autoscaler-system",
 				},
 			}
@@ -167,9 +156,6 @@ var _ = Describe("VariantAutoscalings Controller", func() {
 			configMap := testutils.CreateServiceClassConfigMap(ns.Name)
 			Expect(k8sClient.Create(ctx, configMap)).NotTo(HaveOccurred())
 
-			configMap = testutils.CreateAcceleratorUnitCostConfigMap(ns.Name)
-			Expect(k8sClient.Create(ctx, configMap)).NotTo(HaveOccurred())
-
 			configMap = testutils.CreateVariantAutoscalingConfigMap(config.DefaultConfigMapName, ns.Name)
 			Expect(k8sClient.Create(ctx, configMap)).NotTo(HaveOccurred())
 		})
@@ -183,15 +169,6 @@ var _ = Describe("VariantAutoscalings Controller", func() {
 				},
 			}
 			err := k8sClient.Delete(ctx, configMap)
-			Expect(client.IgnoreNotFound(err)).NotTo(HaveOccurred())
-
-			configMap = &v1.ConfigMap{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "accelerator-unit-costs",
-					Namespace: "workload-variant-autoscaler-system",
-				},
-			}
-			err = k8sClient.Delete(ctx, configMap)
 			Expect(client.IgnoreNotFound(err)).NotTo(HaveOccurred())
 
 			configMap = &v1.ConfigMap{

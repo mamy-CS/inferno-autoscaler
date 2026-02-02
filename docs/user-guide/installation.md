@@ -106,7 +106,6 @@ wva:
 
 WVA uses ConfigMaps for cluster configuration:
 
-- **Accelerator Unit Cost**: GPU pricing information
 - **Service Classes**: SLO definitions for different service tiers
 
 See [Configuration Guide](configuration.md) for details.

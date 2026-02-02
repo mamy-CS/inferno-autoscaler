@@ -156,33 +156,7 @@ See [Saturation Analyzer Documentation](../../docs/saturation-analyzer.md) for c
 
 ## ConfigMaps
 
-WVA uses two ConfigMaps for cluster-wide configuration.
-
-### Accelerator Unit Cost ConfigMap
-
-Defines GPU pricing for cost optimization:
-
-```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: accelerator-unitcost
-  namespace: workload-variant-autoscaler-system
-data:
-  accelerators: |
-    - name: A100
-      type: NVIDIA-A100-PCIE-80GB
-      cost: 40
-      memSize: 81920
-    - name: MI300X
-      type: AMD-MI300X-192GB
-      cost: 65
-      memSize: 196608
-    - name: H100
-      type: NVIDIA-H100-80GB-HBM3
-      cost: 80
-      memSize: 81920
-```
+WVA uses ConfigMaps for cluster-wide configuration.
 
 ### Service Class ConfigMap
 
@@ -213,6 +187,220 @@ data:
       priority: 10
       slo-itl: 100
       slo-ttw: 2000
+```
+
+## Unified Configuration System
+
+WVA uses a unified configuration system that consolidates all settings into a single `Config` structure. This provides clear precedence rules, type safety, and separation between static (immutable) and dynamic (runtime-updatable) configuration.
+
+### Configuration Structure
+
+The unified `Config` consists of two parts:
+
+1. **StaticConfig**: Immutable settings loaded at startup (require controller restart to change)
+   - Infrastructure settings (metrics/probe addresses, leader election)
+   - Connection settings (Prometheus URL, TLS certificates)
+   - Feature flags
+
+2. **DynamicConfig**: Runtime-updatable settings (can be changed via ConfigMap updates)
+   - Optimization interval
+   - Saturation scaling thresholds
+   - Scale-to-zero configuration
+   - Prometheus cache settings
+
+### Configuration Precedence
+
+Configuration values are loaded with the following precedence (highest to lowest):
+
+1. **CLI Flags** (highest priority)
+2. **Environment Variables**
+3. **ConfigMap** (in `workload-variant-autoscaler-system` namespace)
+4. **Defaults** (lowest priority)
+
+**Example:**
+```bash
+# CLI flag (highest priority)
+--metrics-addr=":8443"
+
+# Environment variable (overridden by flags)
+export METRICS_ADDR=":8080"
+
+# ConfigMap (overridden by env/flags)
+# workload-variant-autoscaler-variantautoscaling-config
+data:
+  METRICS_ADDR: ":9090"
+
+# Default (used if none of above are set)
+# Default: "0" (disabled)
+```
+
+### Immutable vs Mutable Parameters
+
+#### Immutable Parameters (Require Restart)
+
+These settings **cannot** be changed at runtime via ConfigMap updates. Attempts to change them will:
+- Be rejected by the controller
+- Emit a Warning Kubernetes event
+- Require a controller restart to take effect
+
+**Immutable Parameters:**
+- `PROMETHEUS_BASE_URL` - Prometheus connection endpoint
+- `METRICS_ADDR` - Metrics bind address
+- `PROBE_ADDR` - Health probe bind address
+- `LEADER_ELECTION_ID` - Leader election coordination ID
+- TLS certificate paths (webhook and metrics certificates)
+
+**Example - Attempting to Change Immutable Parameter:**
+```yaml
+# This will be rejected and emit a Warning event
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: workload-variant-autoscaler-variantautoscaling-config
+  namespace: workload-variant-autoscaler-system
+data:
+  PROMETHEUS_BASE_URL: "https://new-prometheus:9090"  # Requires restart
+```
+
+**Check for Rejected Changes:**
+```bash
+# View Warning events
+kubectl get events -n workload-variant-autoscaler-system \
+  --field-selector reason=ImmutableConfigChangeRejected
+
+# Controller logs
+kubectl logs -n workload-variant-autoscaler-system \
+  deployment/workload-variant-autoscaler-controller-manager | \
+  grep "Attempted to change immutable parameters"
+```
+
+#### Mutable Parameters (Runtime Updates)
+
+These settings **can** be changed at runtime via ConfigMap updates without restarting the controller:
+
+**Mutable Parameters:**
+- `GLOBAL_OPT_INTERVAL` - Optimization interval (default: `60s`)
+- Saturation scaling configuration (via `saturation-scaling-config` ConfigMap)
+- Scale-to-zero configuration (via `model-scale-to-zero-config` ConfigMap)
+- Prometheus cache settings
+
+**Example - Runtime Configuration Update:**
+```yaml
+# This will be applied immediately without restart
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: workload-variant-autoscaler-variantautoscaling-config
+  namespace: workload-variant-autoscaler-system
+data:
+  GLOBAL_OPT_INTERVAL: "120s"  # Applied immediately
+```
+
+### Main Configuration ConfigMap
+
+The main configuration ConfigMap (`workload-variant-autoscaler-variantautoscaling-config`) supports both static and dynamic settings:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: workload-variant-autoscaler-variantautoscaling-config
+  namespace: workload-variant-autoscaler-system
+data:
+  # Mutable: Optimization interval (can be changed at runtime)
+  GLOBAL_OPT_INTERVAL: "60s"
+  
+  # Immutable: Prometheus connection (requires restart if changed)
+  PROMETHEUS_BASE_URL: "https://prometheus:9090"
+  
+  # Immutable: Feature flags (require restart if changed)
+  WVA_SCALE_TO_ZERO: "true"
+  WVA_LIMITED_MODE: "false"
+```
+
+**Note:** The ConfigMap name is auto-generated by Helm based on the release name. For Kustomize deployments, set the `CONFIG_MAP_NAME` environment variable in the deployment manifest.
+
+### Configuration via Environment Variables
+
+Many settings can be configured via environment variables (useful for containerized deployments):
+
+```yaml
+# Deployment manifest
+env:
+  # Prometheus connection (immutable - requires restart to change)
+  - name: PROMETHEUS_BASE_URL
+    value: "https://prometheus:9090"
+  
+  # Optional: Override ConfigMap name
+  - name: CONFIG_MAP_NAME
+    value: "my-custom-config"
+  
+  # Optional: Override namespace
+  - name: POD_NAMESPACE
+    value: "workload-variant-autoscaler-system"
+```
+
+**See:** [Prometheus Integration](../integrations/prometheus.md) for complete Prometheus configuration options.
+
+### Configuration via CLI Flags
+
+Infrastructure settings can be configured via CLI flags (highest precedence):
+
+```bash
+# Start controller with custom settings
+./manager \
+  --metrics-addr=":8443" \
+  --probe-addr=":8081" \
+  --enable-leader-election \
+  --leader-election-id="my-election-id"
+```
+
+**Note:** CLI flags are typically set in the Helm chart or deployment manifest, not directly.
+
+### Fail-Fast Validation
+
+WVA implements **fail-fast** validation: if required configuration is missing or invalid, the controller will:
+- **Not start** (exits with error code 1)
+- Log clear error messages indicating what's missing
+- Prevent running with invalid configuration
+
+**Required Configuration:**
+- `PROMETHEUS_BASE_URL` - Must be set via environment variable or ConfigMap
+
+**Check Startup Errors:**
+```bash
+# View controller logs for validation errors
+kubectl logs -n workload-variant-autoscaler-system \
+  deployment/workload-variant-autoscaler-controller-manager | \
+  grep -i "config\|validation\|error"
+
+# Check pod status
+kubectl get pods -n workload-variant-autoscaler-system
+# If CrashLoopBackOff, check logs for config errors
+```
+
+### Configuration Update Behavior
+
+**Static Config Updates:**
+- Changes to immutable parameters are **rejected** at runtime
+- Controller emits Warning events and logs errors
+- **Action Required:** Restart the controller to apply changes
+
+**Dynamic Config Updates:**
+- Changes to mutable parameters are **applied immediately**
+- Controller logs the changes (old → new values)
+- No restart required
+
+**Monitor Configuration Changes:**
+```bash
+# Watch for config update logs
+kubectl logs -n workload-variant-autoscaler-system \
+  deployment/workload-variant-autoscaler-controller-manager -f | \
+  grep "Updated.*config"
+
+# Example output:
+# "Updated optimization interval" old=60s new=120s
+# "Updated saturation config" oldEntries=2 newEntries=3
 ```
 
 ## Configuration Options
@@ -268,7 +456,7 @@ spec:
 **Behavior:**
 - Saturation analyzer uses `variantCost` when deciding which variant to scale
 - If costs are equal, chooses variant with most available capacity
-- Does not affect model-based optimization (uses accelerator unit costs)
+- Does not affect model-based optimization
 
 ### Advanced Options
 
