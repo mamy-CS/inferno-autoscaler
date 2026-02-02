@@ -137,7 +137,7 @@ func TestSingleInactiveVariant(t *testing.T) {
 			req := ctrl.Request{NamespacedName: namespacedName}
 			ctx := context.Background()
 
-			ds := datastore.NewDatastore()
+			ds := datastore.NewDatastore(nil)
 			inferencePoolReconciler := &poolreconciler.InferencePoolReconciler{Client: fakeClient, Datastore: ds, PoolGKNN: gknn}
 
 			// (1) Reconcile inferencePool and store generated endpointPool in the datastore
@@ -224,7 +224,7 @@ func TestMultipleInactiveVariants(t *testing.T) {
 	req := ctrl.Request{NamespacedName: namespacedName}
 	ctx := context.Background()
 
-	ds := datastore.NewDatastore()
+	ds := datastore.NewDatastore(nil)
 	inferencePoolReconciler := &poolreconciler.InferencePoolReconciler{Client: fakeClient, Datastore: ds, PoolGKNN: gknn}
 
 	if _, err := inferencePoolReconciler.Reconcile(ctx, req); err != nil {
@@ -301,7 +301,7 @@ func TestEmptyInactiveVariants(t *testing.T) {
 	req := ctrl.Request{NamespacedName: namespacedName}
 	ctx := context.Background()
 
-	ds := datastore.NewDatastore()
+	ds := datastore.NewDatastore(nil)
 	inferencePoolReconciler := &poolreconciler.InferencePoolReconciler{Client: fakeClient, Datastore: ds, PoolGKNN: gknn}
 
 	if _, err := inferencePoolReconciler.Reconcile(ctx, req); err != nil {

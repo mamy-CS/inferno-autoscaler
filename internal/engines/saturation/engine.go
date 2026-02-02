@@ -19,9 +19,7 @@ package saturation
 import (
 	"context"
 	"fmt"
-	"os"
 	"strconv"
-	"strings"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -38,6 +36,7 @@ import (
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/registration"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/source"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/config"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/discovery"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/common"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/executor"
@@ -62,6 +61,7 @@ type Engine struct {
 	executor executor.Executor
 
 	Recorder record.EventRecorder
+	Config   *config.Config // Unified configuration (injected from main.go)
 
 	// ReplicaMetricsCollector is the collector for replica metrics using the source infrastructure
 	ReplicaMetricsCollector *collector.ReplicaMetricsCollector
@@ -81,7 +81,12 @@ func getVariantKey(namespace, name string) string {
 }
 
 // NewEngine creates a new instance of the saturation engine.
-func NewEngine(client client.Client, scheme *runtime.Scheme, recorder record.EventRecorder, metricsRegistry *source.SourceRegistry) *Engine {
+// Config must be non-nil (validated in main.go before engine creation).
+func NewEngine(client client.Client, scheme *runtime.Scheme, recorder record.EventRecorder, metricsRegistry *source.SourceRegistry, cfg *config.Config) *Engine {
+	if cfg == nil {
+		ctrl.Log.Error(nil, "Config is nil in NewEngine - this should not happen")
+		// In production, this would have been caught in main.go, but defensive check for safety
+	}
 	promSource := metricsRegistry.Get("prometheus") // assume prometheus source is registered
 
 	// Create request count function wrapper for scale-to-zero enforcer
@@ -99,6 +104,7 @@ func NewEngine(client client.Client, scheme *runtime.Scheme, recorder record.Eve
 		client:                  client,
 		scheme:                  scheme,
 		Recorder:                recorder,
+		Config:                  cfg,
 		ReplicaMetricsCollector: collector.NewReplicaMetricsCollector(promSource, client),
 		ScaleToZeroEnforcer:     pipeline.NewEnforcer(requestCountFunc),
 		GPULimiter:              gpuLimiter,
@@ -131,22 +137,20 @@ func (e *Engine) StartOptimizeLoop(ctx context.Context) {
 func (e *Engine) optimize(ctx context.Context) error {
 	logger := ctrl.LoggerFrom(ctx)
 
-	//TODO: move interval to manager.yaml
-	interval := common.Config.GetOptimizationInterval()
+	// Get optimization interval from Config (already a time.Duration)
+	interval := e.Config.GetOptimizationInterval()
 
 	// Update the executor interval if changed
 	// Note: simple polling executor might not support dynamic interval update easily without restart,
 	// but here we just check it. The original code used RequeueAfter.
 	// The PollingExecutor uses fixed interval.
 	// TODO: Support dynamic interval in Executor if needed. For now, we log and proceed.
-	if interval != "" {
-		if dur, err := time.ParseDuration(interval); err == nil {
-			// e.executor.SetInterval(dur) // If supported
-			_ = dur
-		}
+	if interval > 0 {
+		// e.executor.SetInterval(interval) // If supported
+		_ = interval
 	}
 
-	if strings.EqualFold(os.Getenv("WVA_SCALE_TO_ZERO"), "true") {
+	if e.Config.Static.ScaleToZeroEnabled {
 		logger.Info("Scaling to zero is enabled")
 	}
 
@@ -162,7 +166,7 @@ func (e *Engine) optimize(ctx context.Context) error {
 	}
 
 	// Collected accelerator inventory (only in limited mode)
-	if strings.EqualFold(os.Getenv("WVA_LIMITED_MODE"), "true") {
+	if e.Config.Static.LimitedModeEnabled {
 		inventory, err := collector.CollectInventoryK8S(ctx, e.client)
 		if err != nil {
 			logger.Error(err, "Failed to collect cluster inventory")
@@ -173,7 +177,7 @@ func (e *Engine) optimize(ctx context.Context) error {
 		logger.Info("Collected cluster accelerator inventory (Limited Mode)", "inventory", inventory)
 	}
 
-	saturationConfigMap := common.Config.GetSaturationConfig()
+	saturationConfigMap := e.Config.GetSaturationConfig()
 	if len(saturationConfigMap) == 0 {
 		logger.Info("Saturation scaling config not loaded yet, skipping optimization")
 		return nil
@@ -231,7 +235,7 @@ func (e *Engine) optimize(ctx context.Context) error {
 		if saturationAnalysis != nil {
 			// Apply scale-to-zero enforcement after saturation analysis
 			// This either scales to zero if enabled and no requests, or ensures minimum replicas
-			scaleToZeroConfig := common.Config.GetScaleToZeroConfig()
+			scaleToZeroConfig := e.Config.GetScaleToZeroConfig()
 
 			// Copy original targets for logging (enforcer modifies map in place)
 			originalTargets := make(map[string]int, len(saturationTargets))

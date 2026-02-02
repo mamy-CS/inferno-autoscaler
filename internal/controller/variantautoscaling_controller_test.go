@@ -34,6 +34,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/config"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
 	testutils "github.com/llm-d-incubation/workload-variant-autoscaler/test/utils"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/test/utils/resources"
@@ -71,7 +72,7 @@ var _ = Describe("VariantAutoscalings Controller", func() {
 			configMap = testutils.CreateAcceleratorUnitCostConfigMap(ns.Name)
 			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
 
-			configMap = testutils.CreateVariantAutoscalingConfigMap(defaultConfigMapName, ns.Name)
+			configMap = testutils.CreateVariantAutoscalingConfigMap(config.DefaultConfigMapName, ns.Name)
 			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
 
 			By("creating the custom resource for the Kind VariantAutoscalings")
@@ -126,8 +127,8 @@ var _ = Describe("VariantAutoscalings Controller", func() {
 
 			configMap = &v1.ConfigMap{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      defaultConfigMapName,
-					Namespace: configMapNamespace,
+					Name:      config.DefaultConfigMapName,
+					Namespace: config.GetNamespace(),
 				},
 			}
 			err = k8sClient.Delete(ctx, configMap)
@@ -169,7 +170,7 @@ var _ = Describe("VariantAutoscalings Controller", func() {
 			configMap = testutils.CreateAcceleratorUnitCostConfigMap(ns.Name)
 			Expect(k8sClient.Create(ctx, configMap)).NotTo(HaveOccurred())
 
-			configMap = testutils.CreateVariantAutoscalingConfigMap(defaultConfigMapName, ns.Name)
+			configMap = testutils.CreateVariantAutoscalingConfigMap(config.DefaultConfigMapName, ns.Name)
 			Expect(k8sClient.Create(ctx, configMap)).NotTo(HaveOccurred())
 		})
 
@@ -195,8 +196,8 @@ var _ = Describe("VariantAutoscalings Controller", func() {
 
 			configMap = &v1.ConfigMap{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      defaultConfigMapName,
-					Namespace: configMapNamespace,
+					Name:      config.DefaultConfigMapName,
+					Namespace: config.GetNamespace(),
 				},
 			}
 			err = k8sClient.Delete(ctx, configMap)
@@ -249,7 +250,7 @@ var _ = Describe("VariantAutoscalings Controller", func() {
 				serviceMonitor := &promoperator.ServiceMonitor{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:              defaultServiceMonitorName,
-						Namespace:         configMapNamespace,
+						Namespace:         config.GetNamespace(),
 						DeletionTimestamp: &now,
 					},
 				}
@@ -275,7 +276,7 @@ var _ = Describe("VariantAutoscalings Controller", func() {
 				serviceMonitor := &promoperator.ServiceMonitor{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      defaultServiceMonitorName,
-						Namespace: configMapNamespace,
+						Namespace: config.GetNamespace(),
 					},
 				}
 
@@ -294,7 +295,7 @@ var _ = Describe("VariantAutoscalings Controller", func() {
 				configMap := &v1.ConfigMap{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "test-configmap",
-						Namespace: configMapNamespace,
+						Namespace: config.GetNamespace(),
 					},
 				}
 

@@ -29,7 +29,6 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
-	"k8s.io/utils/env"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"sigs.k8s.io/controller-runtime/pkg/event"
@@ -38,6 +37,7 @@ import (
 	wvav1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/actuator"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/source"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/config"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/datastore"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/common"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/executor"
@@ -65,22 +65,27 @@ type Engine struct {
 	Actuator       *actuator.DirectActuator
 	Mapper         meta.RESTMapper
 	maxConcurrency int
+	Config         *config.Config // Unified configuration (injected from main.go)
 }
 
 // NewEngine creates a new instance of the scale-from-zero engine.
-func NewEngine(client client.Client, mapper meta.RESTMapper, config *rest.Config, ds datastore.Datastore) (*Engine, error) {
-
-	maxConcurrency, err := env.GetInt(scaleFromZeroEngineMaxConcurrency, 30)
-	if err != nil {
-		return nil, fmt.Errorf("invalid value for %s: expected integer: %w", scaleFromZeroEngineMaxConcurrency, err)
+// cfg must be non-nil (validated in main.go before engine creation).
+func NewEngine(client client.Client, mapper meta.RESTMapper, restConfig *rest.Config, ds datastore.Datastore, cfg *config.Config) (*Engine, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("config is nil in NewEngine - this should not happen")
 	}
 
-	dynamicClient, err := dynamic.NewForConfig(config)
+	maxConcurrency := cfg.Static.ScaleFromZeroMaxConcurrency
+	if maxConcurrency <= 0 {
+		return nil, fmt.Errorf("invalid scale-from-zero max concurrency: must be positive, got %d", maxConcurrency)
+	}
+
+	dynamicClient, err := dynamic.NewForConfig(restConfig)
 	if err != nil {
 		return nil, err
 	}
 
-	actuator, err := actuator.NewDirectActuator(config)
+	actuator, err := actuator.NewDirectActuator(restConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -92,6 +97,7 @@ func NewEngine(client client.Client, mapper meta.RESTMapper, config *rest.Config
 		Actuator:       actuator,
 		Mapper:         mapper,
 		maxConcurrency: maxConcurrency,
+		Config:         cfg,
 	}
 
 	// TODO: replace by an hybrid, polling and reactive executor when available

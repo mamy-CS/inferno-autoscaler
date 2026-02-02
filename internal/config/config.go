@@ -56,8 +56,8 @@ type StaticConfig struct {
 
 // EPPConfig holds EPP (Endpoint Pool) integration configuration.
 type EPPConfig struct {
-	// EPP-specific settings
-	// Add fields as needed
+	// EPP metric reader bearer token for pod scraping
+	MetricReaderBearerToken string // EPP_METRIC_READER_BEARER_TOKEN
 }
 
 // DynamicConfig holds configuration that can be updated at runtime via ConfigMap changes.

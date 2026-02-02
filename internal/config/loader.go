@@ -141,6 +141,12 @@ func loadStaticConfig(ctx context.Context, static *StaticConfig, flags StaticCon
 	static.LimitedModeEnabled = ParseBoolFromConfig(cmData, "WVA_LIMITED_MODE", false)
 	static.ScaleFromZeroMaxConcurrency = ParseIntFromConfig(cmData, "SCALE_FROM_ZERO_ENGINE_MAX_CONCURRENCY", 10, 1)
 
+	// EPP configuration (env/ConfigMap)
+	if static.EPPConfig == nil {
+		static.EPPConfig = &EPPConfig{}
+	}
+	static.EPPConfig.MetricReaderBearerToken = getStringValue("", os.Getenv("EPP_METRIC_READER_BEARER_TOKEN"), cmData["EPP_METRIC_READER_BEARER_TOKEN"], "")
+
 	return nil
 }
 

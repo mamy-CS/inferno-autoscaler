@@ -19,11 +19,11 @@ package datastore
 import (
 	"context"
 	"errors"
-	"os"
 	"sync"
 
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/source"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/source/pod"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/config"
 	poolutil "github.com/llm-d-incubation/workload-variant-autoscaler/internal/utils/pool"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -47,10 +47,11 @@ type Datastore interface {
 	Clear()
 }
 
-func NewDatastore() Datastore {
+func NewDatastore(cfg *config.Config) Datastore {
 	store := &datastore{
 		pools:    &sync.Map{},
 		registry: source.NewSourceRegistry(),
+		config:   cfg,
 	}
 	return store
 }
@@ -58,6 +59,7 @@ func NewDatastore() Datastore {
 type datastore struct {
 	pools    *sync.Map
 	registry *source.SourceRegistry
+	config   *config.Config // Unified configuration (injected from main.go)
 }
 
 // Datastore operations
@@ -68,15 +70,18 @@ func (ds *datastore) PoolSet(ctx context.Context, client client.Client, pool *po
 
 	if ds.registry.Get(pool.Name) == nil {
 		// Create pod source
-		token := os.Getenv("EPP_METRIC_READER_BEARER_TOKEN")
-		config := pod.PodScrapingSourceConfig{
+		var token string
+		if ds.config != nil && ds.config.Static.EPPConfig != nil {
+			token = ds.config.Static.EPPConfig.MetricReaderBearerToken
+		}
+		podConfig := pod.PodScrapingSourceConfig{
 			ServiceName:      pool.EndpointPicker.ServiceName,
 			ServiceNamespace: pool.EndpointPicker.Namespace,
 			MetricsPort:      pool.EndpointPicker.MetricsPortNumber,
 			BearerToken:      token,
 		}
 
-		podSource, err := pod.NewPodScrapingSource(ctx, client, config)
+		podSource, err := pod.NewPodScrapingSource(ctx, client, podConfig)
 		if err != nil {
 			return err
 		}

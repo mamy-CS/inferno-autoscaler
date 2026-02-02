@@ -15,18 +15,21 @@ import (
 func ConfigMapPredicate() predicate.Predicate {
 	return predicate.NewPredicateFuncs(func(obj client.Object) bool {
 		name := obj.GetName()
-		return (name == getConfigMapName() || name == getSaturationConfigMapName() || name == config.DefaultScaleToZeroConfigMapName) && obj.GetNamespace() == configMapNamespace
+		namespace := obj.GetNamespace()
+		expectedNamespace := config.GetNamespace()
+		return (name == config.GetConfigMapName() || name == config.GetSaturationConfigMapName() || name == config.DefaultScaleToZeroConfigMapName) && namespace == expectedNamespace
 	})
 }
 
 // ServiceMonitorPredicate returns a predicate that filters ServiceMonitor events to only the target ServiceMonitor.
-// It checks that the ServiceMonitor name matches serviceMonitorName and namespace matches configMapNamespace.
+// It checks that the ServiceMonitor name matches serviceMonitorName and namespace matches the configured namespace.
 // This predicate is used to filter only the target ServiceMonitor.
 // The ServiceMonitor is watched to enable detection when it is deleted, which would prevent
 // Prometheus from scraping controller metrics (including optimized replicas).
 func ServiceMonitorPredicate() predicate.Predicate {
+	const defaultServiceMonitorName = "workload-variant-autoscaler-controller-manager-metrics-monitor"
 	return predicate.NewPredicateFuncs(func(obj client.Object) bool {
-		return obj.GetName() == defaultServiceMonitorName && obj.GetNamespace() == configMapNamespace
+		return obj.GetName() == defaultServiceMonitorName && obj.GetNamespace() == config.GetNamespace()
 	})
 }
 

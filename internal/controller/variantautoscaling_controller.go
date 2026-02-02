@@ -19,7 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
-	"os"
+	"time"
 
 	promoperator "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	yaml "gopkg.in/yaml.v3"
@@ -51,6 +51,7 @@ type VariantAutoscalingReconciler struct {
 	Scheme *runtime.Scheme
 
 	Recorder record.EventRecorder
+	Config   *config.Config // Unified configuration (injected from main.go)
 }
 
 // +kubebuilder:rbac:groups=llmd.ai,resources=variantautoscalings,verbs=get;list;watch;create;update;patch;delete
@@ -67,33 +68,9 @@ type VariantAutoscalingReconciler struct {
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
 const (
-	defaultConfigMapName = "workload-variant-autoscaler-variantautoscaling-config"
 	// ServiceMonitor constants for watching controller's own metrics ServiceMonitor
 	defaultServiceMonitorName = "workload-variant-autoscaler-controller-manager-metrics-monitor"
-
-	defaultSaturationConfigMapName = "saturation-scaling-config"
 )
-
-func getNamespace() string {
-	if ns := os.Getenv("POD_NAMESPACE"); ns != "" {
-		return ns
-	}
-	return "workload-variant-autoscaler-system"
-}
-
-func getConfigMapName() string {
-	if name := os.Getenv("CONFIG_MAP_NAME"); name != "" {
-		return name
-	}
-	return defaultConfigMapName
-}
-
-func getSaturationConfigMapName() string {
-	if name := os.Getenv("SATURATION_CONFIG_MAP_NAME"); name != "" {
-		return name
-	}
-	return defaultSaturationConfigMapName
-}
 
 var (
 	// ServiceMonitor GVK for watching controller's own metrics ServiceMonitor
@@ -102,7 +79,6 @@ var (
 		Version: "v1",
 		Kind:    "ServiceMonitor",
 	}
-	configMapNamespace = getNamespace()
 )
 
 func (r *VariantAutoscalingReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -296,20 +272,31 @@ func (r *VariantAutoscalingReconciler) SetupWithManager(mgr ctrl.Manager) error 
 				namespace := cm.GetNamespace()
 
 				// Only interested in config maps in the configured namespace
-				if namespace != configMapNamespace {
+				expectedNamespace := config.GetNamespace()
+				if namespace != expectedNamespace {
 					return nil
 				}
 
-				if name == getConfigMapName() {
+				// Use r.Config (captured in closure) to update configuration
+				if r.Config == nil {
+					logger.Error(nil, "Config is nil in reconciler - cannot update configuration")
+					return nil
+				}
+
+				if name == config.GetConfigMapName() {
 					// Optimization Config (Global Interval)
 					if interval, ok := cm.Data["GLOBAL_OPT_INTERVAL"]; ok {
-						common.Config.UpdateOptimizationConfig(interval)
-						logger.Info("Updated global optimization config from ConfigMap", "interval", interval)
+						if parsedInterval, err := time.ParseDuration(interval); err == nil {
+							r.Config.UpdateOptimizationInterval(parsedInterval)
+							logger.Info("Updated global optimization config from ConfigMap", "interval", interval)
+						} else {
+							logger.Error(err, "Invalid GLOBAL_OPT_INTERVAL in ConfigMap", "value", interval)
+						}
 					}
 					// Global config update is handled by the Engine loop which reads the new configuration.
 					// No need to trigger immediate reconciliation for individual VAs.
 					return nil
-				} else if name == getSaturationConfigMapName() {
+				} else if name == config.GetSaturationConfigMapName() {
 					// Saturation Scaling Config
 					configs := make(map[string]interfaces.SaturationScalingConfig)
 					count := 0
@@ -327,7 +314,7 @@ func (r *VariantAutoscalingReconciler) SetupWithManager(mgr ctrl.Manager) error 
 						configs[key] = satConfig
 						count++
 					}
-					common.Config.UpdateSaturationConfig(configs)
+					r.Config.UpdateSaturationConfig(configs)
 					logger.Info("Updated global saturation config from ConfigMap", "entries", count)
 
 					// Global saturation config update is handled by the Engine loop.
@@ -336,7 +323,7 @@ func (r *VariantAutoscalingReconciler) SetupWithManager(mgr ctrl.Manager) error 
 				} else if name == config.DefaultScaleToZeroConfigMapName {
 					// Scale-to-Zero Config
 					scaleToZeroConfig := config.ParseScaleToZeroConfigMap(cm.Data)
-					common.Config.UpdateScaleToZeroConfig(scaleToZeroConfig)
+					r.Config.UpdateScaleToZeroConfig(scaleToZeroConfig)
 					logger.Info("Updated global scale-to-zero config from ConfigMap", "modelCount", len(scaleToZeroConfig))
 
 					// Global config update is handled by the Engine loop.
