@@ -14,11 +14,6 @@ import (
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/utils"
 )
 
-const (
-	// DefaultConfigMapName is the default name of the ConfigMap containing autoscaler configuration
-	DefaultConfigMapName = "workload-variant-autoscaler-variantautoscaling-config"
-)
-
 // CacheConfig holds configuration for the metrics cache.
 // This is the shared configuration type used by all collector plugins (Prometheus, EPP, etc.).
 type CacheConfig struct {
@@ -57,26 +52,6 @@ func DefaultFreshnessThresholds() FreshnessThresholds {
 		StaleThreshold:       2 * time.Minute,
 		UnavailableThreshold: 5 * time.Minute,
 	}
-}
-
-// GetConfigMapName returns the ConfigMap name from environment variable or default.
-// The CONFIG_MAP_NAME environment variable is set by the Helm chart during deployment
-// (see charts/workload-variant-autoscaler/templates/manager/wva-deployment-controller-manager.yaml).
-// Each WVA deployment gets its own uniquely-named ConfigMap based on the Helm release name,
-// allowing multiple WVA instances to coexist in the same cluster without conflicts.
-// The Helm template sets this to: {{ include "workload-variant-autoscaler.fullname" . }}-variantautoscaling-config
-func GetConfigMapName() string {
-	if name := os.Getenv("CONFIG_MAP_NAME"); name != "" {
-		return name
-	}
-	return DefaultConfigMapName
-}
-
-func getNamespace() string {
-	if ns := os.Getenv("POD_NAMESPACE"); ns != "" {
-		return ns
-	}
-	return "workload-variant-autoscaler-system"
 }
 
 // GetPrometheusConfig retrieves Prometheus configuration from environment variables or ConfigMap
@@ -118,7 +93,7 @@ func GetPrometheusConfigFromEnv() (*interfaces.PrometheusConfig, error) {
 // GetPrometheusConfigFromConfigMap retrieves Prometheus configuration from ConfigMap
 func GetPrometheusConfigFromConfigMap(ctx context.Context, k8sClient client.Client) (*interfaces.PrometheusConfig, error) {
 	cm := corev1.ConfigMap{}
-	err := utils.GetConfigMapWithBackoff(ctx, k8sClient, GetConfigMapName(), getNamespace(), &cm)
+	err := utils.GetConfigMapWithBackoff(ctx, k8sClient, GetConfigMapName(), GetNamespace(), &cm)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get ConfigMap for Prometheus config: %w", err)
 	}
@@ -152,7 +127,7 @@ func GetPrometheusConfigFromConfigMap(ctx context.Context, k8sClient client.Clie
 // ReadPrometheusCacheConfig reads Prometheus collector cache configuration from the ConfigMap
 func ReadPrometheusCacheConfig(ctx context.Context, k8sClient client.Client) (*CacheConfig, error) {
 	cm := corev1.ConfigMap{}
-	err := utils.GetConfigMapWithBackoff(ctx, k8sClient, GetConfigMapName(), getNamespace(), &cm)
+	err := utils.GetConfigMapWithBackoff(ctx, k8sClient, GetConfigMapName(), GetNamespace(), &cm)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get configmap for Prometheus cache config: %w", err)
 	}

@@ -1,10 +1,20 @@
 package config
 
 import (
+	"os"
 	"strconv"
 	"time"
 
 	ctrl "sigs.k8s.io/controller-runtime"
+)
+
+const (
+	// DefaultConfigMapName is the default name of the ConfigMap containing autoscaler configuration
+	DefaultConfigMapName = "workload-variant-autoscaler-variantautoscaling-config"
+	// DefaultSaturationConfigMapName is the default name of the ConfigMap for saturation scaling
+	DefaultSaturationConfigMapName = "saturation-scaling-config"
+	// DefaultNamespace is the default namespace for the controller
+	DefaultNamespace = "workload-variant-autoscaler-system"
 )
 
 // GetConfigValue retrieves a value from a ConfigMap with a default fallback
@@ -48,4 +58,38 @@ func ParseBoolFromConfig(data map[string]string, key string, defaultValue bool) 
 		return valStr == "true" || valStr == "1" || valStr == "yes"
 	}
 	return defaultValue
+}
+
+// GetNamespace returns the namespace from environment variable or default.
+func GetNamespace() string {
+	if ns := os.Getenv("POD_NAMESPACE"); ns != "" {
+		return ns
+	}
+	return DefaultNamespace
+}
+
+// GetConfigMapName returns the main ConfigMap name from environment variable or default.
+// The CONFIG_MAP_NAME environment variable is set by the Helm chart during deployment
+// (see charts/workload-variant-autoscaler/templates/manager/wva-deployment-controller-manager.yaml).
+// Each WVA deployment gets its own uniquely-named ConfigMap based on the Helm release name,
+// allowing multiple WVA instances to coexist in the same cluster without conflicts.
+// The Helm template sets this to: {{ include "workload-variant-autoscaler.fullname" . }}-variantautoscaling-config
+//
+// Default value: "workload-variant-autoscaler-variantautoscaling-config"
+// This matches the default Helm release name and OpenShift kustomize deployments.
+// For kustomize deployments using a different ConfigMap name (e.g., "variantautoscaling-config"),
+// set the CONFIG_MAP_NAME environment variable in the deployment manifest.
+func GetConfigMapName() string {
+	if name := os.Getenv("CONFIG_MAP_NAME"); name != "" {
+		return name
+	}
+	return DefaultConfigMapName
+}
+
+// GetSaturationConfigMapName returns the saturation scaling ConfigMap name from environment variable or default.
+func GetSaturationConfigMapName() string {
+	if name := os.Getenv("SATURATION_CONFIG_MAP_NAME"); name != "" {
+		return name
+	}
+	return DefaultSaturationConfigMapName
 }
