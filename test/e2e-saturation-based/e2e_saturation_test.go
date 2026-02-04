@@ -66,8 +66,12 @@ const (
 	controllerMonitoringNamespace = "workload-variant-autoscaler-monitoring"
 	llmDNamespace                 = "llm-d-sim"
 	gatewayName                   = "infra-sim-inference-gateway-istio"
-	WVAConfigMapName              = "wva-variantautoscaling-config"
-	saturationConfigMapName       = "wva-saturation-scaling-config"
+	// WVAConfigMapName uses the Helm-generated name based on default release name
+	// Default Helm release name is "workload-variant-autoscaler", so ConfigMap is:
+	// workload-variant-autoscaler-variantautoscaling-config
+	// The Helm chart sets CONFIG_MAP_NAME env var to this value, so controller uses it
+	WVAConfigMapName        = "workload-variant-autoscaler-variantautoscaling-config"
+	saturationConfigMapName = "workload-variant-autoscaler-wva-saturation-scaling-config"
 )
 
 // Variant and Model constants

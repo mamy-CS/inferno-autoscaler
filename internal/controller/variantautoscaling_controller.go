@@ -317,6 +317,181 @@ func (r *VariantAutoscalingReconciler) isNamespaceTracked(namespace string) bool
 	return exists
 }
 
+// handleConfigMapEvent processes ConfigMap events and updates configuration.
+// This is the main entry point for ConfigMap watching.
+func (r *VariantAutoscalingReconciler) handleConfigMapEvent(ctx context.Context, obj client.Object) []reconcile.Request {
+	// We expect a ConfigMap but check to be safe
+	cm, ok := obj.(*corev1.ConfigMap)
+	if !ok {
+		return nil
+	}
+
+	logger := ctrl.LoggerFrom(ctx)
+	name := cm.GetName()
+	namespace := cm.GetNamespace()
+	expectedNamespace := config.GetNamespace()
+
+	// Use r.Config to update configuration
+	if r.Config == nil {
+		logger.Error(nil, "Config is nil in reconciler - cannot update configuration")
+		return nil
+	}
+
+	// Check if ConfigMap is being deleted
+	isDeleted := !cm.DeletionTimestamp.IsZero()
+
+	// Determine if this is a global or namespace-local ConfigMap
+	isGlobal := namespace == expectedNamespace
+	isNamespaceLocal := !isGlobal && r.shouldWatchNamespaceLocalConfigMap(ctx, namespace)
+
+	// Handle deletion events
+	if isDeleted {
+		r.handleConfigMapDeletion(ctx, cm, name, namespace, isNamespaceLocal)
+		return nil
+	}
+
+	// Only process namespace-local ConfigMaps if namespace is tracked
+	if !isGlobal && !isNamespaceLocal {
+		return nil
+	}
+
+	// Route to appropriate handler based on ConfigMap name
+	switch name {
+	case config.GetConfigMapName():
+		r.handleMainConfigMap(ctx, cm, namespace, isGlobal)
+	case config.GetSaturationConfigMapName():
+		r.handleSaturationConfigMap(ctx, cm, namespace, isGlobal)
+	case config.DefaultScaleToZeroConfigMapName:
+		r.handleScaleToZeroConfigMap(ctx, cm, namespace, isGlobal)
+	}
+
+	// Config updates are handled by the Engine loop which reads the new configuration.
+	// No need to trigger immediate reconciliation for individual VAs.
+	return nil
+}
+
+// handleConfigMapDeletion handles ConfigMap deletion events.
+func (r *VariantAutoscalingReconciler) handleConfigMapDeletion(ctx context.Context, cm *corev1.ConfigMap, name, namespace string, isNamespaceLocal bool) {
+	logger := ctrl.LoggerFrom(ctx)
+
+	if !isNamespaceLocal {
+		return // Only handle namespace-local ConfigMap deletions
+	}
+
+	// Remove namespace-local config on deletion
+	if name == config.GetSaturationConfigMapName() {
+		r.Config.UpdateSaturationConfigForNamespace(namespace, make(map[string]interfaces.SaturationScalingConfig))
+		logger.Info("Removed namespace-local saturation config on ConfigMap deletion", "namespace", namespace)
+	} else if name == config.DefaultScaleToZeroConfigMapName {
+		r.Config.UpdateScaleToZeroConfigForNamespace(namespace, make(config.ScaleToZeroConfigData))
+		logger.Info("Removed namespace-local scale-to-zero config on ConfigMap deletion", "namespace", namespace)
+	}
+
+	// Remove namespace entry to allow fallback to global
+	r.Config.RemoveNamespaceConfig(namespace)
+}
+
+// handleMainConfigMap handles updates to the main ConfigMap (wva-variantautoscaling-config).
+// This ConfigMap is only supported globally, not per-namespace.
+func (r *VariantAutoscalingReconciler) handleMainConfigMap(ctx context.Context, cm *corev1.ConfigMap, namespace string, isGlobal bool) {
+	logger := ctrl.LoggerFrom(ctx)
+
+	if !isGlobal {
+		// Main ConfigMap is only supported globally
+		return
+	}
+
+	// Check for immutable parameter changes first
+	immutableChanges, err := config.DetectImmutableParameterChanges(r.Config, cm.Data)
+	if err != nil {
+		// Immutable parameters detected - emit warning event and log error
+		logger.Error(err, "Attempted to change immutable parameters via ConfigMap",
+			"configmap", fmt.Sprintf("%s/%s", namespace, cm.GetName()),
+			"changes", immutableChanges)
+
+		// Emit Kubernetes Warning event
+		if r.Recorder != nil {
+			var changeList []string
+			for _, change := range immutableChanges {
+				changeList = append(changeList, fmt.Sprintf("%s (old: %q, new: %q)", change.Parameter, change.OldValue, change.NewValue))
+			}
+			r.Recorder.Eventf(
+				cm,
+				corev1.EventTypeWarning,
+				"ImmutableConfigChangeRejected",
+				"ConfigMap %s/%s attempted to change immutable parameters that require controller restart: %s. These changes were rejected. Please restart the controller to apply these changes.",
+				namespace,
+				cm.GetName(),
+				fmt.Sprintf("%v", changeList),
+			)
+		}
+
+		// Don't apply any changes - return early
+		return
+	}
+
+	// Optimization Config (Global Interval) - mutable parameter
+	if interval, ok := cm.Data["GLOBAL_OPT_INTERVAL"]; ok {
+		if parsedInterval, err := time.ParseDuration(interval); err == nil {
+			r.Config.UpdateOptimizationInterval(parsedInterval)
+			logger.Info("Updated global optimization config from ConfigMap", "interval", interval)
+		} else {
+			logger.Error(err, "Invalid GLOBAL_OPT_INTERVAL in ConfigMap", "value", interval)
+		}
+	}
+}
+
+// handleSaturationConfigMap handles updates to the saturation scaling ConfigMap.
+// Supports both global and namespace-local ConfigMaps.
+func (r *VariantAutoscalingReconciler) handleSaturationConfigMap(ctx context.Context, cm *corev1.ConfigMap, namespace string, isGlobal bool) {
+	logger := ctrl.LoggerFrom(ctx)
+
+	// Parse saturation scaling config entries
+	configs := make(map[string]interfaces.SaturationScalingConfig)
+	count := 0
+	for key, yamlStr := range cm.Data {
+		var satConfig interfaces.SaturationScalingConfig
+		if err := yaml.Unmarshal([]byte(yamlStr), &satConfig); err != nil {
+			logger.Error(err, "Failed to parse saturation scaling config entry", "key", key)
+			continue
+		}
+		// Validate
+		if err := satConfig.Validate(); err != nil {
+			logger.Error(err, "Invalid saturation scaling config entry", "key", key)
+			continue
+		}
+		configs[key] = satConfig
+		count++
+	}
+
+	// Update global or namespace-local config
+	if isGlobal {
+		r.Config.UpdateSaturationConfig(configs)
+		logger.Info("Updated global saturation config from ConfigMap", "entries", count)
+	} else {
+		r.Config.UpdateSaturationConfigForNamespace(namespace, configs)
+		logger.Info("Updated namespace-local saturation config from ConfigMap", "namespace", namespace, "entries", count)
+	}
+}
+
+// handleScaleToZeroConfigMap handles updates to the scale-to-zero ConfigMap.
+// Supports both global and namespace-local ConfigMaps.
+func (r *VariantAutoscalingReconciler) handleScaleToZeroConfigMap(ctx context.Context, cm *corev1.ConfigMap, namespace string, isGlobal bool) {
+	logger := ctrl.LoggerFrom(ctx)
+
+	// Parse scale-to-zero config
+	scaleToZeroConfig := config.ParseScaleToZeroConfigMap(cm.Data)
+
+	// Update global or namespace-local config
+	if isGlobal {
+		r.Config.UpdateScaleToZeroConfig(scaleToZeroConfig)
+		logger.Info("Updated global scale-to-zero config from ConfigMap", "modelCount", len(scaleToZeroConfig))
+	} else {
+		r.Config.UpdateScaleToZeroConfigForNamespace(namespace, scaleToZeroConfig)
+		logger.Info("Updated namespace-local scale-to-zero config from ConfigMap", "namespace", namespace, "modelCount", len(scaleToZeroConfig))
+	}
+}
+
 // isNamespaceConfigEnabled checks if a namespace has the opt-in label for namespace-local ConfigMaps.
 // This allows namespaces to opt-in for ConfigMap watching even before VAs are created.
 func (r *VariantAutoscalingReconciler) isNamespaceConfigEnabled(ctx context.Context, namespace string) bool {
@@ -363,147 +538,7 @@ func (r *VariantAutoscalingReconciler) SetupWithManager(mgr ctrl.Manager) error 
 		// Watch the specific ConfigMap to trigger global reconcile and update shared config
 		Watches(
 			&corev1.ConfigMap{},
-			handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
-				// We expect a ConfigMap but check to be safe
-				cm, ok := obj.(*corev1.ConfigMap)
-				if !ok {
-					return nil
-				}
-
-				logger := ctrl.LoggerFrom(ctx)
-				name := cm.GetName()
-				namespace := cm.GetNamespace()
-				expectedNamespace := config.GetNamespace()
-
-				// Use r.Config (captured in closure) to update configuration
-				if r.Config == nil {
-					logger.Error(nil, "Config is nil in reconciler - cannot update configuration")
-					return nil
-				}
-
-				// Check if ConfigMap is being deleted
-				isDeleted := !cm.DeletionTimestamp.IsZero()
-
-				// Determine if this is a global or namespace-local ConfigMap
-				isGlobal := namespace == expectedNamespace
-				isNamespaceLocal := !isGlobal && r.shouldWatchNamespaceLocalConfigMap(ctx, namespace)
-
-				// Handle deletion events
-				if isDeleted {
-					if isNamespaceLocal {
-						// Remove namespace-local config on deletion
-						if name == config.GetSaturationConfigMapName() {
-							r.Config.UpdateSaturationConfigForNamespace(namespace, make(map[string]interfaces.SaturationScalingConfig))
-							logger.Info("Removed namespace-local saturation config on ConfigMap deletion", "namespace", namespace)
-						} else if name == config.DefaultScaleToZeroConfigMapName {
-							r.Config.UpdateScaleToZeroConfigForNamespace(namespace, make(config.ScaleToZeroConfigData))
-							logger.Info("Removed namespace-local scale-to-zero config on ConfigMap deletion", "namespace", namespace)
-						}
-						// Remove namespace entry to allow fallback to global
-						r.Config.RemoveNamespaceConfig(namespace)
-					}
-					return nil
-				}
-
-				// Only process namespace-local ConfigMaps if namespace is tracked
-				if !isGlobal && !isNamespaceLocal {
-					return nil
-				}
-
-				// Handle main ConfigMap (only global, not namespace-local)
-				if name == config.GetConfigMapName() {
-					if !isGlobal {
-						// Main ConfigMap is only supported globally
-						return nil
-					}
-					// Check for immutable parameter changes first
-					immutableChanges, err := config.DetectImmutableParameterChanges(r.Config, cm.Data)
-					if err != nil {
-						// Immutable parameters detected - emit warning event and log error
-						logger.Error(err, "Attempted to change immutable parameters via ConfigMap",
-							"configmap", fmt.Sprintf("%s/%s", namespace, name),
-							"changes", immutableChanges)
-
-						// Emit Kubernetes Warning event
-						if r.Recorder != nil {
-							var changeList []string
-							for _, change := range immutableChanges {
-								changeList = append(changeList, fmt.Sprintf("%s (old: %q, new: %q)", change.Parameter, change.OldValue, change.NewValue))
-							}
-							r.Recorder.Eventf(
-								cm,
-								corev1.EventTypeWarning,
-								"ImmutableConfigChangeRejected",
-								"ConfigMap %s/%s attempted to change immutable parameters that require controller restart: %s. These changes were rejected. Please restart the controller to apply these changes.",
-								namespace,
-								name,
-								fmt.Sprintf("%v", changeList),
-							)
-						}
-
-						// Don't apply any changes - return early
-						return nil
-					}
-
-					// Optimization Config (Global Interval) - mutable parameter
-					if interval, ok := cm.Data["GLOBAL_OPT_INTERVAL"]; ok {
-						if parsedInterval, err := time.ParseDuration(interval); err == nil {
-							r.Config.UpdateOptimizationInterval(parsedInterval)
-							logger.Info("Updated global optimization config from ConfigMap", "interval", interval)
-						} else {
-							logger.Error(err, "Invalid GLOBAL_OPT_INTERVAL in ConfigMap", "value", interval)
-						}
-					}
-					// Global config update is handled by the Engine loop which reads the new configuration.
-					// No need to trigger immediate reconciliation for individual VAs.
-					return nil
-				} else if name == config.GetSaturationConfigMapName() {
-					// Saturation Scaling Config (global or namespace-local)
-					configs := make(map[string]interfaces.SaturationScalingConfig)
-					count := 0
-					for key, yamlStr := range cm.Data {
-						var satConfig interfaces.SaturationScalingConfig
-						if err := yaml.Unmarshal([]byte(yamlStr), &satConfig); err != nil {
-							logger.Error(err, "Failed to parse saturation scaling config entry", "key", key)
-							continue
-						}
-						// Validate
-						if err := satConfig.Validate(); err != nil {
-							logger.Error(err, "Invalid saturation scaling config entry", "key", key)
-							continue
-						}
-						configs[key] = satConfig
-						count++
-					}
-					if isGlobal {
-						r.Config.UpdateSaturationConfig(configs)
-						logger.Info("Updated global saturation config from ConfigMap", "entries", count)
-					} else {
-						r.Config.UpdateSaturationConfigForNamespace(namespace, configs)
-						logger.Info("Updated namespace-local saturation config from ConfigMap", "namespace", namespace, "entries", count)
-					}
-
-					// Config update is handled by the Engine loop.
-					// No need to trigger immediate reconciliation for individual VAs.
-					return nil
-				} else if name == config.DefaultScaleToZeroConfigMapName {
-					// Scale-to-Zero Config (global or namespace-local)
-					scaleToZeroConfig := config.ParseScaleToZeroConfigMap(cm.Data)
-					if isGlobal {
-						r.Config.UpdateScaleToZeroConfig(scaleToZeroConfig)
-						logger.Info("Updated global scale-to-zero config from ConfigMap", "modelCount", len(scaleToZeroConfig))
-					} else {
-						r.Config.UpdateScaleToZeroConfigForNamespace(namespace, scaleToZeroConfig)
-						logger.Info("Updated namespace-local scale-to-zero config from ConfigMap", "namespace", namespace, "modelCount", len(scaleToZeroConfig))
-					}
-
-					// Config update is handled by the Engine loop.
-					// No need to trigger immediate reconciliation for individual VAs.
-					return nil
-				}
-
-				return nil
-			}),
+			handler.EnqueueRequestsFromMapFunc(r.handleConfigMapEvent),
 			// Predicate to filter only the target configmap
 			builder.WithPredicates(ConfigMapPredicate()),
 		).

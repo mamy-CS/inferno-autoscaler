@@ -48,7 +48,13 @@ const (
 // Precedence: flags > env > ConfigMap > defaults
 // Returns error if required configuration is missing or invalid (fail-fast).
 func Load(ctx context.Context, flags StaticConfigFlags, k8sClient client.Client) (*Config, error) {
-	cfg := &Config{}
+	cfg := &Config{
+		// Initialize cache to avoid nil checks
+		cache: configCache{
+			saturationCache:  make(map[string]map[string]interfaces.SaturationScalingConfig),
+			scaleToZeroCache: make(map[string]ScaleToZeroConfigData),
+		},
+	}
 
 	// 1. Load static config (flags > env > ConfigMap > defaults)
 	if err := loadStaticConfig(ctx, &cfg.Static, flags, k8sClient); err != nil {

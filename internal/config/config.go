@@ -9,6 +9,18 @@ import (
 	interfaces "github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
 )
 
+// configCache holds typed caches for namespace-aware configuration lookups.
+// This avoids unsafe type assertions and provides better type safety.
+type configCache struct {
+	// saturationCache caches saturation config per namespace
+	// Key: namespace (empty string for global)
+	saturationCache map[string]map[string]interfaces.SaturationScalingConfig
+
+	// scaleToZeroCache caches scale-to-zero config per namespace
+	// Key: namespace (empty string for global)
+	scaleToZeroCache map[string]ScaleToZeroConfigData
+}
+
 // Config is the unified configuration structure for the WVA controller.
 // It contains both static (immutable after startup) and dynamic (runtime-updatable) configuration.
 type Config struct {
@@ -19,6 +31,10 @@ type Config struct {
 	// Protected by mutex for thread-safe updates
 	mu      sync.RWMutex
 	Dynamic DynamicConfig
+
+	// Cache for expensive namespace-aware config lookups
+	// Always initialized (never nil) to avoid nil checks
+	cache configCache
 }
 
 // StaticConfig holds configuration that is immutable after startup.
@@ -110,38 +126,115 @@ func (c *Config) SaturationConfig() map[string]interfaces.SaturationScalingConfi
 	return c.SaturationConfigForNamespace("")
 }
 
-// SaturationConfigForNamespace returns the saturation scaling configuration for the given namespace.
-// Resolution order: namespace-local > global
-// Thread-safe. Returns a copy to prevent external modifications.
-// If namespace is empty, returns global config.
-func (c *Config) SaturationConfigForNamespace(namespace string) map[string]interfaces.SaturationScalingConfig {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	var sourceConfig map[string]interfaces.SaturationScalingConfig
-
+// resolveNamespaceConfig is a generic helper that resolves namespace-local or global configuration.
+// It implements the common resolution logic: namespace-local > global.
+// Must be called while holding at least a read lock.
+// Returns the source config (not a copy) - callers are responsible for copying if needed.
+func (c *Config) resolveNamespaceConfig(namespace string, getter func(*NamespaceConfig) interface{}) interface{} {
 	// Check namespace-local first (if namespace is provided)
 	if namespace != "" {
 		if nsConfig, exists := c.Dynamic.NamespaceConfigs[namespace]; exists {
-			if len(nsConfig.SaturationConfig) > 0 {
-				sourceConfig = nsConfig.SaturationConfig
+			if result := getter(nsConfig); result != nil {
+				return result
 			}
 		}
 	}
 
 	// Fall back to global if no namespace-local config found
-	if sourceConfig == nil {
-		if c.Dynamic.Global != nil {
-			sourceConfig = c.Dynamic.Global.SaturationConfig
-		}
+	if c.Dynamic.Global != nil {
+		return getter(c.Dynamic.Global)
 	}
 
-	// Return a copy to prevent external modifications
-	if sourceConfig == nil {
+	return nil
+}
+
+// resolveCached is a generic helper that implements the double-checked locking pattern
+// for cached configuration lookups. It checks the cache, resolves if needed, copies the result,
+// and caches it for future lookups.
+// T is the return type (e.g., map[string]interfaces.SaturationScalingConfig or ScaleToZeroConfigData).
+// Must be called without holding any locks.
+// The resolver function should return the source config (may be nil/zero value).
+// The copier function should handle nil/zero values and return an appropriate default.
+func resolveCached[T any](
+	cache *map[string]T,
+	mu *sync.RWMutex,
+	namespace string,
+	resolver func() T,
+	copier func(T) T,
+) T {
+	// Check cache first (read lock)
+	mu.RLock()
+	if *cache != nil {
+		if cached, ok := (*cache)[namespace]; ok {
+			// Cache hit - return cached copy
+			mu.RUnlock()
+			return copier(cached)
+		}
+	}
+	mu.RUnlock()
+
+	// Cache miss - resolve and cache (write lock)
+	mu.Lock()
+	defer mu.Unlock()
+
+	// Initialize cache if nil (defensive programming)
+	if *cache == nil {
+		*cache = make(map[string]T)
+	}
+
+	// Double-check after acquiring write lock (another goroutine might have cached it)
+	if cached, ok := (*cache)[namespace]; ok {
+		return copier(cached)
+	}
+
+	// Resolve configuration (must be called while holding write lock for resolveNamespaceConfig)
+	sourceConfig := resolver()
+
+	// Create copy for return and cache (copier handles nil/zero values)
+	result := copier(sourceConfig)
+
+	// Cache the result
+	(*cache)[namespace] = result
+
+	return result
+}
+
+// SaturationConfigForNamespace returns the saturation scaling configuration for the given namespace.
+// Resolution order: namespace-local > global
+// Thread-safe. Returns a copy to prevent external modifications.
+// If namespace is empty, returns global config.
+// Results are cached to avoid repeated resolution and copying.
+func (c *Config) SaturationConfigForNamespace(namespace string) map[string]interfaces.SaturationScalingConfig {
+	return resolveCached(
+		&c.cache.saturationCache,
+		&c.mu,
+		namespace,
+		func() map[string]interfaces.SaturationScalingConfig {
+			var sourceConfig map[string]interfaces.SaturationScalingConfig
+			if resolved := c.resolveNamespaceConfig(namespace, func(ns *NamespaceConfig) interface{} {
+				if len(ns.SaturationConfig) > 0 {
+					return ns.SaturationConfig
+				}
+				return nil
+			}); resolved != nil {
+				sourceConfig = resolved.(map[string]interfaces.SaturationScalingConfig)
+			}
+			if sourceConfig == nil {
+				return make(map[string]interfaces.SaturationScalingConfig)
+			}
+			return sourceConfig
+		},
+		copySaturationConfig,
+	)
+}
+
+// copySaturationConfig creates a deep copy of the saturation config map.
+func copySaturationConfig(src map[string]interfaces.SaturationScalingConfig) map[string]interfaces.SaturationScalingConfig {
+	if src == nil {
 		return make(map[string]interfaces.SaturationScalingConfig)
 	}
-	result := make(map[string]interfaces.SaturationScalingConfig, len(sourceConfig))
-	for k, v := range sourceConfig {
+	result := make(map[string]interfaces.SaturationScalingConfig, len(src))
+	for k, v := range src {
 		result[k] = v
 	}
 	return result
@@ -158,34 +251,38 @@ func (c *Config) ScaleToZeroConfig() ScaleToZeroConfigData {
 // Resolution order: namespace-local > global
 // Thread-safe. Returns a copy to prevent external modifications.
 // If namespace is empty, returns global config.
+// Results are cached to avoid repeated resolution and copying.
 func (c *Config) ScaleToZeroConfigForNamespace(namespace string) ScaleToZeroConfigData {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	var sourceConfig ScaleToZeroConfigData
-
-	// Check namespace-local first (if namespace is provided)
-	if namespace != "" {
-		if nsConfig, exists := c.Dynamic.NamespaceConfigs[namespace]; exists {
-			if len(nsConfig.ScaleToZeroConfig) > 0 {
-				sourceConfig = nsConfig.ScaleToZeroConfig
+	return resolveCached(
+		&c.cache.scaleToZeroCache,
+		&c.mu,
+		namespace,
+		func() ScaleToZeroConfigData {
+			var sourceConfig ScaleToZeroConfigData
+			if resolved := c.resolveNamespaceConfig(namespace, func(ns *NamespaceConfig) interface{} {
+				if len(ns.ScaleToZeroConfig) > 0 {
+					return ns.ScaleToZeroConfig
+				}
+				return nil
+			}); resolved != nil {
+				sourceConfig = resolved.(ScaleToZeroConfigData)
 			}
-		}
-	}
+			if sourceConfig == nil {
+				return make(ScaleToZeroConfigData)
+			}
+			return sourceConfig
+		},
+		copyScaleToZeroConfig,
+	)
+}
 
-	// Fall back to global if no namespace-local config found
-	if sourceConfig == nil {
-		if c.Dynamic.Global != nil {
-			sourceConfig = c.Dynamic.Global.ScaleToZeroConfig
-		}
-	}
-
-	// Return a copy to prevent external modifications
-	if sourceConfig == nil {
+// copyScaleToZeroConfig creates a deep copy of the scale-to-zero config map.
+func copyScaleToZeroConfig(src ScaleToZeroConfigData) ScaleToZeroConfigData {
+	if src == nil {
 		return make(ScaleToZeroConfigData)
 	}
-	result := make(ScaleToZeroConfigData, len(sourceConfig))
-	for k, v := range sourceConfig {
+	result := make(ScaleToZeroConfigData, len(src))
+	for k, v := range src {
 		result[k] = v
 	}
 	return result
@@ -210,6 +307,16 @@ func (c *Config) UpdateDynamicConfig(dynamic DynamicConfig) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.Dynamic = dynamic
+	// Invalidate all caches since the entire dynamic config changed
+	c.invalidateAllCaches()
+}
+
+// invalidateAllCaches invalidates all cached configurations.
+// Must be called while holding the write lock.
+func (c *Config) invalidateAllCaches() {
+	// Clear all cache entries by reassigning empty maps (more efficient than deleting keys)
+	c.cache.saturationCache = make(map[string]map[string]interfaces.SaturationScalingConfig)
+	c.cache.scaleToZeroCache = make(map[string]ScaleToZeroConfigData)
 }
 
 // UpdateOptimizationInterval updates the optimization interval.
@@ -271,6 +378,25 @@ func (c *Config) UpdateSaturationConfigForNamespace(namespace string, config map
 			ctrl.Log.Info("Updated namespace-local saturation config", "namespace", namespace, "oldEntries", oldCount, "newEntries", newCount)
 		}
 	}
+
+	// Invalidate cache for this namespace and global (global changes affect all namespaces)
+	c.invalidateNamespaceCache(namespace, true)
+}
+
+// invalidateNamespaceCache invalidates cached configurations for the given namespace.
+// If invalidateGlobal is true and namespace is not empty, also invalidates global cache.
+// This is needed because namespace-local changes might affect resolution logic.
+// Must be called while holding the write lock.
+func (c *Config) invalidateNamespaceCache(namespace string, invalidateGlobal bool) {
+	// Invalidate both caches for the namespace
+	delete(c.cache.saturationCache, namespace)
+	delete(c.cache.scaleToZeroCache, namespace)
+
+	// Also invalidate global cache if requested (for namespace-local updates)
+	if invalidateGlobal && namespace != "" {
+		delete(c.cache.saturationCache, "")
+		delete(c.cache.scaleToZeroCache, "")
+	}
 }
 
 // UpdateScaleToZeroConfig updates the global scale-to-zero configuration.
@@ -320,6 +446,9 @@ func (c *Config) UpdateScaleToZeroConfigForNamespace(namespace string, config Sc
 			ctrl.Log.Info("Updated namespace-local scale-to-zero config", "namespace", namespace, "oldModels", oldCount, "newModels", newCount)
 		}
 	}
+
+	// Invalidate cache for this namespace and global (global changes affect all namespaces)
+	c.invalidateNamespaceCache(namespace, true)
 }
 
 // RemoveNamespaceConfig removes the namespace-local configuration for the given namespace.
@@ -335,6 +464,9 @@ func (c *Config) RemoveNamespaceConfig(namespace string) {
 		if _, exists := c.Dynamic.NamespaceConfigs[namespace]; exists {
 			delete(c.Dynamic.NamespaceConfigs, namespace)
 			ctrl.Log.Info("Removed namespace-local config", "namespace", namespace)
+			// Invalidate cache for this namespace (will now fall back to global)
+			// Don't invalidate global cache - we're just removing namespace-local override
+			c.invalidateNamespaceCache(namespace, false)
 		}
 	}
 }
@@ -392,6 +524,10 @@ func NewTestConfig() *Config {
 				ScaleToZeroConfig: make(ScaleToZeroConfigData),
 			},
 			NamespaceConfigs: make(map[string]*NamespaceConfig),
+		},
+		cache: configCache{
+			saturationCache:  make(map[string]map[string]interfaces.SaturationScalingConfig),
+			scaleToZeroCache: make(map[string]ScaleToZeroConfigData),
 		},
 	}
 }

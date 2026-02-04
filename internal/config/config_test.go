@@ -134,9 +134,9 @@ func TestConfig_ThreadSafeConcurrentReads(t *testing.T) {
 			defer wg.Done()
 			<-start // Wait for signal to start
 			// All readers should be able to read concurrently (RWMutex allows multiple readers)
-				interval := cfg.OptimizationInterval()
-				satConfig := cfg.SaturationConfig()
-				scaleToZeroConfig := cfg.ScaleToZeroConfig()
+			interval := cfg.OptimizationInterval()
+			satConfig := cfg.SaturationConfig()
+			scaleToZeroConfig := cfg.ScaleToZeroConfig()
 			_ = interval
 			_ = satConfig
 			_ = scaleToZeroConfig

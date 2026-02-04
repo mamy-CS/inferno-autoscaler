@@ -40,7 +40,8 @@ import (
 
 // Scale-to-zero test constants
 const (
-	scaleToZeroConfigMapName = "wva-model-scale-to-zero-config"
+	// Uses Helm-generated name based on default release name
+	scaleToZeroConfigMapName = "workload-variant-autoscaler-wva-model-scale-to-zero-config"
 	// retentionPeriodShort is a short retention period for testing scale-to-zero
 	retentionPeriodShort = "2m"
 )
