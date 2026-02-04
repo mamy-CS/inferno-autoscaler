@@ -329,7 +329,7 @@ func (r *VariantAutoscalingReconciler) handleConfigMapEvent(ctx context.Context,
 	logger := ctrl.LoggerFrom(ctx)
 	name := cm.GetName()
 	namespace := cm.GetNamespace()
-	expectedNamespace := config.GetNamespace()
+		expectedNamespace := config.Namespace()
 
 	// Use r.Config to update configuration
 	if r.Config == nil {
@@ -357,9 +357,9 @@ func (r *VariantAutoscalingReconciler) handleConfigMapEvent(ctx context.Context,
 
 	// Route to appropriate handler based on ConfigMap name
 	switch name {
-	case config.GetConfigMapName():
+		case config.ConfigMapName():
 		r.handleMainConfigMap(ctx, cm, namespace, isGlobal)
-	case config.GetSaturationConfigMapName():
+		case config.SaturationConfigMapName():
 		r.handleSaturationConfigMap(ctx, cm, namespace, isGlobal)
 	case config.DefaultScaleToZeroConfigMapName:
 		r.handleScaleToZeroConfigMap(ctx, cm, namespace, isGlobal)
@@ -379,7 +379,7 @@ func (r *VariantAutoscalingReconciler) handleConfigMapDeletion(ctx context.Conte
 	}
 
 	// Remove namespace-local config on deletion
-	if name == config.GetSaturationConfigMapName() {
+					if name == config.SaturationConfigMapName() {
 		r.Config.UpdateSaturationConfigForNamespace(namespace, make(map[string]interfaces.SaturationScalingConfig))
 		logger.Info("Removed namespace-local saturation config on ConfigMap deletion", "namespace", namespace)
 	} else if name == config.DefaultScaleToZeroConfigMapName {

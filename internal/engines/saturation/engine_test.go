@@ -43,7 +43,7 @@ import (
 
 var _ = Describe("Saturation Engine", func() {
 
-	// Use config.GetNamespace() instead of local function
+	// Use config.Namespace() instead of local function
 
 	// CreateServiceClassConfigMap creates a service class ConfigMap for testing
 	var CreateServiceClassConfigMap = func(controllerNamespace string, models ...string) *v1.ConfigMap {
@@ -79,7 +79,7 @@ data:
 
 	Context("When validating configurations", func() {
 		const configMapName = "wva-variantautoscaling-config"
-		var configMapNamespace = config.GetNamespace()
+		var configMapNamespace = config.Namespace()
 
 		BeforeEach(func() {
 			logging.NewTestLogger()
@@ -232,7 +232,7 @@ data:
 	Context("When handling multiple VariantAutoscalings", func() {
 		const totalVAs = 3
 		const configMapName = "wva-variantautoscaling-config"
-		var configMapNamespace = config.GetNamespace()
+		var configMapNamespace = config.Namespace()
 
 		BeforeEach(func() {
 			logging.NewTestLogger()
@@ -480,7 +480,7 @@ data:
 	Context("Source Infrastructure Optimization Tests", func() {
 		const totalVAs = 3
 		const configMapName = "wva-variantautoscaling-config"
-		var configMapNamespace = config.GetNamespace()
+		var configMapNamespace = config.Namespace()
 		var sourceRegistry *source.SourceRegistry
 		var mockPromAPI *testutils.MockPromAPI
 

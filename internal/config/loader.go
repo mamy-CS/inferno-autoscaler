@@ -100,8 +100,8 @@ func loadStaticConfig(ctx context.Context, static *StaticConfig, flags StaticCon
 	// Load from ConfigMap (if available)
 	var cmData map[string]string
 	cm := &corev1.ConfigMap{}
-	cmName := GetConfigMapName()
-	cmNamespace := GetNamespace()
+	cmName := ConfigMapName()
+	cmNamespace := Namespace()
 	if err := utils.GetConfigMapWithBackoff(ctx, k8sClient, cmName, cmNamespace, cm); err == nil {
 		cmData = cm.Data
 		ctrl.Log.Info("Loaded ConfigMap for static config", "name", cmName, "namespace", cmNamespace)
@@ -170,8 +170,8 @@ func loadDynamicConfig(ctx context.Context, dynamic *DynamicConfig, k8sClient cl
 
 	// Load main ConfigMap
 	cm := &corev1.ConfigMap{}
-	cmName := GetConfigMapName()
-	cmNamespace := GetNamespace()
+	cmName := ConfigMapName()
+	cmNamespace := Namespace()
 	if err := utils.GetConfigMapWithBackoff(ctx, k8sClient, cmName, cmNamespace, cm); err != nil {
 		ctrl.Log.Info("ConfigMap not found for dynamic config, using defaults", "name", cmName, "namespace", cmNamespace, "error", err)
 		// Continue to load other ConfigMaps even if main ConfigMap is not found
@@ -201,7 +201,7 @@ func loadDynamicConfig(ctx context.Context, dynamic *DynamicConfig, k8sClient cl
 
 	// Load saturation scaling config (global)
 	saturationCM := &corev1.ConfigMap{}
-	saturationCMName := GetSaturationConfigMapName()
+	saturationCMName := SaturationConfigMapName()
 	// Use GetConfigMapWithBackoff which handles both fake clients (in tests) and real clients (in production)
 	if err := utils.GetConfigMapWithBackoff(ctx, k8sClient, saturationCMName, cmNamespace, saturationCM); err == nil {
 		configs := make(map[string]interfaces.SaturationScalingConfig)

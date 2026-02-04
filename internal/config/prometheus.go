@@ -93,7 +93,7 @@ func GetPrometheusConfigFromEnv() (*interfaces.PrometheusConfig, error) {
 // GetPrometheusConfigFromConfigMap retrieves Prometheus configuration from ConfigMap
 func GetPrometheusConfigFromConfigMap(ctx context.Context, k8sClient client.Client) (*interfaces.PrometheusConfig, error) {
 	cm := corev1.ConfigMap{}
-	err := utils.GetConfigMapWithBackoff(ctx, k8sClient, GetConfigMapName(), GetNamespace(), &cm)
+	err := utils.GetConfigMapWithBackoff(ctx, k8sClient, ConfigMapName(), Namespace(), &cm)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get ConfigMap for Prometheus config: %w", err)
 	}
@@ -110,11 +110,11 @@ func GetPrometheusConfigFromConfigMap(ctx context.Context, k8sClient client.Clie
 	}
 
 	// Parse TLS configuration from ConfigMap (TLS is always enabled for HTTPS-only support)
-	config.InsecureSkipVerify = GetConfigValue(cm.Data, "PROMETHEUS_TLS_INSECURE_SKIP_VERIFY", "") == "true"
-	config.CACertPath = GetConfigValue(cm.Data, "PROMETHEUS_CA_CERT_PATH", "")
-	config.ClientCertPath = GetConfigValue(cm.Data, "PROMETHEUS_CLIENT_CERT_PATH", "")
-	config.ClientKeyPath = GetConfigValue(cm.Data, "PROMETHEUS_CLIENT_KEY_PATH", "")
-	config.ServerName = GetConfigValue(cm.Data, "PROMETHEUS_SERVER_NAME", "")
+	config.InsecureSkipVerify = ConfigValue(cm.Data, "PROMETHEUS_TLS_INSECURE_SKIP_VERIFY", "") == "true"
+	config.CACertPath = ConfigValue(cm.Data, "PROMETHEUS_CA_CERT_PATH", "")
+	config.ClientCertPath = ConfigValue(cm.Data, "PROMETHEUS_CLIENT_CERT_PATH", "")
+	config.ClientKeyPath = ConfigValue(cm.Data, "PROMETHEUS_CLIENT_KEY_PATH", "")
+	config.ServerName = ConfigValue(cm.Data, "PROMETHEUS_SERVER_NAME", "")
 
 	// Add bearer token if provided
 	if bearerToken, exists := cm.Data["PROMETHEUS_BEARER_TOKEN"]; exists && bearerToken != "" {
@@ -127,7 +127,7 @@ func GetPrometheusConfigFromConfigMap(ctx context.Context, k8sClient client.Clie
 // ReadPrometheusCacheConfig reads Prometheus collector cache configuration from the ConfigMap
 func ReadPrometheusCacheConfig(ctx context.Context, k8sClient client.Client) (*CacheConfig, error) {
 	cm := corev1.ConfigMap{}
-	err := utils.GetConfigMapWithBackoff(ctx, k8sClient, GetConfigMapName(), GetNamespace(), &cm)
+	err := utils.GetConfigMapWithBackoff(ctx, k8sClient, ConfigMapName(), Namespace(), &cm)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get configmap for Prometheus cache config: %w", err)
 	}

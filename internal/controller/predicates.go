@@ -20,12 +20,12 @@ func ConfigMapPredicate() predicate.Predicate {
 	return predicate.NewPredicateFuncs(func(obj client.Object) bool {
 		name := obj.GetName()
 		namespace := obj.GetNamespace()
-		expectedNamespace := config.GetNamespace()
+		expectedNamespace := config.Namespace()
 
 		// Well-known ConfigMap names
 		wellKnownNames := map[string]bool{
-			config.GetConfigMapName():              true,
-			config.GetSaturationConfigMapName():    true,
+			config.ConfigMapName():              true,
+			config.SaturationConfigMapName():    true,
 			config.DefaultScaleToZeroConfigMapName: true,
 		}
 
@@ -53,7 +53,7 @@ func ConfigMapPredicate() predicate.Predicate {
 func ServiceMonitorPredicate() predicate.Predicate {
 	const defaultServiceMonitorName = "workload-variant-autoscaler-controller-manager-metrics-monitor"
 	return predicate.NewPredicateFuncs(func(obj client.Object) bool {
-		return obj.GetName() == defaultServiceMonitorName && obj.GetNamespace() == config.GetNamespace()
+		return obj.GetName() == defaultServiceMonitorName && obj.GetNamespace() == config.Namespace()
 	})
 }
 
