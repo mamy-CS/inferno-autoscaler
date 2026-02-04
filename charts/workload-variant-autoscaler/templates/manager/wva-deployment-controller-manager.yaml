@@ -74,7 +74,7 @@ spec:
           - name: CONFIG_MAP_NAME
             value: {{ include "workload-variant-autoscaler.fullname" . }}-variantautoscaling-config
           - name: SATURATION_CONFIG_MAP_NAME
-            value: {{ include "workload-variant-autoscaler.fullname" . }}-saturation-scaling-config
+            value: {{ include "workload-variant-autoscaler.fullname" . }}-wva-saturation-scaling-config
           - name: PROMETHEUS_BASE_URL
             valueFrom:
               configMapKeyRef:

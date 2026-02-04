@@ -78,7 +78,7 @@ data:
 	}
 
 	Context("When validating configurations", func() {
-		const configMapName = "workload-variant-autoscaler-variantautoscaling-config"
+		const configMapName = "wva-variantautoscaling-config"
 		var configMapNamespace = config.GetNamespace()
 
 		BeforeEach(func() {
@@ -231,7 +231,7 @@ data:
 
 	Context("When handling multiple VariantAutoscalings", func() {
 		const totalVAs = 3
-		const configMapName = "workload-variant-autoscaler-variantautoscaling-config"
+		const configMapName = "wva-variantautoscaling-config"
 		var configMapNamespace = config.GetNamespace()
 
 		BeforeEach(func() {
@@ -479,7 +479,7 @@ data:
 
 	Context("Source Infrastructure Optimization Tests", func() {
 		const totalVAs = 3
-		const configMapName = "workload-variant-autoscaler-variantautoscaling-config"
+		const configMapName = "wva-variantautoscaling-config"
 		var configMapNamespace = config.GetNamespace()
 		var sourceRegistry *source.SourceRegistry
 		var mockPromAPI *testutils.MockPromAPI

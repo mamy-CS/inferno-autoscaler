@@ -40,7 +40,7 @@ import (
 
 // Scale-to-zero test constants
 const (
-	scaleToZeroConfigMapName = "model-scale-to-zero-config"
+	scaleToZeroConfigMapName = "wva-model-scale-to-zero-config"
 	// retentionPeriodShort is a short retention period for testing scale-to-zero
 	retentionPeriodShort = "2m"
 )

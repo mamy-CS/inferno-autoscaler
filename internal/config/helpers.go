@@ -10,9 +10,9 @@ import (
 
 const (
 	// DefaultConfigMapName is the default name of the ConfigMap containing autoscaler configuration
-	DefaultConfigMapName = "workload-variant-autoscaler-variantautoscaling-config"
+	DefaultConfigMapName = "wva-variantautoscaling-config"
 	// DefaultSaturationConfigMapName is the default name of the ConfigMap for saturation scaling
-	DefaultSaturationConfigMapName = "saturation-scaling-config"
+	DefaultSaturationConfigMapName = "wva-saturation-scaling-config"
 	// DefaultNamespace is the default namespace for the controller
 	DefaultNamespace = "workload-variant-autoscaler-system"
 )
@@ -75,10 +75,9 @@ func GetNamespace() string {
 // allowing multiple WVA instances to coexist in the same cluster without conflicts.
 // The Helm template sets this to: {{ include "workload-variant-autoscaler.fullname" . }}-variantautoscaling-config
 //
-// Default value: "workload-variant-autoscaler-variantautoscaling-config"
-// This matches the default Helm release name and OpenShift kustomize deployments.
-// For kustomize deployments using a different ConfigMap name (e.g., "variantautoscaling-config"),
-// set the CONFIG_MAP_NAME environment variable in the deployment manifest.
+// Default value: "wva-variantautoscaling-config"
+// For kustomize deployments using a different ConfigMap name, set the CONFIG_MAP_NAME
+// environment variable in the deployment manifest.
 func GetConfigMapName() string {
 	if name := os.Getenv("CONFIG_MAP_NAME"); name != "" {
 		return name

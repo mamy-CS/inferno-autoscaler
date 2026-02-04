@@ -33,7 +33,7 @@ import (
 
 // Scale-to-zero test configuration
 const (
-	scaleToZeroConfigMapName = "model-scale-to-zero-config"
+	scaleToZeroConfigMapName = "wva-model-scale-to-zero-config"
 	// retentionPeriod for scale-to-zero tests
 	// Using a short period for faster test execution
 	retentionPeriod = "3m"

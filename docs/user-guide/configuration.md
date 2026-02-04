@@ -194,7 +194,7 @@ Configuration values are loaded with the following precedence (highest to lowest
 export METRICS_ADDR=":8080"
 
 # ConfigMap (overridden by env/flags)
-# workload-variant-autoscaler-variantautoscaling-config
+# wva-variantautoscaling-config
 data:
   METRICS_ADDR: ":9090"
 
@@ -224,7 +224,7 @@ These settings **cannot** be changed at runtime via ConfigMap updates. Attempts 
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: workload-variant-autoscaler-variantautoscaling-config
+  name: wva-variantautoscaling-config
   namespace: workload-variant-autoscaler-system
 data:
   PROMETHEUS_BASE_URL: "https://new-prometheus:9090"  # Requires restart
@@ -248,8 +248,8 @@ These settings **can** be changed at runtime via ConfigMap updates without resta
 
 **Mutable Parameters:**
 - `GLOBAL_OPT_INTERVAL` - Optimization interval (default: `60s`)
-- Saturation scaling configuration (via `saturation-scaling-config` ConfigMap)
-- Scale-to-zero configuration (via `model-scale-to-zero-config` ConfigMap)
+- Saturation scaling configuration (via `wva-saturation-scaling-config` ConfigMap)
+- Scale-to-zero configuration (via `wva-model-scale-to-zero-config` ConfigMap)
 - Prometheus cache settings
 
 **Example - Runtime Configuration Update:**
@@ -258,7 +258,7 @@ These settings **can** be changed at runtime via ConfigMap updates without resta
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: workload-variant-autoscaler-variantautoscaling-config
+  name: wva-variantautoscaling-config
   namespace: workload-variant-autoscaler-system
 data:
   GLOBAL_OPT_INTERVAL: "120s"  # Applied immediately
@@ -319,8 +319,8 @@ WVA supports namespace-local ConfigMap overrides that allow different namespaces
 **Well-Known ConfigMap Names:**
 
 The following ConfigMap names are recognized for namespace-local overrides:
-- `saturation-scaling-config` - Saturation scaling thresholds
-- `model-scale-to-zero-config` - Scale-to-zero configuration
+- `wva-saturation-scaling-config` - Saturation scaling thresholds
+- `wva-model-scale-to-zero-config` - Scale-to-zero configuration
 
 **Example: Namespace-Local Saturation Config**
 
@@ -329,7 +329,7 @@ The following ConfigMap names are recognized for namespace-local overrides:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: saturation-scaling-config
+  name: wva-saturation-scaling-config
   namespace: workload-variant-autoscaler-system
 data:
   default: |
@@ -344,7 +344,7 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: saturation-scaling-config  # Same well-known name
+  name: wva-saturation-scaling-config  # Same well-known name
   namespace: production  # Different namespace
 data:
   default: |
@@ -363,7 +363,7 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: model-scale-to-zero-config
+  name: wva-model-scale-to-zero-config
   namespace: workload-variant-autoscaler-system
 data:
   model1: |
@@ -377,7 +377,7 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: model-scale-to-zero-config
+  name: wva-model-scale-to-zero-config
   namespace: staging
 data:
   model1: |
@@ -392,7 +392,7 @@ When a namespace-local ConfigMap is deleted, WVA automatically falls back to the
 
 ```bash
 # Delete namespace-local ConfigMap
-kubectl delete configmap saturation-scaling-config -n production
+kubectl delete configmap wva-saturation-scaling-config -n production
 
 # VAs in production namespace now use global config
 ```
@@ -416,7 +416,7 @@ kubectl apply -f - <<EOF
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: saturation-scaling-config
+  name: wva-saturation-scaling-config
   namespace: production
 data:
   default: |
@@ -432,7 +432,7 @@ EOF
 
 **Limitations:**
 
-- **Main ConfigMap** (`workload-variant-autoscaler-variantautoscaling-config`) is only supported globally, not as namespace-local override
+- **Main ConfigMap** (`wva-variantautoscaling-config`) is only supported globally, not as namespace-local override
 - **Optimization interval** (`GLOBAL_OPT_INTERVAL`) is global only
 - **Prometheus cache settings** are global only
 
@@ -446,13 +446,13 @@ They can be used together - you can have multiple controller instances, each usi
 
 ### Main Configuration ConfigMap
 
-The main configuration ConfigMap (`workload-variant-autoscaler-variantautoscaling-config`) supports both static and dynamic settings:
+The main configuration ConfigMap (`wva-variantautoscaling-config`) supports both static and dynamic settings:
 
 ```yaml
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: workload-variant-autoscaler-variantautoscaling-config
+  name: wva-variantautoscaling-config
   namespace: workload-variant-autoscaler-system
 data:
   # Mutable: Optimization interval (can be changed at runtime)

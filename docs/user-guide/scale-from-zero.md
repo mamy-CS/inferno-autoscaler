@@ -60,7 +60,7 @@ TOKEN=$(kubectl -n workload-variant-autoscaler-system get secret workload-varian
 **Update the WVA ConfigMap:**
 
 ```bash
-kubectl -n workload-variant-autoscaler-system patch configmap workload-variant-autoscaler-variantautoscaling-config \
+kubectl -n workload-variant-autoscaler-system patch configmap wva-variantautoscaling-config \
   --type merge \
   -p "{\"data\":{\"EPP_METRIC_READER_BEARER_TOKEN\":\"Bearer $TOKEN\"}}"
 ```
@@ -68,7 +68,7 @@ kubectl -n workload-variant-autoscaler-system patch configmap workload-variant-a
 Or manually edit the ConfigMap:
 
 ```bash
-kubectl -n workload-variant-autoscaler-system edit configmap workload-variant-autoscaler-variantautoscaling-config
+kubectl -n workload-variant-autoscaler-system edit configmap wva-variantautoscaling-config
 ```
 
 Add the token to the ConfigMap:
@@ -77,7 +77,7 @@ Add the token to the ConfigMap:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: workload-variant-autoscaler-variantautoscaling-config
+  name: wva-variantautoscaling-config
   namespace: workload-variant-autoscaler-system
 data:
   EPP_METRIC_READER_BEARER_TOKEN: "Bearer <your-token-here>"

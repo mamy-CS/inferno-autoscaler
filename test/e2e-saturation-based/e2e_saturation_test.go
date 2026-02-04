@@ -66,8 +66,8 @@ const (
 	controllerMonitoringNamespace = "workload-variant-autoscaler-monitoring"
 	llmDNamespace                 = "llm-d-sim"
 	gatewayName                   = "infra-sim-inference-gateway-istio"
-	WVAConfigMapName              = "workload-variant-autoscaler-variantautoscaling-config"
-	saturationConfigMapName       = "workload-variant-autoscaler-saturation-scaling-config"
+	WVAConfigMapName              = "wva-variantautoscaling-config"
+	saturationConfigMapName       = "wva-saturation-scaling-config"
 )
 
 // Variant and Model constants

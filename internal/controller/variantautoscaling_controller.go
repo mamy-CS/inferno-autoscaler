@@ -72,7 +72,7 @@ type VariantAutoscalingReconciler struct {
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;update;list;watch
 // Note: The broad ConfigMap permission above is required for namespace-local ConfigMap overrides.
-// The controller filters by well-known names (saturation-scaling-config, model-scale-to-zero-config)
+// The controller filters by well-known names (wva-saturation-scaling-config, wva-model-scale-to-zero-config)
 // in its predicate logic, providing effective access control.
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch
 // Note: Namespace watch permission is required for label-based namespace opt-in for namespace-local ConfigMaps.

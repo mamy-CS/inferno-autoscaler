@@ -280,7 +280,7 @@ func TestLoad_DynamicConfig_SaturationConfig(t *testing.T) {
 
 	saturationCM := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "saturation-scaling-config",
+			Name:      "wva-saturation-scaling-config",
 			Namespace: "workload-variant-autoscaler-system",
 		},
 		Data: map[string]string{
@@ -295,7 +295,7 @@ queueSpareTrigger: 3`,
 	// Verify ConfigMap can be retrieved directly
 	testCM := &corev1.ConfigMap{}
 	err := k8sClient.Get(ctx, client.ObjectKey{
-		Name:      "saturation-scaling-config",
+		Name:      "wva-saturation-scaling-config",
 		Namespace: "workload-variant-autoscaler-system",
 	}, testCM)
 	if err != nil {
@@ -304,7 +304,7 @@ queueSpareTrigger: 3`,
 
 	// Also test GetConfigMapWithBackoff directly to verify it works
 	testCM2 := &corev1.ConfigMap{}
-	err2 := utils.GetConfigMapWithBackoff(ctx, k8sClient, "saturation-scaling-config", "workload-variant-autoscaler-system", testCM2)
+	err2 := utils.GetConfigMapWithBackoff(ctx, k8sClient, "wva-saturation-scaling-config", "workload-variant-autoscaler-system", testCM2)
 	if err2 != nil {
 		t.Logf("GetConfigMapWithBackoff failed: %v (this might be expected in test)", err2)
 	} else {
@@ -324,7 +324,7 @@ queueSpareTrigger: 3`,
 		// The issue might be that GetConfigMapWithBackoff works but the loader
 		// uses a different namespace or the ConfigMap isn't being found during Load()
 		t.Logf("Saturation config has %d entries (expected 1)", len(satConfig))
-		t.Logf("ConfigMap name should be 'saturation-scaling-config', namespace 'workload-variant-autoscaler-system'")
+		t.Logf("ConfigMap name should be 'wva-saturation-scaling-config', namespace 'workload-variant-autoscaler-system'")
 		t.Fatalf("Expected 1 saturation config entry, got %d", len(satConfig))
 	}
 
@@ -344,7 +344,7 @@ func TestLoad_DynamicConfig_InvalidSaturationConfig(t *testing.T) {
 
 	saturationCM := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "saturation-scaling-config",
+			Name:      "wva-saturation-scaling-config",
 			Namespace: "workload-variant-autoscaler-system",
 		},
 		Data: map[string]string{

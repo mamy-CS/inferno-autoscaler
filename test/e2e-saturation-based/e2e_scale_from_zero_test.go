@@ -43,7 +43,7 @@ const (
 	scaleFromZeroTestTimeout   = 15 * time.Minute
 	scaleUpFromZeroTimeout     = 5 * time.Minute
 	scaleFromZeroRequestCount  = 10
-	scaleFromZeroConfigMapName = "workload-variant-autoscaler-variantautoscaling-config"
+	scaleFromZeroConfigMapName = "wva-variantautoscaling-config"
 )
 
 // Test workload-variant-autoscaler - Scale-From-Zero Feature

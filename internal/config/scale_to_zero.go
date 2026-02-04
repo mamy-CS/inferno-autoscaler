@@ -22,11 +22,11 @@ const (
 
 	// DefaultScaleToZeroConfigMapName is the default name of the ConfigMap that stores
 	// per-model scale-to-zero configuration.
-	DefaultScaleToZeroConfigMapName = "model-scale-to-zero-config"
+	DefaultScaleToZeroConfigMapName = "wva-model-scale-to-zero-config"
 
 	// GlobalDefaultsKey is the key in the ConfigMap used to specify global defaults
 	// for all models. Models can override these defaults with their specific configuration.
-	// This follows the same pattern as saturation-scaling-config.
+	// This follows the same pattern as wva-saturation-scaling-config.
 	GlobalDefaultsKey = "default"
 )
 
@@ -34,7 +34,7 @@ const (
 // Uses pointer for EnableScaleToZero to distinguish between "not set" (nil) and explicitly set to false.
 // This allows partial overrides where a model can inherit enableScaleToZero from global defaults
 // while overriding only the retentionPeriod.
-// Field naming follows saturation-scaling-config convention (snake_case for YAML).
+// Field naming follows wva-saturation-scaling-config convention (snake_case for YAML).
 type ModelScaleToZeroConfig struct {
 	// ModelID is the unique identifier for the model (only used in override entries)
 	ModelID string `yaml:"model_id,omitempty" json:"model_id,omitempty"`
@@ -157,7 +157,7 @@ func GetMinNumReplicas(configData ScaleToZeroConfigData, modelID string) int {
 }
 
 // ParseScaleToZeroConfigMap parses scale-to-zero configuration from a ConfigMap's data.
-// The ConfigMap follows the same format as saturation-scaling-config:
+// The ConfigMap follows the same format as wva-saturation-scaling-config:
 //   - "default": global defaults for all models
 //   - "<override-name>": per-model configuration with model_id field
 //
