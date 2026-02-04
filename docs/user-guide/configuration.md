@@ -332,6 +332,150 @@ helm install workload-variant-autoscaler ./charts/workload-variant-autoscaler \
 - **Scenarios requiring frequent runtime config updates** (e.g., A/B testing, dynamic tuning)
 - **Environments where ConfigMap updates are part of normal operations**
 
+### Namespace-Local ConfigMap Overrides
+
+WVA supports namespace-local ConfigMap overrides that allow different namespaces to have different configuration settings without requiring separate controller instances. This provides a middle ground between global configuration and full multi-controller isolation.
+
+**Use Cases:**
+- **Different teams sharing a cluster** with different SLO requirements
+- **Staging vs production namespaces** with different scaling thresholds
+- **Gradual rollout** of new thresholds in one namespace before applying cluster-wide
+- **Environment-specific tuning** without operational overhead
+
+**How It Works:**
+
+1. **Global ConfigMap** (in controller namespace): Provides default configuration for all namespaces
+2. **Namespace-Local ConfigMap** (in target namespace): Overrides global settings for that namespace only
+3. **Resolution Order**: Namespace-local > Global (automatic fallback if namespace-local doesn't exist)
+
+**Well-Known ConfigMap Names:**
+
+The following ConfigMap names are recognized for namespace-local overrides:
+- `saturation-scaling-config` - Saturation scaling thresholds
+- `model-scale-to-zero-config` - Scale-to-zero configuration
+
+**Example: Namespace-Local Saturation Config**
+
+```yaml
+# Global ConfigMap (in workload-variant-autoscaler-system namespace)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: saturation-scaling-config
+  namespace: workload-variant-autoscaler-system
+data:
+  default: |
+    kvCacheThreshold: 0.80
+    queueLengthThreshold: 5
+    kvSpareTrigger: 0.10
+    queueSpareTrigger: 3
+```
+
+```yaml
+# Namespace-Local Override (in production namespace)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: saturation-scaling-config  # Same well-known name
+  namespace: production  # Different namespace
+data:
+  default: |
+    kvCacheThreshold: 0.70  # More aggressive for production
+    queueLengthThreshold: 3
+    kvSpareTrigger: 0.20
+    queueSpareTrigger: 5
+```
+
+**Result**: VAs in the `production` namespace use production thresholds (0.70), while VAs in other namespaces use global defaults (0.80).
+
+**Example: Namespace-Local Scale-to-Zero Config**
+
+```yaml
+# Global ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: model-scale-to-zero-config
+  namespace: workload-variant-autoscaler-system
+data:
+  model1: |
+    model_id: model1
+    enable_scale_to_zero: true
+    retention_period: 10m
+```
+
+```yaml
+# Namespace-Local Override
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: model-scale-to-zero-config
+  namespace: staging
+data:
+  model1: |
+    model_id: model1
+    enable_scale_to_zero: false  # Disable scale-to-zero in staging
+    retention_period: 5m
+```
+
+**ConfigMap Deletion:**
+
+When a namespace-local ConfigMap is deleted, WVA automatically falls back to the global configuration. No restart required - the fallback happens immediately.
+
+```bash
+# Delete namespace-local ConfigMap
+kubectl delete configmap saturation-scaling-config -n production
+
+# VAs in production namespace now use global config
+```
+
+**Namespace Discovery:**
+
+WVA uses a hybrid approach to discover namespaces for namespace-local ConfigMap watching:
+
+1. **Automatic (VA-based)**: WVA automatically tracks namespaces that have VariantAutoscaling resources. This is the default behavior - no configuration needed.
+
+2. **Explicit Opt-in (Label-based)**: You can opt-in namespaces by adding the label `wva.llmd.ai/config-enabled=true` to a namespace. This enables namespace-local ConfigMap watching even before VariantAutoscaling resources are created, avoiding race conditions.
+
+**Example: Opt-in a namespace for namespace-local ConfigMaps:**
+
+```bash
+# Label a namespace to enable namespace-local ConfigMap watching
+kubectl label namespace production wva.llmd.ai/config-enabled=true
+
+# Now you can create namespace-local ConfigMaps before VAs exist
+kubectl apply -f - <<EOF
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: saturation-scaling-config
+  namespace: production
+data:
+  default: |
+    kvCacheThreshold: 0.70
+    queueLengthThreshold: 3
+EOF
+```
+
+**When to use label-based opt-in:**
+- Creating namespace-local ConfigMaps before VariantAutoscaling resources exist
+- Explicitly controlling which namespaces can have overrides (security/audit)
+- Multi-controller isolation (each controller can watch different label values)
+
+**Limitations:**
+
+- **Main ConfigMap** (`workload-variant-autoscaler-variantautoscaling-config`) is only supported globally, not as namespace-local override
+- **Optimization interval** (`GLOBAL_OPT_INTERVAL`) is global only
+- **Prometheus cache settings** are global only
+
+**Relationship with Multi-Controller Isolation:**
+
+Namespace-local ConfigMaps are **complementary** to multi-controller isolation:
+- **Namespace-local ConfigMaps**: Single controller, configuration isolation only
+- **Multi-controller isolation**: Multiple controllers, complete operational isolation
+
+They can be used together - you can have multiple controller instances, each using namespace-local configs within their scope.
+
 ### Main Configuration ConfigMap
 
 The main configuration ConfigMap (`workload-variant-autoscaler-variantautoscaling-config`) supports both static and dynamic settings:

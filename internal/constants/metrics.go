@@ -93,4 +93,10 @@ const (
 	// ControllerInstanceLabelKey is the label key used to associate VAs with specific controller instances.
 	// Used for multi-controller isolation where each controller only manages VAs with matching labels.
 	ControllerInstanceLabelKey = "wva.llmd.ai/controller-instance"
+
+	// NamespaceConfigEnabledLabelKey is the label key used to opt-in namespaces for namespace-local ConfigMap overrides.
+	// When a namespace has this label set to "true", the controller will watch for namespace-local ConfigMaps
+	// even if no VariantAutoscaling resources exist in that namespace yet.
+	// This enables creating namespace-local ConfigMaps before VAs are created, avoiding race conditions.
+	NamespaceConfigEnabledLabelKey = "wva.llmd.ai/config-enabled"
 )

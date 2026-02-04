@@ -154,9 +154,12 @@ func loadDynamicConfig(ctx context.Context, dynamic *DynamicConfig, k8sClient cl
 	// Initialize with defaults
 	*dynamic = DynamicConfig{
 		OptimizationInterval: defaultOptimizationInterval,
-		SaturationConfig:     make(map[string]interfaces.SaturationScalingConfig),
-		ScaleToZeroConfig:    make(ScaleToZeroConfigData),
 		PrometheusCache:      defaultPrometheusCacheConfig(),
+		Global: &NamespaceConfig{
+			SaturationConfig:  make(map[string]interfaces.SaturationScalingConfig),
+			ScaleToZeroConfig: make(ScaleToZeroConfigData),
+		},
+		NamespaceConfigs: make(map[string]*NamespaceConfig),
 	}
 
 	// Load main ConfigMap
@@ -182,15 +185,15 @@ func loadDynamicConfig(ctx context.Context, dynamic *DynamicConfig, k8sClient cl
 		dynamic.PrometheusCache = cacheConfig
 	}
 
-	// Load scale-to-zero config
+	// Load scale-to-zero config (global)
 	scaleToZeroCM := &corev1.ConfigMap{}
 	scaleToZeroCMName := DefaultScaleToZeroConfigMapName
 	// Use GetConfigMapWithBackoff which handles both fake clients (in tests) and real clients (in production)
 	if err := utils.GetConfigMapWithBackoff(ctx, k8sClient, scaleToZeroCMName, cmNamespace, scaleToZeroCM); err == nil {
-		dynamic.ScaleToZeroConfig = ParseScaleToZeroConfigMap(scaleToZeroCM.Data)
+		dynamic.Global.ScaleToZeroConfig = ParseScaleToZeroConfigMap(scaleToZeroCM.Data)
 	}
 
-	// Load saturation scaling config
+	// Load saturation scaling config (global)
 	saturationCM := &corev1.ConfigMap{}
 	saturationCMName := GetSaturationConfigMapName()
 	// Use GetConfigMapWithBackoff which handles both fake clients (in tests) and real clients (in production)
@@ -210,7 +213,7 @@ func loadDynamicConfig(ctx context.Context, dynamic *DynamicConfig, k8sClient cl
 			configs[key] = satConfig
 		}
 		if len(configs) > 0 {
-			dynamic.SaturationConfig = configs
+			dynamic.Global.SaturationConfig = configs
 			ctrl.Log.Info("Loaded saturation scaling config", "entries", len(configs))
 		}
 	}

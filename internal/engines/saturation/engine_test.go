@@ -94,7 +94,6 @@ data:
 			configMap := testutils.CreateServiceClassConfigMap(ns.Name)
 			Expect(k8sClient.Create(ctx, configMap)).NotTo(HaveOccurred())
 
-
 			configMap = testutils.CreateVariantAutoscalingConfigMap(configMapName, ns.Name)
 			Expect(k8sClient.Create(ctx, configMap)).NotTo(HaveOccurred())
 		})
@@ -254,7 +253,6 @@ data:
 			configMap := CreateServiceClassConfigMap(ns.Name, modelNames...)
 			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
 
-
 			configMap = testutils.CreateVariantAutoscalingConfigMap(configMapName, ns.Name)
 			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
 
@@ -377,10 +375,13 @@ data:
 				},
 				Dynamic: config.DynamicConfig{
 					OptimizationInterval: 60 * time.Second,
-					SaturationConfig: map[string]interfaces.SaturationScalingConfig{
-						"default": {},
+					Global: &config.NamespaceConfig{
+						SaturationConfig: map[string]interfaces.SaturationScalingConfig{
+							"default": {},
+						},
+						ScaleToZeroConfig: make(config.ScaleToZeroConfigData),
 					},
-					ScaleToZeroConfig: make(config.ScaleToZeroConfigData),
+					NamespaceConfigs: make(map[string]*config.NamespaceConfig),
 				},
 			}
 			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, sourceRegistry, testConfig)
@@ -450,8 +451,11 @@ data:
 				},
 				Dynamic: config.DynamicConfig{
 					OptimizationInterval: 60 * time.Second,
-					SaturationConfig:     make(map[string]interfaces.SaturationScalingConfig),
-					ScaleToZeroConfig:    make(config.ScaleToZeroConfigData),
+					Global: &config.NamespaceConfig{
+						SaturationConfig:  make(map[string]interfaces.SaturationScalingConfig),
+						ScaleToZeroConfig: make(config.ScaleToZeroConfigData),
+					},
+					NamespaceConfigs: make(map[string]*config.NamespaceConfig),
 				},
 			}
 			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, sourceRegistry, testConfig)
@@ -511,7 +515,6 @@ data:
 			}
 			configMap := CreateServiceClassConfigMap(ns.Name, modelNames...)
 			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
-
 
 			configMap = testutils.CreateVariantAutoscalingConfigMap(configMapName, ns.Name)
 			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
@@ -629,10 +632,13 @@ data:
 				},
 				Dynamic: config.DynamicConfig{
 					OptimizationInterval: 60 * time.Second,
-					SaturationConfig: map[string]interfaces.SaturationScalingConfig{
-						"default": {},
+					Global: &config.NamespaceConfig{
+						SaturationConfig: map[string]interfaces.SaturationScalingConfig{
+							"default": {},
+						},
+						ScaleToZeroConfig: make(config.ScaleToZeroConfigData),
 					},
-					ScaleToZeroConfig: make(config.ScaleToZeroConfigData),
+					NamespaceConfigs: make(map[string]*config.NamespaceConfig),
 				},
 			}
 			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, sourceRegistry, testConfig)

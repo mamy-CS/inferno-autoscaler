@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	promoperator "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
@@ -39,6 +40,7 @@ import (
 
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/config"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/constants"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/common"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
@@ -52,6 +54,11 @@ type VariantAutoscalingReconciler struct {
 
 	Recorder record.EventRecorder
 	Config   *config.Config // Unified configuration (injected from main.go)
+
+	// Namespace tracking for namespace-local ConfigMap watching
+	// Tracks namespaces that have VariantAutoscaling resources
+	namespaceTracker     map[string]int // namespace -> VA count
+	namespaceTrackerLock sync.RWMutex   // Protects namespaceTracker
 }
 
 // +kubebuilder:rbac:groups=llmd.ai,resources=variantautoscalings,verbs=get;list;watch;create;update;patch;delete
@@ -64,6 +71,11 @@ type VariantAutoscalingReconciler struct {
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;update;list;watch
+// Note: The broad ConfigMap permission above is required for namespace-local ConfigMap overrides.
+// The controller filters by well-known names (saturation-scaling-config, model-scale-to-zero-config)
+// in its predicate logic, providing effective access control.
+// +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch
+// Note: Namespace watch permission is required for label-based namespace opt-in for namespace-local ConfigMaps.
 // +kubebuilder:rbac:groups=monitoring.coreos.com,resources=servicemonitors,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
@@ -107,11 +119,16 @@ func (r *VariantAutoscalingReconciler) Reconcile(ctx context.Context, req ctrl.R
 	// Keep a copy of the original object for Patch generation
 	originalVA := va.DeepCopy()
 
+	// Track namespace for namespace-local ConfigMap watching
+	r.trackNamespace(va.Namespace)
+
 	// Skip if the VA is being deleted
 	if !va.DeletionTimestamp.IsZero() {
 		logger.Info("VariantAutoscaling is being deleted, skipping reconciliation",
 			"name", va.Name,
 			"namespace", va.Namespace)
+		// Untrack namespace when VA is deleted
+		r.untrackNamespace(va.Namespace)
 		return ctrl.Result{}, nil
 	}
 	logger.Info("Reconciling VariantAutoscaling",
@@ -250,6 +267,92 @@ func (r *VariantAutoscalingReconciler) handleDeploymentEvent(ctx context.Context
 	return requests
 }
 
+// trackNamespace increments the VA count for a namespace.
+// Thread-safe.
+func (r *VariantAutoscalingReconciler) trackNamespace(namespace string) {
+	if namespace == "" {
+		return
+	}
+	r.namespaceTrackerLock.Lock()
+	defer r.namespaceTrackerLock.Unlock()
+	if r.namespaceTracker == nil {
+		r.namespaceTracker = make(map[string]int)
+	}
+	r.namespaceTracker[namespace]++
+}
+
+// untrackNamespace decrements the VA count for a namespace.
+// When count reaches 0, the namespace is removed from tracking.
+// Thread-safe.
+func (r *VariantAutoscalingReconciler) untrackNamespace(namespace string) {
+	if namespace == "" {
+		return
+	}
+	r.namespaceTrackerLock.Lock()
+	defer r.namespaceTrackerLock.Unlock()
+	if r.namespaceTracker == nil {
+		return
+	}
+	if count, exists := r.namespaceTracker[namespace]; exists {
+		if count <= 1 {
+			delete(r.namespaceTracker, namespace)
+		} else {
+			r.namespaceTracker[namespace] = count - 1
+		}
+	}
+}
+
+// isNamespaceTracked returns true if the namespace has VAs.
+// Thread-safe.
+func (r *VariantAutoscalingReconciler) isNamespaceTracked(namespace string) bool {
+	if namespace == "" {
+		return false
+	}
+	r.namespaceTrackerLock.RLock()
+	defer r.namespaceTrackerLock.RUnlock()
+	if r.namespaceTracker == nil {
+		return false
+	}
+	_, exists := r.namespaceTracker[namespace]
+	return exists
+}
+
+// isNamespaceConfigEnabled checks if a namespace has the opt-in label for namespace-local ConfigMaps.
+// This allows namespaces to opt-in for ConfigMap watching even before VAs are created.
+func (r *VariantAutoscalingReconciler) isNamespaceConfigEnabled(ctx context.Context, namespace string) bool {
+	if namespace == "" {
+		return false
+	}
+
+	var ns corev1.Namespace
+	if err := r.Get(ctx, client.ObjectKey{Name: namespace}, &ns); err != nil {
+		// If namespace doesn't exist or we can't read it, return false
+		// This is safe - we'll fall back to VA-based tracking
+		return false
+	}
+
+	// Check if namespace has the opt-in label set to "true"
+	labels := ns.GetLabels()
+	if labels == nil {
+		return false
+	}
+
+	value, exists := labels[constants.NamespaceConfigEnabledLabelKey]
+	return exists && value == "true"
+}
+
+// shouldWatchNamespaceLocalConfigMap returns true if a namespace-local ConfigMap should be watched.
+// It checks both VA-based tracking (automatic) and label-based opt-in (explicit).
+func (r *VariantAutoscalingReconciler) shouldWatchNamespaceLocalConfigMap(ctx context.Context, namespace string) bool {
+	// Check VA-based tracking first (most common case)
+	if r.isNamespaceTracked(namespace) {
+		return true
+	}
+
+	// Check label-based opt-in
+	return r.isNamespaceConfigEnabled(ctx, namespace)
+}
+
 // SetupWithManager sets up the controller with the Manager.
 func (r *VariantAutoscalingReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
@@ -270,12 +373,7 @@ func (r *VariantAutoscalingReconciler) SetupWithManager(mgr ctrl.Manager) error 
 				logger := ctrl.LoggerFrom(ctx)
 				name := cm.GetName()
 				namespace := cm.GetNamespace()
-
-				// Only interested in config maps in the configured namespace
 				expectedNamespace := config.GetNamespace()
-				if namespace != expectedNamespace {
-					return nil
-				}
 
 				// Use r.Config (captured in closure) to update configuration
 				if r.Config == nil {
@@ -283,7 +381,41 @@ func (r *VariantAutoscalingReconciler) SetupWithManager(mgr ctrl.Manager) error 
 					return nil
 				}
 
+				// Check if ConfigMap is being deleted
+				isDeleted := !cm.DeletionTimestamp.IsZero()
+
+				// Determine if this is a global or namespace-local ConfigMap
+				isGlobal := namespace == expectedNamespace
+				isNamespaceLocal := !isGlobal && r.shouldWatchNamespaceLocalConfigMap(ctx, namespace)
+
+				// Handle deletion events
+				if isDeleted {
+					if isNamespaceLocal {
+						// Remove namespace-local config on deletion
+						if name == config.GetSaturationConfigMapName() {
+							r.Config.UpdateSaturationConfigForNamespace(namespace, make(map[string]interfaces.SaturationScalingConfig))
+							logger.Info("Removed namespace-local saturation config on ConfigMap deletion", "namespace", namespace)
+						} else if name == config.DefaultScaleToZeroConfigMapName {
+							r.Config.UpdateScaleToZeroConfigForNamespace(namespace, make(config.ScaleToZeroConfigData))
+							logger.Info("Removed namespace-local scale-to-zero config on ConfigMap deletion", "namespace", namespace)
+						}
+						// Remove namespace entry to allow fallback to global
+						r.Config.RemoveNamespaceConfig(namespace)
+					}
+					return nil
+				}
+
+				// Only process namespace-local ConfigMaps if namespace is tracked
+				if !isGlobal && !isNamespaceLocal {
+					return nil
+				}
+
+				// Handle main ConfigMap (only global, not namespace-local)
 				if name == config.GetConfigMapName() {
+					if !isGlobal {
+						// Main ConfigMap is only supported globally
+						return nil
+					}
 					// Check for immutable parameter changes first
 					immutableChanges, err := config.DetectImmutableParameterChanges(r.Config, cm.Data)
 					if err != nil {
@@ -326,7 +458,7 @@ func (r *VariantAutoscalingReconciler) SetupWithManager(mgr ctrl.Manager) error 
 					// No need to trigger immediate reconciliation for individual VAs.
 					return nil
 				} else if name == config.GetSaturationConfigMapName() {
-					// Saturation Scaling Config
+					// Saturation Scaling Config (global or namespace-local)
 					configs := make(map[string]interfaces.SaturationScalingConfig)
 					count := 0
 					for key, yamlStr := range cm.Data {
@@ -343,19 +475,29 @@ func (r *VariantAutoscalingReconciler) SetupWithManager(mgr ctrl.Manager) error 
 						configs[key] = satConfig
 						count++
 					}
-					r.Config.UpdateSaturationConfig(configs)
-					logger.Info("Updated global saturation config from ConfigMap", "entries", count)
+					if isGlobal {
+						r.Config.UpdateSaturationConfig(configs)
+						logger.Info("Updated global saturation config from ConfigMap", "entries", count)
+					} else {
+						r.Config.UpdateSaturationConfigForNamespace(namespace, configs)
+						logger.Info("Updated namespace-local saturation config from ConfigMap", "namespace", namespace, "entries", count)
+					}
 
-					// Global saturation config update is handled by the Engine loop.
+					// Config update is handled by the Engine loop.
 					// No need to trigger immediate reconciliation for individual VAs.
 					return nil
 				} else if name == config.DefaultScaleToZeroConfigMapName {
-					// Scale-to-Zero Config
+					// Scale-to-Zero Config (global or namespace-local)
 					scaleToZeroConfig := config.ParseScaleToZeroConfigMap(cm.Data)
-					r.Config.UpdateScaleToZeroConfig(scaleToZeroConfig)
-					logger.Info("Updated global scale-to-zero config from ConfigMap", "modelCount", len(scaleToZeroConfig))
+					if isGlobal {
+						r.Config.UpdateScaleToZeroConfig(scaleToZeroConfig)
+						logger.Info("Updated global scale-to-zero config from ConfigMap", "modelCount", len(scaleToZeroConfig))
+					} else {
+						r.Config.UpdateScaleToZeroConfigForNamespace(namespace, scaleToZeroConfig)
+						logger.Info("Updated namespace-local scale-to-zero config from ConfigMap", "namespace", namespace, "modelCount", len(scaleToZeroConfig))
+					}
 
-					// Global config update is handled by the Engine loop.
+					// Config update is handled by the Engine loop.
 					// No need to trigger immediate reconciliation for individual VAs.
 					return nil
 				}

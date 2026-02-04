@@ -266,7 +266,7 @@ func TestDetectImmutableParameterChanges(t *testing.T) {
 			name: "Multiple immutable parameter changes",
 			configMap: map[string]string{
 				"PROMETHEUS_BASE_URL": "https://prometheus-new:9090",
-				"METRICS_ADDR":         ":9443",
+				"METRICS_ADDR":        ":9443",
 			},
 			expectError: true,
 			errorMsg:    "PROMETHEUS_BASE_URL",
@@ -274,7 +274,7 @@ func TestDetectImmutableParameterChanges(t *testing.T) {
 		{
 			name: "Mixed mutable and immutable changes",
 			configMap: map[string]string{
-				"GLOBAL_OPT_INTERVAL":  "120s",
+				"GLOBAL_OPT_INTERVAL": "120s",
 				"PROMETHEUS_BASE_URL": "https://prometheus-new:9090",
 			},
 			expectError: true,
@@ -358,4 +358,204 @@ func TestDetectImmutableParameterChanges_OnlyMutable(t *testing.T) {
 	changes, err := DetectImmutableParameterChanges(initialConfig, configMap)
 	require.NoError(t, err, "Mutable parameters should not trigger errors")
 	assert.Empty(t, changes, "Should return empty list for mutable parameters only")
+}
+
+// TestConfig_NamespaceAwareResolutionPrecedence tests that namespace-local config
+// takes precedence over global config.
+func TestConfig_NamespaceAwareResolutionPrecedence(t *testing.T) {
+	cfg := NewTestConfig()
+
+	// Set up global saturation config
+	globalSatConfig := map[string]interfaces.SaturationScalingConfig{
+		"default": {
+			KvCacheThreshold:     0.80,
+			QueueLengthThreshold: 5,
+			KvSpareTrigger:       0.10,
+			QueueSpareTrigger:    3,
+		},
+	}
+	cfg.UpdateSaturationConfig(globalSatConfig)
+
+	// Set up global scale-to-zero config
+	globalScaleToZeroConfig := ScaleToZeroConfigData{
+		"model1": {
+			ModelID:           "model1",
+			EnableScaleToZero: boolPtr(true),
+			RetentionPeriod:   "10m",
+		},
+	}
+	cfg.UpdateScaleToZeroConfig(globalScaleToZeroConfig)
+
+	namespace := "test-namespace"
+
+	// Test 1: No namespace-local config, should return global
+	t.Run("No namespace-local config returns global", func(t *testing.T) {
+		satConfig := cfg.GetSaturationConfigForNamespace(namespace)
+		assert.Equal(t, 1, len(satConfig), "Should return global config")
+		assert.Equal(t, 0.80, satConfig["default"].KvCacheThreshold, "Should use global value")
+
+		scaleToZeroConfig := cfg.GetScaleToZeroConfigForNamespace(namespace)
+		assert.Equal(t, 1, len(scaleToZeroConfig), "Should return global config")
+		assert.Equal(t, "model1", scaleToZeroConfig["model1"].ModelID, "Should use global value")
+	})
+
+	// Test 2: Namespace-local config takes precedence
+	t.Run("Namespace-local config takes precedence", func(t *testing.T) {
+		// Set namespace-local saturation config
+		nsSatConfig := map[string]interfaces.SaturationScalingConfig{
+			"default": {
+				KvCacheThreshold:     0.70, // Different from global (0.80)
+				QueueLengthThreshold: 3,    // Different from global (5)
+				KvSpareTrigger:       0.20, // Different from global (0.10)
+				QueueSpareTrigger:    5,    // Different from global (3)
+			},
+		}
+		cfg.UpdateSaturationConfigForNamespace(namespace, nsSatConfig)
+
+		// Set namespace-local scale-to-zero config
+		nsScaleToZeroConfig := ScaleToZeroConfigData{
+			"model1": {
+				ModelID:           "model1",
+				EnableScaleToZero: boolPtr(false), // Different from global (true)
+				RetentionPeriod:   "5m",           // Different from global (10m)
+			},
+		}
+		cfg.UpdateScaleToZeroConfigForNamespace(namespace, nsScaleToZeroConfig)
+
+		// Verify namespace-local config is returned
+		satConfig := cfg.GetSaturationConfigForNamespace(namespace)
+		assert.Equal(t, 1, len(satConfig), "Should return namespace-local config")
+		assert.Equal(t, 0.70, satConfig["default"].KvCacheThreshold, "Should use namespace-local value")
+		assert.Equal(t, float64(3), satConfig["default"].QueueLengthThreshold, "Should use namespace-local value")
+
+		scaleToZeroConfig := cfg.GetScaleToZeroConfigForNamespace(namespace)
+		assert.Equal(t, 1, len(scaleToZeroConfig), "Should return namespace-local config")
+		assert.Equal(t, false, *scaleToZeroConfig["model1"].EnableScaleToZero, "Should use namespace-local value")
+		assert.Equal(t, "5m", scaleToZeroConfig["model1"].RetentionPeriod, "Should use namespace-local value")
+
+		// Verify global config is unchanged
+		globalSatConfig := cfg.GetSaturationConfigForNamespace("")
+		assert.Equal(t, 0.80, globalSatConfig["default"].KvCacheThreshold, "Global config should be unchanged")
+	})
+
+	// Test 3: Empty namespace returns global
+	t.Run("Empty namespace returns global", func(t *testing.T) {
+		satConfig := cfg.GetSaturationConfigForNamespace("")
+		assert.Equal(t, 0.80, satConfig["default"].KvCacheThreshold, "Empty namespace should return global")
+	})
+}
+
+// TestConfig_NamespaceConfigDeletion tests that removing namespace-local config
+// falls back to global config.
+func TestConfig_NamespaceConfigDeletion(t *testing.T) {
+	cfg := NewTestConfig()
+
+	// Set up global saturation config
+	globalSatConfig := map[string]interfaces.SaturationScalingConfig{
+		"default": {
+			KvCacheThreshold:     0.80,
+			QueueLengthThreshold: 5,
+			KvSpareTrigger:       0.10,
+			QueueSpareTrigger:    3,
+		},
+	}
+	cfg.UpdateSaturationConfig(globalSatConfig)
+
+	// Set up global scale-to-zero config
+	globalScaleToZeroConfig := ScaleToZeroConfigData{
+		"model1": {
+			ModelID:           "model1",
+			EnableScaleToZero: boolPtr(true),
+			RetentionPeriod:   "10m",
+		},
+	}
+	cfg.UpdateScaleToZeroConfig(globalScaleToZeroConfig)
+
+	namespace := "test-namespace"
+
+	// Set namespace-local config
+	nsSatConfig := map[string]interfaces.SaturationScalingConfig{
+		"default": {
+			KvCacheThreshold:     0.70,
+			QueueLengthThreshold: 3,
+			KvSpareTrigger:       0.20,
+			QueueSpareTrigger:    5,
+		},
+	}
+	cfg.UpdateSaturationConfigForNamespace(namespace, nsSatConfig)
+
+	nsScaleToZeroConfig := ScaleToZeroConfigData{
+		"model1": {
+			ModelID:           "model1",
+			EnableScaleToZero: boolPtr(false),
+			RetentionPeriod:   "5m",
+		},
+	}
+	cfg.UpdateScaleToZeroConfigForNamespace(namespace, nsScaleToZeroConfig)
+
+	// Verify namespace-local config is active
+	satConfig := cfg.GetSaturationConfigForNamespace(namespace)
+	assert.Equal(t, 0.70, satConfig["default"].KvCacheThreshold, "Should use namespace-local value")
+
+	// Remove namespace-local config (simulating ConfigMap deletion)
+	cfg.RemoveNamespaceConfig(namespace)
+
+	// Verify fallback to global config
+	satConfig = cfg.GetSaturationConfigForNamespace(namespace)
+	assert.Equal(t, 0.80, satConfig["default"].KvCacheThreshold, "Should fall back to global value after deletion")
+
+	scaleToZeroConfig := cfg.GetScaleToZeroConfigForNamespace(namespace)
+	assert.Equal(t, true, *scaleToZeroConfig["model1"].EnableScaleToZero, "Should fall back to global value after deletion")
+	assert.Equal(t, "10m", scaleToZeroConfig["model1"].RetentionPeriod, "Should fall back to global value after deletion")
+}
+
+// TestConfig_MultipleNamespaces tests that different namespaces can have different configs.
+func TestConfig_MultipleNamespaces(t *testing.T) {
+	cfg := NewTestConfig()
+
+	// Set up global config
+	globalSatConfig := map[string]interfaces.SaturationScalingConfig{
+		"default": {
+			KvCacheThreshold:     0.80,
+			QueueLengthThreshold: 5,
+		},
+	}
+	cfg.UpdateSaturationConfig(globalSatConfig)
+
+	namespace1 := "namespace1"
+	namespace2 := "namespace2"
+
+	// Set namespace1 config
+	ns1SatConfig := map[string]interfaces.SaturationScalingConfig{
+		"default": {
+			KvCacheThreshold:     0.70,
+			QueueLengthThreshold: 3,
+		},
+	}
+	cfg.UpdateSaturationConfigForNamespace(namespace1, ns1SatConfig)
+
+	// Set namespace2 config
+	ns2SatConfig := map[string]interfaces.SaturationScalingConfig{
+		"default": {
+			KvCacheThreshold:     0.90,
+			QueueLengthThreshold: 7,
+		},
+	}
+	cfg.UpdateSaturationConfigForNamespace(namespace2, ns2SatConfig)
+
+	// Verify each namespace has its own config
+	satConfig1 := cfg.GetSaturationConfigForNamespace(namespace1)
+	assert.Equal(t, 0.70, satConfig1["default"].KvCacheThreshold, "Namespace1 should have its own config")
+
+	satConfig2 := cfg.GetSaturationConfigForNamespace(namespace2)
+	assert.Equal(t, 0.90, satConfig2["default"].KvCacheThreshold, "Namespace2 should have its own config")
+
+	// Verify global config is unchanged
+	globalSatConfig2 := cfg.GetSaturationConfigForNamespace("")
+	assert.Equal(t, 0.80, globalSatConfig2["default"].KvCacheThreshold, "Global config should be unchanged")
+}
+
+// Helper function to create bool pointer
+func boolPtr(b bool) *bool {
+	return &b
 }

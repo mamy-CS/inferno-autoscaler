@@ -177,18 +177,6 @@ func (e *Engine) optimize(ctx context.Context) error {
 		logger.Info("Collected cluster accelerator inventory (Limited Mode)", "inventory", inventory)
 	}
 
-	saturationConfigMap := e.Config.GetSaturationConfig()
-	if len(saturationConfigMap) == 0 {
-		logger.Info("Saturation scaling config not loaded yet, skipping optimization")
-		return nil
-	}
-
-	saturationConfig, ok := saturationConfigMap["default"]
-	if !ok {
-		logger.Info("Default saturation scaling config not found, skipping optimization")
-		return nil
-	}
-
 	// Group VAs by model for per-model capacity analysis
 	modelGroups := utils.GroupVariantAutoscalingByModel(activeVAs)
 	logger.Info("Grouped VAs by model",
@@ -215,11 +203,29 @@ func (e *Engine) optimize(ctx context.Context) error {
 		// The groupKey is "modelID|namespace" - extract actual modelID from VAs
 		// All VAs in the group have the same modelID and namespace
 		modelID := modelVAs[0].Spec.ModelID
+		namespace := modelVAs[0].Namespace
 		logger.Info("Processing model",
 			"modelID", modelID,
-			"namespace", modelVAs[0].Namespace,
+			"namespace", namespace,
 			"variantCount", len(modelVAs),
 			"groupKey", groupKey)
+
+		// Get namespace-aware saturation config (namespace-local > global)
+		saturationConfigMap := e.Config.GetSaturationConfigForNamespace(namespace)
+		if len(saturationConfigMap) == 0 {
+			logger.Info("Saturation scaling config not loaded yet for namespace, skipping model",
+				"namespace", namespace,
+				"modelID", modelID)
+			continue
+		}
+
+		saturationConfig, ok := saturationConfigMap["default"]
+		if !ok {
+			logger.Info("Default saturation scaling config not found for namespace, skipping model",
+				"namespace", namespace,
+				"modelID", modelID)
+			continue
+		}
 
 		saturationTargets, saturationAnalysis, variantStates, err := e.RunSaturationAnalysis(ctx, modelID, modelVAs, saturationConfig, e.client)
 		if err != nil {
@@ -235,7 +241,8 @@ func (e *Engine) optimize(ctx context.Context) error {
 		if saturationAnalysis != nil {
 			// Apply scale-to-zero enforcement after saturation analysis
 			// This either scales to zero if enabled and no requests, or ensures minimum replicas
-			scaleToZeroConfig := e.Config.GetScaleToZeroConfig()
+			// Get namespace-aware scale-to-zero config (namespace-local > global)
+			scaleToZeroConfig := e.Config.GetScaleToZeroConfigForNamespace(namespace)
 
 			// Copy original targets for logging (enforcer modifies map in place)
 			originalTargets := make(map[string]int, len(saturationTargets))
@@ -273,7 +280,16 @@ func (e *Engine) optimize(ctx context.Context) error {
 
 	// STEP 2.5: Apply GPU limiter if enabled
 	// This constrains scaling decisions based on available GPU resources
-	if saturationConfig.EnableLimiter && len(allDecisions) > 0 {
+	// Note: Limiter uses global saturation config since it's applied globally to all decisions
+	// TODO: Consider per-namespace limiter configuration in the future
+	globalSaturationConfigMap := e.Config.GetSaturationConfig()
+	var globalSaturationConfig interfaces.SaturationScalingConfig
+	if len(globalSaturationConfigMap) > 0 {
+		if cfg, ok := globalSaturationConfigMap["default"]; ok {
+			globalSaturationConfig = cfg
+		}
+	}
+	if globalSaturationConfig.EnableLimiter && len(allDecisions) > 0 {
 		logger.Info("Applying GPU limiter to scaling decisions",
 			"decisionCount", len(allDecisions))
 

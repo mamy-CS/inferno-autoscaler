@@ -62,20 +62,37 @@ type EPPConfig struct {
 	MetricReaderBearerToken string // EPP_METRIC_READER_BEARER_TOKEN
 }
 
-// DynamicConfig holds configuration that can be updated at runtime via ConfigMap changes.
-// All access must be protected by the Config's mutex.
-type DynamicConfig struct {
-	// Optimization settings
-	OptimizationInterval time.Duration // GLOBAL_OPT_INTERVAL
-
+// NamespaceConfig holds configuration for a specific namespace.
+// This structure is used both for global defaults and namespace-local overrides.
+type NamespaceConfig struct {
 	// Saturation scaling configuration (per-accelerator)
 	SaturationConfig map[string]interfaces.SaturationScalingConfig
 
 	// Scale-to-zero configuration (per-model)
 	ScaleToZeroConfig ScaleToZeroConfigData
+}
 
-	// Prometheus metrics cache configuration
+// DynamicConfig holds configuration that can be updated at runtime via ConfigMap changes.
+// All access must be protected by the Config's mutex.
+//
+// The structure supports namespace-local ConfigMap overrides:
+// - Global: Default configuration used when no namespace-local override exists
+// - NamespaceConfigs: Per-namespace overrides (keyed by namespace name)
+//
+// Resolution order: namespace-local > global
+type DynamicConfig struct {
+	// Optimization settings (global only, not namespace-specific)
+	OptimizationInterval time.Duration // GLOBAL_OPT_INTERVAL
+
+	// Prometheus metrics cache configuration (global only, not namespace-specific)
 	PrometheusCache *CacheConfig
+
+	// Global default configuration (used when namespace-local override doesn't exist)
+	Global *NamespaceConfig
+
+	// Namespace-local configuration overrides (keyed by namespace name)
+	// Only populated when namespace-local ConfigMaps are detected
+	NamespaceConfigs map[string]*NamespaceConfig
 }
 
 // GetOptimizationInterval returns the current optimization interval.
@@ -86,30 +103,89 @@ func (c *Config) GetOptimizationInterval() time.Duration {
 	return c.Dynamic.OptimizationInterval
 }
 
-// GetSaturationConfig returns the current saturation scaling configuration.
+// GetSaturationConfig returns the current global saturation scaling configuration.
 // Thread-safe. Returns a copy to prevent external modifications.
+// For namespace-aware lookups, use GetSaturationConfigForNamespace instead.
 func (c *Config) GetSaturationConfig() map[string]interfaces.SaturationScalingConfig {
+	return c.GetSaturationConfigForNamespace("")
+}
+
+// GetSaturationConfigForNamespace returns the saturation scaling configuration for the given namespace.
+// Resolution order: namespace-local > global
+// Thread-safe. Returns a copy to prevent external modifications.
+// If namespace is empty, returns global config.
+func (c *Config) GetSaturationConfigForNamespace(namespace string) map[string]interfaces.SaturationScalingConfig {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
+
+	var sourceConfig map[string]interfaces.SaturationScalingConfig
+
+	// Check namespace-local first (if namespace is provided)
+	if namespace != "" {
+		if nsConfig, exists := c.Dynamic.NamespaceConfigs[namespace]; exists {
+			if len(nsConfig.SaturationConfig) > 0 {
+				sourceConfig = nsConfig.SaturationConfig
+			}
+		}
+	}
+
+	// Fall back to global if no namespace-local config found
+	if sourceConfig == nil {
+		if c.Dynamic.Global != nil {
+			sourceConfig = c.Dynamic.Global.SaturationConfig
+		}
+	}
+
 	// Return a copy to prevent external modifications
-	result := make(map[string]interfaces.SaturationScalingConfig, len(c.Dynamic.SaturationConfig))
-	for k, v := range c.Dynamic.SaturationConfig {
+	if sourceConfig == nil {
+		return make(map[string]interfaces.SaturationScalingConfig)
+	}
+	result := make(map[string]interfaces.SaturationScalingConfig, len(sourceConfig))
+	for k, v := range sourceConfig {
 		result[k] = v
 	}
 	return result
 }
 
-// GetScaleToZeroConfig returns the current scale-to-zero configuration.
+// GetScaleToZeroConfig returns the current global scale-to-zero configuration.
 // Thread-safe.
+// For namespace-aware lookups, use GetScaleToZeroConfigForNamespace instead.
 func (c *Config) GetScaleToZeroConfig() ScaleToZeroConfigData {
+	return c.GetScaleToZeroConfigForNamespace("")
+}
+
+// GetScaleToZeroConfigForNamespace returns the scale-to-zero configuration for the given namespace.
+// Resolution order: namespace-local > global
+// Thread-safe. Returns a copy to prevent external modifications.
+// If namespace is empty, returns global config.
+func (c *Config) GetScaleToZeroConfigForNamespace(namespace string) ScaleToZeroConfigData {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	if c.Dynamic.ScaleToZeroConfig == nil {
+
+	var sourceConfig ScaleToZeroConfigData
+
+	// Check namespace-local first (if namespace is provided)
+	if namespace != "" {
+		if nsConfig, exists := c.Dynamic.NamespaceConfigs[namespace]; exists {
+			if len(nsConfig.ScaleToZeroConfig) > 0 {
+				sourceConfig = nsConfig.ScaleToZeroConfig
+			}
+		}
+	}
+
+	// Fall back to global if no namespace-local config found
+	if sourceConfig == nil {
+		if c.Dynamic.Global != nil {
+			sourceConfig = c.Dynamic.Global.ScaleToZeroConfig
+		}
+	}
+
+	// Return a copy to prevent external modifications
+	if sourceConfig == nil {
 		return make(ScaleToZeroConfigData)
 	}
-	// Return a copy to prevent external modifications
-	result := make(ScaleToZeroConfigData, len(c.Dynamic.ScaleToZeroConfig))
-	for k, v := range c.Dynamic.ScaleToZeroConfig {
+	result := make(ScaleToZeroConfigData, len(sourceConfig))
+	for k, v := range sourceConfig {
 		result[k] = v
 	}
 	return result
@@ -148,43 +224,118 @@ func (c *Config) UpdateOptimizationInterval(interval time.Duration) {
 	}
 }
 
-// UpdateSaturationConfig updates the saturation scaling configuration.
+// UpdateSaturationConfig updates the global saturation scaling configuration.
 // Thread-safe. Takes a copy of the provided map to prevent external modifications.
+// For namespace-local updates, use UpdateSaturationConfigForNamespace instead.
 func (c *Config) UpdateSaturationConfig(config map[string]interfaces.SaturationScalingConfig) {
+	c.UpdateSaturationConfigForNamespace("", config)
+}
+
+// UpdateSaturationConfigForNamespace updates the saturation scaling configuration for the given namespace.
+// If namespace is empty, updates global config.
+// Thread-safe. Takes a copy of the provided map to prevent external modifications.
+func (c *Config) UpdateSaturationConfigForNamespace(namespace string, config map[string]interfaces.SaturationScalingConfig) {
 	c.mu.Lock()
-	oldCount := len(c.Dynamic.SaturationConfig)
-	c.mu.Unlock()
+	defer c.mu.Unlock()
+
 	// Make a copy to prevent external modifications
 	newConfig := make(map[string]interfaces.SaturationScalingConfig, len(config))
 	for k, v := range config {
 		newConfig[k] = v
 	}
-	c.mu.Lock()
-	c.Dynamic.SaturationConfig = newConfig
-	newCount := len(c.Dynamic.SaturationConfig)
-	c.mu.Unlock()
-	if oldCount != newCount {
-		ctrl.Log.Info("Updated saturation config", "oldEntries", oldCount, "newEntries", newCount)
+
+	var oldCount int
+	if namespace == "" {
+		// Update global
+		if c.Dynamic.Global == nil {
+			c.Dynamic.Global = &NamespaceConfig{}
+		}
+		oldCount = len(c.Dynamic.Global.SaturationConfig)
+		c.Dynamic.Global.SaturationConfig = newConfig
+		newCount := len(c.Dynamic.Global.SaturationConfig)
+		if oldCount != newCount {
+			ctrl.Log.Info("Updated global saturation config", "oldEntries", oldCount, "newEntries", newCount)
+		}
+	} else {
+		// Update namespace-local
+		if c.Dynamic.NamespaceConfigs == nil {
+			c.Dynamic.NamespaceConfigs = make(map[string]*NamespaceConfig)
+		}
+		if c.Dynamic.NamespaceConfigs[namespace] == nil {
+			c.Dynamic.NamespaceConfigs[namespace] = &NamespaceConfig{}
+		}
+		oldCount = len(c.Dynamic.NamespaceConfigs[namespace].SaturationConfig)
+		c.Dynamic.NamespaceConfigs[namespace].SaturationConfig = newConfig
+		newCount := len(c.Dynamic.NamespaceConfigs[namespace].SaturationConfig)
+		if oldCount != newCount {
+			ctrl.Log.Info("Updated namespace-local saturation config", "namespace", namespace, "oldEntries", oldCount, "newEntries", newCount)
+		}
 	}
 }
 
-// UpdateScaleToZeroConfig updates the scale-to-zero configuration.
+// UpdateScaleToZeroConfig updates the global scale-to-zero configuration.
 // Thread-safe. Takes a copy of the provided map to prevent external modifications.
+// For namespace-local updates, use UpdateScaleToZeroConfigForNamespace instead.
 func (c *Config) UpdateScaleToZeroConfig(config ScaleToZeroConfigData) {
+	c.UpdateScaleToZeroConfigForNamespace("", config)
+}
+
+// UpdateScaleToZeroConfigForNamespace updates the scale-to-zero configuration for the given namespace.
+// If namespace is empty, updates global config.
+// Thread-safe. Takes a copy of the provided map to prevent external modifications.
+func (c *Config) UpdateScaleToZeroConfigForNamespace(namespace string, config ScaleToZeroConfigData) {
 	c.mu.Lock()
-	oldCount := len(c.Dynamic.ScaleToZeroConfig)
-	c.mu.Unlock()
+	defer c.mu.Unlock()
+
 	// Make a copy to prevent external modifications
 	newConfig := make(ScaleToZeroConfigData, len(config))
 	for k, v := range config {
 		newConfig[k] = v
 	}
+
+	var oldCount int
+	if namespace == "" {
+		// Update global
+		if c.Dynamic.Global == nil {
+			c.Dynamic.Global = &NamespaceConfig{}
+		}
+		oldCount = len(c.Dynamic.Global.ScaleToZeroConfig)
+		c.Dynamic.Global.ScaleToZeroConfig = newConfig
+		newCount := len(c.Dynamic.Global.ScaleToZeroConfig)
+		if oldCount != newCount {
+			ctrl.Log.Info("Updated global scale-to-zero config", "oldModels", oldCount, "newModels", newCount)
+		}
+	} else {
+		// Update namespace-local
+		if c.Dynamic.NamespaceConfigs == nil {
+			c.Dynamic.NamespaceConfigs = make(map[string]*NamespaceConfig)
+		}
+		if c.Dynamic.NamespaceConfigs[namespace] == nil {
+			c.Dynamic.NamespaceConfigs[namespace] = &NamespaceConfig{}
+		}
+		oldCount = len(c.Dynamic.NamespaceConfigs[namespace].ScaleToZeroConfig)
+		c.Dynamic.NamespaceConfigs[namespace].ScaleToZeroConfig = newConfig
+		newCount := len(c.Dynamic.NamespaceConfigs[namespace].ScaleToZeroConfig)
+		if oldCount != newCount {
+			ctrl.Log.Info("Updated namespace-local scale-to-zero config", "namespace", namespace, "oldModels", oldCount, "newModels", newCount)
+		}
+	}
+}
+
+// RemoveNamespaceConfig removes the namespace-local configuration for the given namespace.
+// This is called when a namespace-local ConfigMap is deleted, allowing fallback to global config.
+// Thread-safe.
+func (c *Config) RemoveNamespaceConfig(namespace string) {
+	if namespace == "" {
+		return // Don't remove global config
+	}
 	c.mu.Lock()
-	c.Dynamic.ScaleToZeroConfig = newConfig
-	newCount := len(c.Dynamic.ScaleToZeroConfig)
-	c.mu.Unlock()
-	if oldCount != newCount {
-		ctrl.Log.Info("Updated scale-to-zero config", "oldModels", oldCount, "newModels", newCount)
+	defer c.mu.Unlock()
+	if c.Dynamic.NamespaceConfigs != nil {
+		if _, exists := c.Dynamic.NamespaceConfigs[namespace]; exists {
+			delete(c.Dynamic.NamespaceConfigs, namespace)
+			ctrl.Log.Info("Removed namespace-local config", "namespace", namespace)
+		}
 	}
 }
 
@@ -236,8 +387,11 @@ func NewTestConfig() *Config {
 		},
 		Dynamic: DynamicConfig{
 			OptimizationInterval: 60 * time.Second,
-			SaturationConfig:     make(map[string]interfaces.SaturationScalingConfig),
-			ScaleToZeroConfig:    make(ScaleToZeroConfigData),
+			Global: &NamespaceConfig{
+				SaturationConfig:  make(map[string]interfaces.SaturationScalingConfig),
+				ScaleToZeroConfig: make(ScaleToZeroConfigData),
+			},
+			NamespaceConfigs: make(map[string]*NamespaceConfig),
 		},
 	}
 }

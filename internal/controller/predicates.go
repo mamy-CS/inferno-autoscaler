@@ -12,12 +12,36 @@ import (
 // ConfigMapPredicate returns a predicate that filters ConfigMap events to only the target ConfigMaps.
 // It matches the enqueue function logic - allows either configmap name if namespace matches.
 // This predicate is used to filter only the target configmaps.
+//
+// For namespace-local ConfigMap support:
+// - Global ConfigMaps: well-known names in controller namespace
+// - Namespace-local ConfigMaps: well-known names in any namespace (filtered in handler by namespace tracking)
 func ConfigMapPredicate() predicate.Predicate {
 	return predicate.NewPredicateFuncs(func(obj client.Object) bool {
 		name := obj.GetName()
 		namespace := obj.GetNamespace()
 		expectedNamespace := config.GetNamespace()
-		return (name == config.GetConfigMapName() || name == config.GetSaturationConfigMapName() || name == config.DefaultScaleToZeroConfigMapName) && namespace == expectedNamespace
+
+		// Well-known ConfigMap names
+		wellKnownNames := map[string]bool{
+			config.GetConfigMapName():              true,
+			config.GetSaturationConfigMapName():    true,
+			config.DefaultScaleToZeroConfigMapName: true,
+		}
+
+		// Check if this is a well-known ConfigMap name
+		if !wellKnownNames[name] {
+			return false
+		}
+
+		// Global ConfigMaps: must be in controller namespace
+		if namespace == expectedNamespace {
+			return true
+		}
+
+		// Namespace-local ConfigMaps: allow well-known names in any namespace
+		// The handler will filter by namespace tracking
+		return true
 	})
 }
 

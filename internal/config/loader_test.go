@@ -525,16 +525,19 @@ func TestConfig_UpdateDynamicConfig(t *testing.T) {
 	// Update dynamic config
 	newDynamic := DynamicConfig{
 		OptimizationInterval: 30 * time.Second,
-		SaturationConfig: map[string]interfaces.SaturationScalingConfig{
-			"test": {
-				KvCacheThreshold:     0.9,
-				QueueLengthThreshold: 10,
-				KvSpareTrigger:       0.2,
-				QueueSpareTrigger:    5,
+		PrometheusCache:      defaultPrometheusCacheConfig(),
+		Global: &NamespaceConfig{
+			SaturationConfig: map[string]interfaces.SaturationScalingConfig{
+				"test": {
+					KvCacheThreshold:     0.9,
+					QueueLengthThreshold: 10,
+					KvSpareTrigger:       0.2,
+					QueueSpareTrigger:    5,
+				},
 			},
+			ScaleToZeroConfig: make(ScaleToZeroConfigData),
 		},
-		ScaleToZeroConfig: make(ScaleToZeroConfigData),
-		PrometheusCache:   defaultPrometheusCacheConfig(),
+		NamespaceConfigs: make(map[string]*NamespaceConfig),
 	}
 
 	cfg.UpdateDynamicConfig(newDynamic)
