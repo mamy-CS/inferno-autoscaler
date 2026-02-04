@@ -30,7 +30,7 @@ spec:
         name: wva_desired_replicas
         selector:
           matchLabels:
-            variant_name: vllme-deployment
+            variant_name: vllme-deployment-va
       target:
         type: AverageValue
         averageValue: "1"

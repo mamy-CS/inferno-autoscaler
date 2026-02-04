@@ -108,49 +108,17 @@ spec:
 
 For complete field documentation, see the [CRD Reference](crd-reference.md).
 
-## Operating Modes
+## Operating Mode
 
-WVA supports two operating modes controlled by the `EXPERIMENTAL_PROACTIVE_MODEL` environment variable.
+WVA operates in **saturation mode**.
 
-### CAPACITY-ONLY Mode (Default)
-
-**Recommended for production.**
+### Saturation Mode
 
 - **Behavior**: Reactive scaling based on saturation detection
 - **How It Works**: Monitors KV cache usage and queue lengths, scales when thresholds exceeded
 - **Configuration**: Uses `capacity-scaling-config` ConfigMap
 - **Pros**: Fast response (<30s), predictable, no model training needed
 - **Cons**: Reactive (scales after saturation detected)
-
-**Enable:**
-```yaml
-# Already enabled by default, no configuration needed
-# Or explicitly set:
-env:
-  - name: EXPERIMENTAL_PROACTIVE_MODEL
-    value: "false"
-```
-
-### HYBRID Mode (Experimental)
-
-**Not recommended for production.**
-
-- **Behavior**: Combines saturation analyzer with model-based optimizer
-- **How It Works**:
-  1. Runs saturation analyzer for saturation detection
-  2. Runs model-based optimizer for proactive scaling
-  3. Arbitrates between the two (capacity safety overrides)
-- **Pros**: Proactive scaling (can scale before saturation)
-- **Cons**: Slower (~60s), requires model training, experimental
-
-**Enable:**
-```yaml
-env:
-  - name: EXPERIMENTAL_PROACTIVE_MODEL
-    value: "true"
-```
-
-**Recommendation:** Stick with CAPACITY-ONLY mode unless you have specific proactive scaling requirements.
 
 See [Saturation Analyzer Documentation](../../docs/saturation-analyzer.md) for configuration details.
 

@@ -139,9 +139,9 @@ var _ = Describe("Test workload-variant-autoscaler - Scale-From-Zero Feature", O
 		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to create Service: %s", serviceName))
 
 		By("creating VariantAutoscaling resource (deployment starts at 0 replicas)")
-		variantAutoscaling := utils.CreateVariantAutoscalingResource(namespace, deployName, modelName, a100Acc, 10.0)
+		variantAutoscaling := utils.CreateVariantAutoscalingResource(namespace, name, deployName, modelName, a100Acc, 10.0)
 		err = crClient.Create(ctx, variantAutoscaling)
-		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to create VariantAutoscaling for: %s", deployName))
+		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to create VariantAutoscaling: %s", name))
 
 		_, _ = fmt.Fprintf(GinkgoWriter, "Scale-from-zero test setup complete\n")
 	})
@@ -152,12 +152,12 @@ var _ = Describe("Test workload-variant-autoscaler - Scale-From-Zero Feature", O
 			va := &v1alpha1.VariantAutoscaling{}
 			err := crClient.Get(ctx, client.ObjectKey{
 				Namespace: namespace,
-				Name:      deployName,
+				Name:      name,
 			}, va)
-			Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to get VariantAutoscaling: %s", deployName))
+			Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to get VariantAutoscaling: %s", name))
 			Expect(va.Spec.ModelID).To(Equal(modelName))
 
-			_, _ = fmt.Fprintf(GinkgoWriter, "VariantAutoscaling resource verified: %s\n", deployName)
+			_, _ = fmt.Fprintf(GinkgoWriter, "VariantAutoscaling resource verified: %s\n", name)
 		})
 
 		It("should verify deployment starts at zero replicas", func() {
@@ -210,7 +210,7 @@ var _ = Describe("Test workload-variant-autoscaler - Scale-From-Zero Feature", O
 				va := &v1alpha1.VariantAutoscaling{}
 				err := crClient.Get(ctx, client.ObjectKey{
 					Namespace: namespace,
-					Name:      deployName,
+					Name:      name,
 				}, va)
 				g.Expect(err).NotTo(HaveOccurred())
 
@@ -278,7 +278,7 @@ var _ = Describe("Test workload-variant-autoscaler - Scale-From-Zero Feature", O
 			va := &v1alpha1.VariantAutoscaling{}
 			err := crClient.Get(ctx, client.ObjectKey{
 				Namespace: namespace,
-				Name:      deployName,
+				Name:      name,
 			}, va)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -389,10 +389,10 @@ var _ = Describe("Test workload-variant-autoscaler - Scale-From-Zero Feature", O
 
 		// Delete VariantAutoscaling resource
 		va := &v1alpha1.VariantAutoscaling{}
-		err := crClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: deployName}, va)
+		err := crClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, va)
 		if err == nil {
 			err = crClient.Delete(ctx, va)
-			Expect(client.IgnoreNotFound(err)).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to delete VariantAutoscaling: %s", deployName))
+			Expect(client.IgnoreNotFound(err)).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to delete VariantAutoscaling: %s", name))
 		}
 
 		// Delete Service
