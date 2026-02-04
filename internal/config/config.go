@@ -95,26 +95,26 @@ type DynamicConfig struct {
 	NamespaceConfigs map[string]*NamespaceConfig
 }
 
-// GetOptimizationInterval returns the current optimization interval.
+// OptimizationInterval returns the current optimization interval.
 // Thread-safe.
-func (c *Config) GetOptimizationInterval() time.Duration {
+func (c *Config) OptimizationInterval() time.Duration {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.Dynamic.OptimizationInterval
 }
 
-// GetSaturationConfig returns the current global saturation scaling configuration.
+// SaturationConfig returns the current global saturation scaling configuration.
 // Thread-safe. Returns a copy to prevent external modifications.
-// For namespace-aware lookups, use GetSaturationConfigForNamespace instead.
-func (c *Config) GetSaturationConfig() map[string]interfaces.SaturationScalingConfig {
-	return c.GetSaturationConfigForNamespace("")
+// For namespace-aware lookups, use SaturationConfigForNamespace instead.
+func (c *Config) SaturationConfig() map[string]interfaces.SaturationScalingConfig {
+	return c.SaturationConfigForNamespace("")
 }
 
-// GetSaturationConfigForNamespace returns the saturation scaling configuration for the given namespace.
+// SaturationConfigForNamespace returns the saturation scaling configuration for the given namespace.
 // Resolution order: namespace-local > global
 // Thread-safe. Returns a copy to prevent external modifications.
 // If namespace is empty, returns global config.
-func (c *Config) GetSaturationConfigForNamespace(namespace string) map[string]interfaces.SaturationScalingConfig {
+func (c *Config) SaturationConfigForNamespace(namespace string) map[string]interfaces.SaturationScalingConfig {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -147,18 +147,18 @@ func (c *Config) GetSaturationConfigForNamespace(namespace string) map[string]in
 	return result
 }
 
-// GetScaleToZeroConfig returns the current global scale-to-zero configuration.
+// ScaleToZeroConfig returns the current global scale-to-zero configuration.
 // Thread-safe.
-// For namespace-aware lookups, use GetScaleToZeroConfigForNamespace instead.
-func (c *Config) GetScaleToZeroConfig() ScaleToZeroConfigData {
-	return c.GetScaleToZeroConfigForNamespace("")
+// For namespace-aware lookups, use ScaleToZeroConfigForNamespace instead.
+func (c *Config) ScaleToZeroConfig() ScaleToZeroConfigData {
+	return c.ScaleToZeroConfigForNamespace("")
 }
 
-// GetScaleToZeroConfigForNamespace returns the scale-to-zero configuration for the given namespace.
+// ScaleToZeroConfigForNamespace returns the scale-to-zero configuration for the given namespace.
 // Resolution order: namespace-local > global
 // Thread-safe. Returns a copy to prevent external modifications.
 // If namespace is empty, returns global config.
-func (c *Config) GetScaleToZeroConfigForNamespace(namespace string) ScaleToZeroConfigData {
+func (c *Config) ScaleToZeroConfigForNamespace(namespace string) ScaleToZeroConfigData {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -191,9 +191,9 @@ func (c *Config) GetScaleToZeroConfigForNamespace(namespace string) ScaleToZeroC
 	return result
 }
 
-// GetPrometheusCacheConfig returns the current Prometheus cache configuration.
+// PrometheusCacheConfig returns the current Prometheus cache configuration.
 // Thread-safe.
-func (c *Config) GetPrometheusCacheConfig() *CacheConfig {
+func (c *Config) PrometheusCacheConfig() *CacheConfig {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	if c.Dynamic.PrometheusCache == nil {
@@ -353,9 +353,9 @@ func (c *Config) UpdatePrometheusCacheConfig(cacheConfig *CacheConfig) {
 	}
 }
 
-// GetDynamicConfig returns a copy of the current dynamic configuration.
+// DynamicConfig returns a copy of the current dynamic configuration.
 // Thread-safe.
-func (c *Config) GetDynamicConfig() DynamicConfig {
+func (c *Config) DynamicConfig() DynamicConfig {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.Dynamic

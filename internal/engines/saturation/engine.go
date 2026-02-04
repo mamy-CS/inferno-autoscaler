@@ -138,7 +138,7 @@ func (e *Engine) optimize(ctx context.Context) error {
 	logger := ctrl.LoggerFrom(ctx)
 
 	// Get optimization interval from Config (already a time.Duration)
-	interval := e.Config.GetOptimizationInterval()
+	interval := e.Config.OptimizationInterval()
 
 	// Update the executor interval if changed
 	// Note: simple polling executor might not support dynamic interval update easily without restart,
@@ -211,7 +211,7 @@ func (e *Engine) optimize(ctx context.Context) error {
 			"groupKey", groupKey)
 
 		// Get namespace-aware saturation config (namespace-local > global)
-		saturationConfigMap := e.Config.GetSaturationConfigForNamespace(namespace)
+		saturationConfigMap := e.Config.SaturationConfigForNamespace(namespace)
 		if len(saturationConfigMap) == 0 {
 			logger.Info("Saturation scaling config not loaded yet for namespace, skipping model",
 				"namespace", namespace,
@@ -242,7 +242,7 @@ func (e *Engine) optimize(ctx context.Context) error {
 			// Apply scale-to-zero enforcement after saturation analysis
 			// This either scales to zero if enabled and no requests, or ensures minimum replicas
 			// Get namespace-aware scale-to-zero config (namespace-local > global)
-			scaleToZeroConfig := e.Config.GetScaleToZeroConfigForNamespace(namespace)
+			scaleToZeroConfig := e.Config.ScaleToZeroConfigForNamespace(namespace)
 
 			// Copy original targets for logging (enforcer modifies map in place)
 			originalTargets := make(map[string]int, len(saturationTargets))
@@ -282,7 +282,7 @@ func (e *Engine) optimize(ctx context.Context) error {
 	// This constrains scaling decisions based on available GPU resources
 	// Note: Limiter uses global saturation config since it's applied globally to all decisions
 	// TODO: Consider per-namespace limiter configuration in the future
-	globalSaturationConfigMap := e.Config.GetSaturationConfig()
+	globalSaturationConfigMap := e.Config.SaturationConfig()
 	var globalSaturationConfig interfaces.SaturationScalingConfig
 	if len(globalSaturationConfigMap) > 0 {
 		if cfg, ok := globalSaturationConfigMap["default"]; ok {

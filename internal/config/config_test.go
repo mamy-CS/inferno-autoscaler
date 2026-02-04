@@ -37,21 +37,21 @@ func TestConfig_ThreadSafeUpdates(t *testing.T) {
 			defer wg.Done()
 			for j := 0; j < iterations; j++ {
 				// Read various dynamic config values
-				interval := cfg.GetOptimizationInterval()
+				interval := cfg.OptimizationInterval()
 				if interval <= 0 {
 					atomic.AddInt64(&readErrors, 1)
 					t.Logf("Reader %d: Invalid interval at iteration %d: %v", readerID, j, interval)
 					continue
 				}
 
-				satConfig := cfg.GetSaturationConfig()
+				satConfig := cfg.SaturationConfig()
 				if satConfig == nil {
 					atomic.AddInt64(&readErrors, 1)
 					t.Logf("Reader %d: Nil saturation config at iteration %d", readerID, j)
 					continue
 				}
 
-				scaleToZeroConfig := cfg.GetScaleToZeroConfig()
+				scaleToZeroConfig := cfg.ScaleToZeroConfig()
 				if scaleToZeroConfig == nil {
 					atomic.AddInt64(&readErrors, 1)
 					t.Logf("Reader %d: Nil scale-to-zero config at iteration %d", readerID, j)
@@ -108,13 +108,13 @@ func TestConfig_ThreadSafeUpdates(t *testing.T) {
 	assert.Equal(t, int64(0), writeErrors, "No write errors should occur in thread-safe updates")
 
 	// Verify final state is consistent
-	finalInterval := cfg.GetOptimizationInterval()
+	finalInterval := cfg.OptimizationInterval()
 	assert.Greater(t, finalInterval, time.Duration(0), "Final interval should be positive")
 
-	finalSatConfig := cfg.GetSaturationConfig()
+	finalSatConfig := cfg.SaturationConfig()
 	assert.NotNil(t, finalSatConfig, "Final saturation config should not be nil")
 
-	finalScaleToZeroConfig := cfg.GetScaleToZeroConfig()
+	finalScaleToZeroConfig := cfg.ScaleToZeroConfig()
 	assert.NotNil(t, finalScaleToZeroConfig, "Final scale-to-zero config should not be nil")
 }
 
@@ -134,9 +134,9 @@ func TestConfig_ThreadSafeConcurrentReads(t *testing.T) {
 			defer wg.Done()
 			<-start // Wait for signal to start
 			// All readers should be able to read concurrently (RWMutex allows multiple readers)
-			interval := cfg.GetOptimizationInterval()
-			satConfig := cfg.GetSaturationConfig()
-			scaleToZeroConfig := cfg.GetScaleToZeroConfig()
+				interval := cfg.OptimizationInterval()
+				satConfig := cfg.SaturationConfig()
+				scaleToZeroConfig := cfg.ScaleToZeroConfig()
 			_ = interval
 			_ = satConfig
 			_ = scaleToZeroConfig
@@ -191,7 +191,7 @@ func TestConfig_ThreadSafeReadDuringWrite(t *testing.T) {
 				case <-done:
 					return
 				default:
-					interval := cfg.GetOptimizationInterval()
+					interval := cfg.OptimizationInterval()
 					if interval > 0 {
 						atomic.AddInt64(&readCount, 1)
 					}
@@ -390,11 +390,11 @@ func TestConfig_NamespaceAwareResolutionPrecedence(t *testing.T) {
 
 	// Test 1: No namespace-local config, should return global
 	t.Run("No namespace-local config returns global", func(t *testing.T) {
-		satConfig := cfg.GetSaturationConfigForNamespace(namespace)
+		satConfig := cfg.SaturationConfigForNamespace(namespace)
 		assert.Equal(t, 1, len(satConfig), "Should return global config")
 		assert.Equal(t, 0.80, satConfig["default"].KvCacheThreshold, "Should use global value")
 
-		scaleToZeroConfig := cfg.GetScaleToZeroConfigForNamespace(namespace)
+		scaleToZeroConfig := cfg.ScaleToZeroConfigForNamespace(namespace)
 		assert.Equal(t, 1, len(scaleToZeroConfig), "Should return global config")
 		assert.Equal(t, "model1", scaleToZeroConfig["model1"].ModelID, "Should use global value")
 	})
@@ -423,24 +423,24 @@ func TestConfig_NamespaceAwareResolutionPrecedence(t *testing.T) {
 		cfg.UpdateScaleToZeroConfigForNamespace(namespace, nsScaleToZeroConfig)
 
 		// Verify namespace-local config is returned
-		satConfig := cfg.GetSaturationConfigForNamespace(namespace)
+		satConfig := cfg.SaturationConfigForNamespace(namespace)
 		assert.Equal(t, 1, len(satConfig), "Should return namespace-local config")
 		assert.Equal(t, 0.70, satConfig["default"].KvCacheThreshold, "Should use namespace-local value")
 		assert.Equal(t, float64(3), satConfig["default"].QueueLengthThreshold, "Should use namespace-local value")
 
-		scaleToZeroConfig := cfg.GetScaleToZeroConfigForNamespace(namespace)
+		scaleToZeroConfig := cfg.ScaleToZeroConfigForNamespace(namespace)
 		assert.Equal(t, 1, len(scaleToZeroConfig), "Should return namespace-local config")
 		assert.Equal(t, false, *scaleToZeroConfig["model1"].EnableScaleToZero, "Should use namespace-local value")
 		assert.Equal(t, "5m", scaleToZeroConfig["model1"].RetentionPeriod, "Should use namespace-local value")
 
 		// Verify global config is unchanged
-		globalSatConfig := cfg.GetSaturationConfigForNamespace("")
+		globalSatConfig := cfg.SaturationConfigForNamespace("")
 		assert.Equal(t, 0.80, globalSatConfig["default"].KvCacheThreshold, "Global config should be unchanged")
 	})
 
 	// Test 3: Empty namespace returns global
 	t.Run("Empty namespace returns global", func(t *testing.T) {
-		satConfig := cfg.GetSaturationConfigForNamespace("")
+		satConfig := cfg.SaturationConfigForNamespace("")
 		assert.Equal(t, 0.80, satConfig["default"].KvCacheThreshold, "Empty namespace should return global")
 	})
 }
@@ -494,17 +494,17 @@ func TestConfig_NamespaceConfigDeletion(t *testing.T) {
 	cfg.UpdateScaleToZeroConfigForNamespace(namespace, nsScaleToZeroConfig)
 
 	// Verify namespace-local config is active
-	satConfig := cfg.GetSaturationConfigForNamespace(namespace)
+	satConfig := cfg.SaturationConfigForNamespace(namespace)
 	assert.Equal(t, 0.70, satConfig["default"].KvCacheThreshold, "Should use namespace-local value")
 
 	// Remove namespace-local config (simulating ConfigMap deletion)
 	cfg.RemoveNamespaceConfig(namespace)
 
 	// Verify fallback to global config
-	satConfig = cfg.GetSaturationConfigForNamespace(namespace)
+	satConfig = cfg.SaturationConfigForNamespace(namespace)
 	assert.Equal(t, 0.80, satConfig["default"].KvCacheThreshold, "Should fall back to global value after deletion")
 
-	scaleToZeroConfig := cfg.GetScaleToZeroConfigForNamespace(namespace)
+	scaleToZeroConfig := cfg.ScaleToZeroConfigForNamespace(namespace)
 	assert.Equal(t, true, *scaleToZeroConfig["model1"].EnableScaleToZero, "Should fall back to global value after deletion")
 	assert.Equal(t, "10m", scaleToZeroConfig["model1"].RetentionPeriod, "Should fall back to global value after deletion")
 }
@@ -544,14 +544,14 @@ func TestConfig_MultipleNamespaces(t *testing.T) {
 	cfg.UpdateSaturationConfigForNamespace(namespace2, ns2SatConfig)
 
 	// Verify each namespace has its own config
-	satConfig1 := cfg.GetSaturationConfigForNamespace(namespace1)
+	satConfig1 := cfg.SaturationConfigForNamespace(namespace1)
 	assert.Equal(t, 0.70, satConfig1["default"].KvCacheThreshold, "Namespace1 should have its own config")
 
-	satConfig2 := cfg.GetSaturationConfigForNamespace(namespace2)
+	satConfig2 := cfg.SaturationConfigForNamespace(namespace2)
 	assert.Equal(t, 0.90, satConfig2["default"].KvCacheThreshold, "Namespace2 should have its own config")
 
 	// Verify global config is unchanged
-	globalSatConfig2 := cfg.GetSaturationConfigForNamespace("")
+	globalSatConfig2 := cfg.SaturationConfigForNamespace("")
 	assert.Equal(t, 0.80, globalSatConfig2["default"].KvCacheThreshold, "Global config should be unchanged")
 }
 

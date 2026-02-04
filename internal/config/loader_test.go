@@ -318,7 +318,7 @@ queueSpareTrigger: 3`,
 		t.Fatalf("Load() failed: %v", err)
 	}
 
-	satConfig := cfg.GetSaturationConfig()
+	satConfig := cfg.SaturationConfig()
 	if len(satConfig) != 1 {
 		// Debug: Check if ConfigMap was found but not parsed
 		// The issue might be that GetConfigMapWithBackoff works but the loader
@@ -364,7 +364,7 @@ queueSpareTrigger: 3`,
 	}
 
 	// Invalid entry should be skipped
-	satConfig := cfg.GetSaturationConfig()
+	satConfig := cfg.SaturationConfig()
 	if len(satConfig) != 0 {
 		t.Errorf("Expected invalid saturation config to be skipped, but got %d entries", len(satConfig))
 	}
@@ -400,7 +400,7 @@ retention_period: 5m`,
 		t.Fatalf("Load() failed: %v", err)
 	}
 
-	scaleToZeroConfig := cfg.GetScaleToZeroConfig()
+	scaleToZeroConfig := cfg.ScaleToZeroConfig()
 	if len(scaleToZeroConfig) == 0 {
 		t.Error("Expected scale-to-zero config to be loaded")
 	}
@@ -466,7 +466,7 @@ func TestLoad_PrometheusCacheConfig(t *testing.T) {
 		t.Fatalf("Load() failed: %v", err)
 	}
 
-	cacheConfig := cfg.GetPrometheusCacheConfig()
+	cacheConfig := cfg.PrometheusCacheConfig()
 	if cacheConfig == nil {
 		t.Fatal("Expected Prometheus cache config to be loaded")
 	}
@@ -496,10 +496,10 @@ func TestConfig_ThreadSafety(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		go func() {
 			defer func() { done <- true }()
-			_ = cfg.GetOptimizationInterval()
-			_ = cfg.GetSaturationConfig()
-			_ = cfg.GetScaleToZeroConfig()
-			_ = cfg.GetPrometheusCacheConfig()
+			_ = cfg.OptimizationInterval()
+			_ = cfg.SaturationConfig()
+			_ = cfg.ScaleToZeroConfig()
+			_ = cfg.PrometheusCacheConfig()
 		}()
 	}
 
@@ -543,11 +543,11 @@ func TestConfig_UpdateDynamicConfig(t *testing.T) {
 	cfg.UpdateDynamicConfig(newDynamic)
 
 	// Verify update
-	if cfg.GetOptimizationInterval() != 30*time.Second {
-		t.Errorf("Expected updated OptimizationInterval 30s, got %v", cfg.GetOptimizationInterval())
+	if cfg.OptimizationInterval() != 30*time.Second {
+		t.Errorf("Expected updated OptimizationInterval 30s, got %v", cfg.OptimizationInterval())
 	}
 
-	satConfig := cfg.GetSaturationConfig()
+	satConfig := cfg.SaturationConfig()
 	if len(satConfig) != 1 {
 		t.Fatalf("Expected 1 saturation config entry after update, got %d", len(satConfig))
 	}
