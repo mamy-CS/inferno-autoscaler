@@ -133,9 +133,12 @@ ConfigMap updates need to be processed immediately to apply new configuration. H
 
 ```go
 // ConfigMapPredicate returns a predicate that filters ConfigMap events to only the target ConfigMaps.
-func ConfigMapPredicate() predicate.Predicate {
+// It accepts a namespaceChecker function to filter ConfigMaps in tracked namespaces (prevents cluster-wide watching).
+func ConfigMapPredicate(namespaceChecker func(string) bool) predicate.Predicate {
 	return predicate.NewPredicateFuncs(func(obj client.Object) bool {
 		name := obj.GetName()
+		namespace := obj.GetNamespace()
+		// Well-known ConfigMap names in controller namespace (global) or tracked namespaces (namespace-local)
 		return (name == getConfigMapName() || name == getSaturationConfigMapName()) && 
 		       obj.GetNamespace() == configMapNamespace
 	})

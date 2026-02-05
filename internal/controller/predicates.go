@@ -18,8 +18,12 @@ import (
 //
 // For namespace-local ConfigMap support:
 // - Global ConfigMaps: well-known names in controller namespace
-// - Namespace-local ConfigMaps: well-known names in any namespace (filtered in handler by namespace tracking)
-func ConfigMapPredicate() predicate.Predicate {
+// - Namespace-local ConfigMaps: well-known names in tracked namespaces (namespaces with VAs)
+//
+// namespaceChecker is a function that returns true if a namespace should be watched for ConfigMaps.
+// It should check the namespace tracker (fast, in-memory check). Opt-in labels and exclusion
+// are handled in the handler to avoid expensive API calls in the predicate.
+func ConfigMapPredicate(namespaceChecker func(string) bool) predicate.Predicate {
 	return predicate.NewPredicateFuncs(func(obj client.Object) bool {
 		name := obj.GetName()
 		namespace := obj.GetNamespace()
@@ -42,8 +46,15 @@ func ConfigMapPredicate() predicate.Predicate {
 			return true
 		}
 
-		// Namespace-local ConfigMaps: allow well-known names in any namespace
-		// The handler will filter by namespace tracking
+		// Namespace-local ConfigMaps: only allow in tracked namespaces (namespaces with VAs)
+		// This prevents cluster-wide watching and cache sync timeouts.
+		// Opt-in labels and exclusion are still checked in the handler for accuracy.
+		if namespaceChecker != nil {
+			return namespaceChecker(namespace)
+		}
+
+		// If no namespace checker provided, fall back to allowing all (backwards compatible)
+		// This should not happen in production, but provides safety during setup.
 		return true
 	})
 }

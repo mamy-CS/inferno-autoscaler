@@ -28,6 +28,9 @@ const (
 	minRequiredGPUsPerType = 4
 )
 
+// Note: controllerNamespace, controllerMonitoringNamespace, and saturationConfigMapName
+// are defined in e2e_saturation_test.go and are accessible in this package.
+
 // getGPUResourceName returns the GPU resource name based on E2E_GPU_TYPE env var.
 func getGPUResourceName() corev1.ResourceName {
 	gpuType := os.Getenv("E2E_GPU_TYPE")

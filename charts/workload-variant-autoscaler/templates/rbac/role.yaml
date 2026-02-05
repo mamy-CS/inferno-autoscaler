@@ -22,6 +22,16 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - namespaces
+  - pods
+  - services
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
   - nodes
   - nodes/status
   verbs:
