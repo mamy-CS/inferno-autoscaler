@@ -64,6 +64,14 @@ func (e *Enforcer) EnforcePolicy(
 
 	// Check if scale-to-zero is enabled for this model
 	scaleToZeroEnabled := config.IsScaleToZeroEnabled(scaleToZeroConfig, modelID)
+	
+	logger.Info("Scale-to-zero check",
+		"modelID", modelID,
+		"namespace", namespace,
+		"scaleToZeroEnabled", scaleToZeroEnabled,
+		"configKeys", len(scaleToZeroConfig),
+		"hasGlobalDefault", scaleToZeroConfig[config.GlobalDefaultsKey].EnableScaleToZero != nil,
+		"globalDefaultValue", scaleToZeroConfig[config.GlobalDefaultsKey].EnableScaleToZero)
 
 	if scaleToZeroEnabled {
 		targets, applied := e.applyScaleToZero(ctx, modelID, namespace, saturationTargets, scaleToZeroConfig)

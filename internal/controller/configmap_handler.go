@@ -237,6 +237,14 @@ func (r *VariantAutoscalingReconciler) handleScaleToZeroConfigMap(ctx context.Co
 	// Parse scale-to-zero config
 	scaleToZeroConfig := config.ParseScaleToZeroConfigMap(cm.Data)
 
+	// Log parsed config for debugging
+	logger.Info("Processing scale-to-zero ConfigMap",
+		"name", cm.GetName(),
+		"namespace", namespace,
+		"isGlobal", isGlobal,
+		"configKeys", len(cm.Data),
+		"parsedModelCount", len(scaleToZeroConfig))
+
 	// Update global or namespace-local config
 	if isGlobal {
 		r.Config.UpdateScaleToZeroConfig(scaleToZeroConfig)

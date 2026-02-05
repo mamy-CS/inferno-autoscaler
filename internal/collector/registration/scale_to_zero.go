@@ -51,10 +51,10 @@ func RegisterScaleToZeroQueries(sourceRegistry *source.SourceRegistry) {
 // CollectModelRequestCount collects the total number of successful requests for a model
 // over the specified retention period. This is used for scale-to-zero decisions.
 //
-// The function returns an error when it cannot determine the request count with certainty.
-// This is important for scale-to-zero safety: we should only scale to zero when we have
-// positive confirmation that no requests were made. If we can't determine the count,
-// the enforcer will keep current replicas (preventing premature scale-to-zero).
+// The function returns an error when the query execution fails (network errors, Prometheus unavailable, etc.).
+// If the query succeeds but returns no values (empty result), this is treated as 0 requests,
+// which is safe for scale-to-zero: an empty result from sum(increase(...)) means no requests
+// were made in the retention period. This allows scale-to-zero to proceed when the system is idle.
 //
 // Parameters:
 //   - ctx: Context for the operation
@@ -118,15 +118,26 @@ func CollectModelRequestCount(
 	}
 
 	// Get the first value (sum query returns a single scalar)
+	// If no values, treat as 0 requests (safe to scale to zero)
+	// This handles the case where the metric exists but has no data in the retention period
 	if len(result.Values) == 0 {
-		logger.V(logging.DEBUG).Info("No values in model request count result",
+		logger.V(logging.DEBUG).Info("No values in model request count result, treating as 0 requests",
 			"model", modelID,
 			"namespace", namespace,
 			"retentionPeriod", retentionPeriodStr)
-		return 0, fmt.Errorf("no values in request count result for model %s (metrics may not be scraped yet)", modelID)
+		return 0, nil // Return 0 with no error - this means no requests in retention period
 	}
 
 	count := result.FirstValue().Value
+
+	// Handle NaN or invalid values - treat as 0 requests
+	if count != count { // NaN check
+		logger.V(logging.DEBUG).Info("NaN value in request count result, treating as 0 requests",
+			"model", modelID,
+			"namespace", namespace,
+			"retentionPeriod", retentionPeriodStr)
+		return 0, nil
+	}
 
 	logger.V(logging.DEBUG).Info("Collected model request count",
 		"model", modelID,
