@@ -82,10 +82,10 @@ func getVariantKey(namespace, name string) string {
 
 // NewEngine creates a new instance of the saturation engine.
 // Config must be non-nil (validated in main.go before engine creation).
+// Panics if cfg is nil to fail fast on programming errors.
 func NewEngine(client client.Client, scheme *runtime.Scheme, recorder record.EventRecorder, metricsRegistry *source.SourceRegistry, cfg *config.Config) *Engine {
 	if cfg == nil {
-		ctrl.Log.Error(nil, "Config is nil in NewEngine - this should not happen")
-		// In production, this would have been caught in main.go, but defensive check for safety
+		panic("config is nil in NewEngine - this should not happen (validated in main.go before engine creation)")
 	}
 	promSource := metricsRegistry.Get("prometheus") // assume prometheus source is registered
 

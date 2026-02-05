@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: variantautoscaling-config
+  name: wva-variantautoscaling-config
   namespace: workload-variant-autoscaler-system
   labels:
     app.kubernetes.io/name: workload-variant-autoscaler

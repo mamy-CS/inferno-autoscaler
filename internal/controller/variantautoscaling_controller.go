@@ -20,10 +20,8 @@ import (
 	"context"
 	"fmt"
 	"sync"
-	"time"
 
 	promoperator "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
-	yaml "gopkg.in/yaml.v3"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -40,9 +38,7 @@ import (
 
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/config"
-	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/constants"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/common"
-	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/utils"
 )
@@ -57,8 +53,9 @@ type VariantAutoscalingReconciler struct {
 
 	// Namespace tracking for namespace-local ConfigMap watching
 	// Tracks namespaces that have VariantAutoscaling resources
-	namespaceTracker     map[string]int // namespace -> VA count
-	namespaceTrackerLock sync.RWMutex   // Protects namespaceTracker
+	// Uses a set of VA namespaced names per namespace for idempotent tracking
+	namespaceTracker     map[string]map[string]bool // namespace -> set of VA namespaced names (e.g., "namespace/name")
+	namespaceTrackerLock sync.RWMutex               // Protects namespaceTracker
 }
 
 // +kubebuilder:rbac:groups=llmd.ai,resources=variantautoscalings,verbs=get;list;watch;create;update;patch;delete
@@ -119,18 +116,20 @@ func (r *VariantAutoscalingReconciler) Reconcile(ctx context.Context, req ctrl.R
 	// Keep a copy of the original object for Patch generation
 	originalVA := va.DeepCopy()
 
-	// Track namespace for namespace-local ConfigMap watching
-	r.trackNamespace(va.Namespace)
-
 	// Skip if the VA is being deleted
 	if !va.DeletionTimestamp.IsZero() {
 		logger.Info("VariantAutoscaling is being deleted, skipping reconciliation",
 			"name", va.Name,
 			"namespace", va.Namespace)
 		// Untrack namespace when VA is deleted
-		r.untrackNamespace(va.Namespace)
+		r.untrackNamespace(va.Name, va.Namespace)
 		return ctrl.Result{}, nil
 	}
+
+	// Track namespace for namespace-local ConfigMap watching
+	// Moved after deletion check to avoid tracking deleted VAs
+	// Idempotent: tracking the same VA multiple times (e.g., on retry) has no effect
+	r.trackNamespace(va.Name, va.Namespace)
 	logger.Info("Reconciling VariantAutoscaling",
 		"name", va.Name,
 		"namespace", va.Namespace,
@@ -267,25 +266,31 @@ func (r *VariantAutoscalingReconciler) handleDeploymentEvent(ctx context.Context
 	return requests
 }
 
-// trackNamespace increments the VA count for a namespace.
+// trackNamespace adds a VA to the namespace tracker.
+// Idempotent: tracking the same VA multiple times (e.g., on retry) has no effect.
 // Thread-safe.
-func (r *VariantAutoscalingReconciler) trackNamespace(namespace string) {
-	if namespace == "" {
+func (r *VariantAutoscalingReconciler) trackNamespace(vaName, namespace string) {
+	if namespace == "" || vaName == "" {
 		return
 	}
 	r.namespaceTrackerLock.Lock()
 	defer r.namespaceTrackerLock.Unlock()
 	if r.namespaceTracker == nil {
-		r.namespaceTracker = make(map[string]int)
+		r.namespaceTracker = make(map[string]map[string]bool)
 	}
-	r.namespaceTracker[namespace]++
+	if r.namespaceTracker[namespace] == nil {
+		r.namespaceTracker[namespace] = make(map[string]bool)
+	}
+	// Use namespaced name for clarity and to avoid collisions
+	vaNamespacedName := fmt.Sprintf("%s/%s", namespace, vaName)
+	r.namespaceTracker[namespace][vaNamespacedName] = true
 }
 
-// untrackNamespace decrements the VA count for a namespace.
-// When count reaches 0, the namespace is removed from tracking.
+// untrackNamespace removes a VA from the namespace tracker.
+// When the namespace's VA set becomes empty, the namespace is removed from tracking.
 // Thread-safe.
-func (r *VariantAutoscalingReconciler) untrackNamespace(namespace string) {
-	if namespace == "" {
+func (r *VariantAutoscalingReconciler) untrackNamespace(vaName, namespace string) {
+	if namespace == "" || vaName == "" {
 		return
 	}
 	r.namespaceTrackerLock.Lock()
@@ -293,12 +298,16 @@ func (r *VariantAutoscalingReconciler) untrackNamespace(namespace string) {
 	if r.namespaceTracker == nil {
 		return
 	}
-	if count, exists := r.namespaceTracker[namespace]; exists {
-		if count <= 1 {
-			delete(r.namespaceTracker, namespace)
-		} else {
-			r.namespaceTracker[namespace] = count - 1
-		}
+	vaSet, exists := r.namespaceTracker[namespace]
+	if !exists {
+		return
+	}
+	// Use namespaced name to match what was stored in trackNamespace
+	vaNamespacedName := fmt.Sprintf("%s/%s", namespace, vaName)
+	delete(vaSet, vaNamespacedName)
+	// If namespace has no more VAs, remove it from tracker
+	if len(vaSet) == 0 {
+		delete(r.namespaceTracker, namespace)
 	}
 }
 
@@ -313,227 +322,22 @@ func (r *VariantAutoscalingReconciler) isNamespaceTracked(namespace string) bool
 	if r.namespaceTracker == nil {
 		return false
 	}
-	_, exists := r.namespaceTracker[namespace]
-	return exists
-}
-
-// handleConfigMapEvent processes ConfigMap events and updates configuration.
-// This is the main entry point for ConfigMap watching.
-func (r *VariantAutoscalingReconciler) handleConfigMapEvent(ctx context.Context, obj client.Object) []reconcile.Request {
-	// We expect a ConfigMap but check to be safe
-	cm, ok := obj.(*corev1.ConfigMap)
-	if !ok {
-		return nil
-	}
-
-	logger := ctrl.LoggerFrom(ctx)
-	name := cm.GetName()
-	namespace := cm.GetNamespace()
-	expectedNamespace := config.Namespace()
-
-	// Use r.Config to update configuration
-	if r.Config == nil {
-		logger.Error(nil, "Config is nil in reconciler - cannot update configuration")
-		return nil
-	}
-
-	// Check if ConfigMap is being deleted
-	isDeleted := !cm.DeletionTimestamp.IsZero()
-
-	// Determine if this is a global or namespace-local ConfigMap
-	isGlobal := namespace == expectedNamespace
-	isNamespaceLocal := !isGlobal && r.shouldWatchNamespaceLocalConfigMap(ctx, namespace)
-
-	// Handle deletion events
-	if isDeleted {
-		r.handleConfigMapDeletion(ctx, cm, name, namespace, isNamespaceLocal)
-		return nil
-	}
-
-	// Only process namespace-local ConfigMaps if namespace is tracked
-	if !isGlobal && !isNamespaceLocal {
-		return nil
-	}
-
-	// Route to appropriate handler based on ConfigMap name
-	switch name {
-	case config.ConfigMapName():
-		r.handleMainConfigMap(ctx, cm, namespace, isGlobal)
-	case config.SaturationConfigMapName():
-		r.handleSaturationConfigMap(ctx, cm, namespace, isGlobal)
-	case config.DefaultScaleToZeroConfigMapName:
-		r.handleScaleToZeroConfigMap(ctx, cm, namespace, isGlobal)
-	}
-
-	// Config updates are handled by the Engine loop which reads the new configuration.
-	// No need to trigger immediate reconciliation for individual VAs.
-	return nil
-}
-
-// handleConfigMapDeletion handles ConfigMap deletion events.
-func (r *VariantAutoscalingReconciler) handleConfigMapDeletion(ctx context.Context, cm *corev1.ConfigMap, name, namespace string, isNamespaceLocal bool) {
-	logger := ctrl.LoggerFrom(ctx)
-
-	if !isNamespaceLocal {
-		return // Only handle namespace-local ConfigMap deletions
-	}
-
-	// Remove namespace-local config on deletion
-	if name == config.SaturationConfigMapName() {
-		r.Config.UpdateSaturationConfigForNamespace(namespace, make(map[string]interfaces.SaturationScalingConfig))
-		logger.Info("Removed namespace-local saturation config on ConfigMap deletion", "namespace", namespace)
-	} else if name == config.DefaultScaleToZeroConfigMapName {
-		r.Config.UpdateScaleToZeroConfigForNamespace(namespace, make(config.ScaleToZeroConfigData))
-		logger.Info("Removed namespace-local scale-to-zero config on ConfigMap deletion", "namespace", namespace)
-	}
-
-	// Remove namespace entry to allow fallback to global
-	r.Config.RemoveNamespaceConfig(namespace)
-}
-
-// handleMainConfigMap handles updates to the main ConfigMap (wva-variantautoscaling-config).
-// This ConfigMap is only supported globally, not per-namespace.
-func (r *VariantAutoscalingReconciler) handleMainConfigMap(ctx context.Context, cm *corev1.ConfigMap, namespace string, isGlobal bool) {
-	logger := ctrl.LoggerFrom(ctx)
-
-	if !isGlobal {
-		// Main ConfigMap is only supported globally
-		return
-	}
-
-	// Check for immutable parameter changes first
-	immutableChanges, err := config.DetectImmutableParameterChanges(r.Config, cm.Data)
-	if err != nil {
-		// Immutable parameters detected - emit warning event and log error
-		logger.Error(err, "Attempted to change immutable parameters via ConfigMap",
-			"configmap", fmt.Sprintf("%s/%s", namespace, cm.GetName()),
-			"changes", immutableChanges)
-
-		// Emit Kubernetes Warning event
-		if r.Recorder != nil {
-			var changeList []string
-			for _, change := range immutableChanges {
-				changeList = append(changeList, fmt.Sprintf("%s (old: %q, new: %q)", change.Parameter, change.OldValue, change.NewValue))
-			}
-			r.Recorder.Eventf(
-				cm,
-				corev1.EventTypeWarning,
-				"ImmutableConfigChangeRejected",
-				"ConfigMap %s/%s attempted to change immutable parameters that require controller restart: %s. These changes were rejected. Please restart the controller to apply these changes.",
-				namespace,
-				cm.GetName(),
-				fmt.Sprintf("%v", changeList),
-			)
-		}
-
-		// Don't apply any changes - return early
-		return
-	}
-
-	// Optimization Config (Global Interval) - mutable parameter
-	if interval, ok := cm.Data["GLOBAL_OPT_INTERVAL"]; ok {
-		if parsedInterval, err := time.ParseDuration(interval); err == nil {
-			r.Config.UpdateOptimizationInterval(parsedInterval)
-			logger.Info("Updated global optimization config from ConfigMap", "interval", interval)
-		} else {
-			logger.Error(err, "Invalid GLOBAL_OPT_INTERVAL in ConfigMap", "value", interval)
-		}
-	}
-}
-
-// handleSaturationConfigMap handles updates to the saturation scaling ConfigMap.
-// Supports both global and namespace-local ConfigMaps.
-func (r *VariantAutoscalingReconciler) handleSaturationConfigMap(ctx context.Context, cm *corev1.ConfigMap, namespace string, isGlobal bool) {
-	logger := ctrl.LoggerFrom(ctx)
-
-	// Parse saturation scaling config entries
-	configs := make(map[string]interfaces.SaturationScalingConfig)
-	count := 0
-	for key, yamlStr := range cm.Data {
-		var satConfig interfaces.SaturationScalingConfig
-		if err := yaml.Unmarshal([]byte(yamlStr), &satConfig); err != nil {
-			logger.Error(err, "Failed to parse saturation scaling config entry", "key", key)
-			continue
-		}
-		// Validate
-		if err := satConfig.Validate(); err != nil {
-			logger.Error(err, "Invalid saturation scaling config entry", "key", key)
-			continue
-		}
-		configs[key] = satConfig
-		count++
-	}
-
-	// Update global or namespace-local config
-	if isGlobal {
-		r.Config.UpdateSaturationConfig(configs)
-		logger.Info("Updated global saturation config from ConfigMap", "entries", count)
-	} else {
-		r.Config.UpdateSaturationConfigForNamespace(namespace, configs)
-		logger.Info("Updated namespace-local saturation config from ConfigMap", "namespace", namespace, "entries", count)
-	}
-}
-
-// handleScaleToZeroConfigMap handles updates to the scale-to-zero ConfigMap.
-// Supports both global and namespace-local ConfigMaps.
-func (r *VariantAutoscalingReconciler) handleScaleToZeroConfigMap(ctx context.Context, cm *corev1.ConfigMap, namespace string, isGlobal bool) {
-	logger := ctrl.LoggerFrom(ctx)
-
-	// Parse scale-to-zero config
-	scaleToZeroConfig := config.ParseScaleToZeroConfigMap(cm.Data)
-
-	// Update global or namespace-local config
-	if isGlobal {
-		r.Config.UpdateScaleToZeroConfig(scaleToZeroConfig)
-		logger.Info("Updated global scale-to-zero config from ConfigMap", "modelCount", len(scaleToZeroConfig))
-	} else {
-		r.Config.UpdateScaleToZeroConfigForNamespace(namespace, scaleToZeroConfig)
-		logger.Info("Updated namespace-local scale-to-zero config from ConfigMap", "namespace", namespace, "modelCount", len(scaleToZeroConfig))
-	}
-}
-
-// isNamespaceConfigEnabled checks if a namespace has the opt-in label for namespace-local ConfigMaps.
-// This allows namespaces to opt-in for ConfigMap watching even before VAs are created.
-func (r *VariantAutoscalingReconciler) isNamespaceConfigEnabled(ctx context.Context, namespace string) bool {
-	if namespace == "" {
+	vaSet, exists := r.namespaceTracker[namespace]
+	if !exists {
 		return false
 	}
-
-	var ns corev1.Namespace
-	if err := r.Get(ctx, client.ObjectKey{Name: namespace}, &ns); err != nil {
-		// If namespace doesn't exist or we can't read it, return false
-		// This is safe - we'll fall back to VA-based tracking
-		return false
-	}
-
-	// Check if namespace has the opt-in label set to "true"
-	labels := ns.GetLabels()
-	if labels == nil {
-		return false
-	}
-
-	value, exists := labels[constants.NamespaceConfigEnabledLabelKey]
-	return exists && value == "true"
+	// Return true only if namespace has at least one VA
+	return len(vaSet) > 0
 }
 
-// shouldWatchNamespaceLocalConfigMap returns true if a namespace-local ConfigMap should be watched.
-// It checks both VA-based tracking (automatic) and label-based opt-in (explicit).
-func (r *VariantAutoscalingReconciler) shouldWatchNamespaceLocalConfigMap(ctx context.Context, namespace string) bool {
-	// Check VA-based tracking first (most common case)
-	if r.isNamespaceTracked(namespace) {
-		return true
-	}
-
-	// Check label-based opt-in
-	return r.isNamespaceConfigEnabled(ctx, namespace)
-}
+// ConfigMap-related methods have been moved to configmap_handler.go
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *VariantAutoscalingReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&llmdVariantAutoscalingV1alpha1.VariantAutoscaling{},
-			// Filter VAs by controller-instance label for multi-controller isolation
-			builder.WithPredicates(VariantAutoscalingPredicate()),
+			// Filter VAs by controller-instance label and namespace exclusion
+			builder.WithPredicates(VariantAutoscalingPredicate(mgr.GetClient())),
 		).
 		// Watch the specific ConfigMap to trigger global reconcile and update shared config
 		Watches(

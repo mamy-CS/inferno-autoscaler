@@ -593,3 +593,326 @@ func TestLoad_NoConfigMap(t *testing.T) {
 		t.Errorf("Expected default OptimizationInterval 60s, got %v", cfg.Dynamic.OptimizationInterval)
 	}
 }
+
+// TestLoad_BoolPrecedence tests that boolean flag precedence is correct: flag > env > cm
+func TestLoad_BoolPrecedence(t *testing.T) {
+	ctx := context.Background()
+
+	// Set required Prometheus env var
+	_ = os.Setenv("PROMETHEUS_BASE_URL", "https://prometheus:9090")
+	defer func() { _ = os.Unsetenv("PROMETHEUS_BASE_URL") }()
+
+	t.Run("flag=false should take precedence over cm=true", func(t *testing.T) {
+		// Create ConfigMap with LEADER_ELECT=true
+		cm := &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      DefaultConfigMapName,
+				Namespace: DefaultNamespace,
+			},
+			Data: map[string]string{
+				"LEADER_ELECT": "true",
+			},
+		}
+		k8sClient := fake.NewClientBuilder().WithObjects(cm).Build()
+
+		// Flag explicitly set to false
+		flagValue := false
+		flags := StaticConfigFlags{
+			EnableLeaderElection: &flagValue,
+		}
+
+		cfg, err := Load(ctx, flags, k8sClient)
+		if err != nil {
+			t.Fatalf("Load() failed: %v", err)
+		}
+
+		// Flag should take precedence (false), not ConfigMap (true)
+		if cfg.Static.EnableLeaderElection {
+			t.Errorf("Expected EnableLeaderElection=false (from flag), got true (ConfigMap was incorrectly used)")
+		}
+	})
+
+	t.Run("flag=true should take precedence over cm=false", func(t *testing.T) {
+		// Create ConfigMap with LEADER_ELECT=false
+		cm := &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      DefaultConfigMapName,
+				Namespace: DefaultNamespace,
+			},
+			Data: map[string]string{
+				"LEADER_ELECT": "false",
+			},
+		}
+		k8sClient := fake.NewClientBuilder().WithObjects(cm).Build()
+
+		// Flag explicitly set to true
+		flagValue := true
+		flags := StaticConfigFlags{
+			EnableLeaderElection: &flagValue,
+		}
+
+		cfg, err := Load(ctx, flags, k8sClient)
+		if err != nil {
+			t.Fatalf("Load() failed: %v", err)
+		}
+
+		// Flag should take precedence (true), not ConfigMap (false)
+		if !cfg.Static.EnableLeaderElection {
+			t.Errorf("Expected EnableLeaderElection=true (from flag), got false (ConfigMap was incorrectly used)")
+		}
+	})
+
+	t.Run("env should take precedence over cm when flag is unset", func(t *testing.T) {
+		// Create ConfigMap with LEADER_ELECT=false
+		cm := &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      DefaultConfigMapName,
+				Namespace: DefaultNamespace,
+			},
+			Data: map[string]string{
+				"LEADER_ELECT": "false",
+			},
+		}
+		k8sClient := fake.NewClientBuilder().WithObjects(cm).Build()
+
+		// Set env var to true
+		_ = os.Setenv("LEADER_ELECT", "true")
+		defer func() { _ = os.Unsetenv("LEADER_ELECT") }()
+
+		// Flag not set (nil)
+		flags := StaticConfigFlags{
+			EnableLeaderElection: nil,
+		}
+
+		cfg, err := Load(ctx, flags, k8sClient)
+		if err != nil {
+			t.Fatalf("Load() failed: %v", err)
+		}
+
+		// Env should take precedence (true), not ConfigMap (false)
+		if !cfg.Static.EnableLeaderElection {
+			t.Errorf("Expected EnableLeaderElection=true (from env), got false (ConfigMap was incorrectly used)")
+		}
+	})
+
+	t.Run("cm should be used when flag and env are unset", func(t *testing.T) {
+		// Create ConfigMap with LEADER_ELECT=true
+		cm := &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      DefaultConfigMapName,
+				Namespace: DefaultNamespace,
+			},
+			Data: map[string]string{
+				"LEADER_ELECT": "true",
+			},
+		}
+		k8sClient := fake.NewClientBuilder().WithObjects(cm).Build()
+
+		// Ensure env is not set
+		_ = os.Unsetenv("LEADER_ELECT")
+
+		// Flag not set (nil)
+		flags := StaticConfigFlags{
+			EnableLeaderElection: nil,
+		}
+
+		cfg, err := Load(ctx, flags, k8sClient)
+		if err != nil {
+			t.Fatalf("Load() failed: %v", err)
+		}
+
+		// ConfigMap should be used (true)
+		if !cfg.Static.EnableLeaderElection {
+			t.Errorf("Expected EnableLeaderElection=true (from ConfigMap), got false")
+		}
+	})
+}
+
+// TestLoad_DurationPrecedence tests that duration flag precedence is correct: flag > env > cm > defaults
+func TestLoad_DurationPrecedence(t *testing.T) {
+	ctx := context.Background()
+
+	// Set required Prometheus env var
+	_ = os.Setenv("PROMETHEUS_BASE_URL", "https://prometheus:9090")
+	defer func() { _ = os.Unsetenv("PROMETHEUS_BASE_URL") }()
+
+	t.Run("flag=0 should take precedence over cm=30s", func(t *testing.T) {
+		// Create ConfigMap with LEADER_ELECTION_LEASE_DURATION=30s
+		cm := &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      DefaultConfigMapName,
+				Namespace: DefaultNamespace,
+			},
+			Data: map[string]string{
+				"LEADER_ELECTION_LEASE_DURATION": "30s",
+			},
+		}
+		k8sClient := fake.NewClientBuilder().WithObjects(cm).Build()
+
+		// Flag explicitly set to 0
+		flagValue := time.Duration(0)
+		flags := StaticConfigFlags{
+			LeaseDuration: &flagValue,
+		}
+
+		cfg, err := Load(ctx, flags, k8sClient)
+		if err != nil {
+			t.Fatalf("Load() failed: %v", err)
+		}
+
+		// Flag should take precedence (0), not ConfigMap (30s)
+		if cfg.Static.LeaseDuration != 0 {
+			t.Errorf("Expected LeaseDuration=0 (from flag), got %v (ConfigMap was incorrectly used)", cfg.Static.LeaseDuration)
+		}
+	})
+
+	t.Run("flag=45s should take precedence over cm=30s", func(t *testing.T) {
+		// Create ConfigMap with LEADER_ELECTION_LEASE_DURATION=30s
+		cm := &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      DefaultConfigMapName,
+				Namespace: DefaultNamespace,
+			},
+			Data: map[string]string{
+				"LEADER_ELECTION_LEASE_DURATION": "30s",
+			},
+		}
+		k8sClient := fake.NewClientBuilder().WithObjects(cm).Build()
+
+		// Flag explicitly set to 45s
+		flagValue := 45 * time.Second
+		flags := StaticConfigFlags{
+			LeaseDuration: &flagValue,
+		}
+
+		cfg, err := Load(ctx, flags, k8sClient)
+		if err != nil {
+			t.Fatalf("Load() failed: %v", err)
+		}
+
+		// Flag should take precedence (45s), not ConfigMap (30s)
+		if cfg.Static.LeaseDuration != 45*time.Second {
+			t.Errorf("Expected LeaseDuration=45s (from flag), got %v (ConfigMap was incorrectly used)", cfg.Static.LeaseDuration)
+		}
+	})
+
+	t.Run("env should take precedence over cm when flag is unset", func(t *testing.T) {
+		// Create ConfigMap with LEADER_ELECTION_LEASE_DURATION=30s
+		cm := &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      DefaultConfigMapName,
+				Namespace: DefaultNamespace,
+			},
+			Data: map[string]string{
+				"LEADER_ELECTION_LEASE_DURATION": "30s",
+			},
+		}
+		k8sClient := fake.NewClientBuilder().WithObjects(cm).Build()
+
+		// Set env var to 45s
+		_ = os.Setenv("LEADER_ELECTION_LEASE_DURATION", "45s")
+		defer func() { _ = os.Unsetenv("LEADER_ELECTION_LEASE_DURATION") }()
+
+		// Flag not set (nil)
+		flags := StaticConfigFlags{
+			LeaseDuration: nil,
+		}
+
+		cfg, err := Load(ctx, flags, k8sClient)
+		if err != nil {
+			t.Fatalf("Load() failed: %v", err)
+		}
+
+		// Env should take precedence (45s), not ConfigMap (30s)
+		if cfg.Static.LeaseDuration != 45*time.Second {
+			t.Errorf("Expected LeaseDuration=45s (from env), got %v (ConfigMap was incorrectly used)", cfg.Static.LeaseDuration)
+		}
+	})
+
+	t.Run("cm should be used when flag and env are unset", func(t *testing.T) {
+		// Create ConfigMap with LEADER_ELECTION_LEASE_DURATION=30s
+		cm := &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      DefaultConfigMapName,
+				Namespace: DefaultNamespace,
+			},
+			Data: map[string]string{
+				"LEADER_ELECTION_LEASE_DURATION": "30s",
+			},
+		}
+		k8sClient := fake.NewClientBuilder().WithObjects(cm).Build()
+
+		// Ensure env is not set
+		_ = os.Unsetenv("LEADER_ELECTION_LEASE_DURATION")
+
+		// Flag not set (nil)
+		flags := StaticConfigFlags{
+			LeaseDuration: nil,
+		}
+
+		cfg, err := Load(ctx, flags, k8sClient)
+		if err != nil {
+			t.Fatalf("Load() failed: %v", err)
+		}
+
+		// ConfigMap should be used (30s)
+		if cfg.Static.LeaseDuration != 30*time.Second {
+			t.Errorf("Expected LeaseDuration=30s (from ConfigMap), got %v", cfg.Static.LeaseDuration)
+		}
+	})
+
+	t.Run("cm=0 should be respected when flag and env are unset", func(t *testing.T) {
+		// Create ConfigMap with LEADER_ELECTION_LEASE_DURATION=0s (explicit zero)
+		cm := &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      DefaultConfigMapName,
+				Namespace: DefaultNamespace,
+			},
+			Data: map[string]string{
+				"LEADER_ELECTION_LEASE_DURATION": "0s",
+			},
+		}
+		k8sClient := fake.NewClientBuilder().WithObjects(cm).Build()
+
+		// Ensure env is not set
+		_ = os.Unsetenv("LEADER_ELECTION_LEASE_DURATION")
+
+		// Flag not set (nil)
+		flags := StaticConfigFlags{
+			LeaseDuration: nil,
+		}
+
+		cfg, err := Load(ctx, flags, k8sClient)
+		if err != nil {
+			t.Fatalf("Load() failed: %v", err)
+		}
+
+		// ConfigMap value of 0 should be used (not default)
+		if cfg.Static.LeaseDuration != 0 {
+			t.Errorf("Expected LeaseDuration=0 (from ConfigMap), got %v (default was incorrectly used)", cfg.Static.LeaseDuration)
+		}
+	})
+
+	t.Run("default should be used when flag, env, and cm are all unset", func(t *testing.T) {
+		// No ConfigMap
+		k8sClient := fake.NewClientBuilder().Build()
+
+		// Ensure env is not set
+		_ = os.Unsetenv("LEADER_ELECTION_LEASE_DURATION")
+
+		// Flag not set (nil)
+		flags := StaticConfigFlags{
+			LeaseDuration: nil,
+		}
+
+		cfg, err := Load(ctx, flags, k8sClient)
+		if err != nil {
+			t.Fatalf("Load() failed: %v", err)
+		}
+
+		// Default should be used (60s from loadStaticConfig defaults)
+		if cfg.Static.LeaseDuration != 60*time.Second {
+			t.Errorf("Expected LeaseDuration=60s (from default), got %v", cfg.Static.LeaseDuration)
+		}
+	})
+}

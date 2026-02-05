@@ -191,12 +191,12 @@ Configuration values are loaded with the following precedence (highest to lowest
 --metrics-addr=":8443"
 
 # Environment variable (overridden by flags)
-export METRICS_ADDR=":8080"
+export METRICS_BIND_ADDRESS=":8080"
 
 # ConfigMap (overridden by env/flags)
 # wva-variantautoscaling-config
 data:
-  METRICS_ADDR: ":9090"
+  METRICS_BIND_ADDRESS: ":9090"
 
 # Default (used if none of above are set)
 # Default: "0" (disabled)
@@ -213,8 +213,8 @@ These settings **cannot** be changed at runtime via ConfigMap updates. Attempts 
 
 **Immutable Parameters:**
 - `PROMETHEUS_BASE_URL` - Prometheus connection endpoint
-- `METRICS_ADDR` - Metrics bind address
-- `PROBE_ADDR` - Health probe bind address
+- `METRICS_BIND_ADDRESS` - Metrics bind address
+- `HEALTH_PROBE_BIND_ADDRESS` - Health probe bind address
 - `LEADER_ELECTION_ID` - Leader election coordination ID
 - TLS certificate paths (webhook and metrics certificates)
 

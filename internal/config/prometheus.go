@@ -124,12 +124,29 @@ func GetPrometheusConfigFromConfigMap(ctx context.Context, k8sClient client.Clie
 	return config, nil
 }
 
-// ReadPrometheusCacheConfig reads Prometheus collector cache configuration from the ConfigMap
-func ReadPrometheusCacheConfig(ctx context.Context, k8sClient client.Client) (*CacheConfig, error) {
-	cm := corev1.ConfigMap{}
-	err := utils.GetConfigMapWithBackoff(ctx, k8sClient, ConfigMapName(), Namespace(), &cm)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get configmap for Prometheus cache config: %w", err)
+// ParsePrometheusCacheConfigFromData parses Prometheus collector cache configuration from ConfigMap data.
+// This is used for runtime updates when the ConfigMap changes.
+// Returns nil if no cache config keys are present in the data.
+func ParsePrometheusCacheConfigFromData(data map[string]string) *CacheConfig {
+	// Check if any cache config keys are present
+	cacheKeys := []string{
+		"PROMETHEUS_METRICS_CACHE_ENABLED",
+		"PROMETHEUS_METRICS_CACHE_TTL",
+		"PROMETHEUS_METRICS_CACHE_CLEANUP_INTERVAL",
+		"PROMETHEUS_METRICS_CACHE_FETCH_INTERVAL",
+		"PROMETHEUS_METRICS_CACHE_FRESH_THRESHOLD",
+		"PROMETHEUS_METRICS_CACHE_STALE_THRESHOLD",
+		"PROMETHEUS_METRICS_CACHE_UNAVAILABLE_THRESHOLD",
+	}
+	hasCacheConfig := false
+	for _, key := range cacheKeys {
+		if _, ok := data[key]; ok {
+			hasCacheConfig = true
+			break
+		}
+	}
+	if !hasCacheConfig {
+		return nil // No cache config keys present
 	}
 
 	// Initialize with defaults including freshness thresholds
@@ -143,28 +160,39 @@ func ReadPrometheusCacheConfig(ctx context.Context, k8sClient client.Client) (*C
 	}
 
 	// PROMETHEUS_METRICS_CACHE_ENABLED (default: true)
-	config.Enabled = ParseBoolFromConfig(cm.Data, "PROMETHEUS_METRICS_CACHE_ENABLED", true)
+	config.Enabled = ParseBoolFromConfig(data, "PROMETHEUS_METRICS_CACHE_ENABLED", true)
 
 	// PROMETHEUS_METRICS_CACHE_TTL (default: 30s)
-	config.TTL = ParseDurationFromConfig(cm.Data, "PROMETHEUS_METRICS_CACHE_TTL", 30*time.Second)
+	config.TTL = ParseDurationFromConfig(data, "PROMETHEUS_METRICS_CACHE_TTL", 30*time.Second)
 
 	// PROMETHEUS_METRICS_CACHE_CLEANUP_INTERVAL (default: 1m)
-	config.CleanupInterval = ParseDurationFromConfig(cm.Data, "PROMETHEUS_METRICS_CACHE_CLEANUP_INTERVAL", 1*time.Minute)
+	config.CleanupInterval = ParseDurationFromConfig(data, "PROMETHEUS_METRICS_CACHE_CLEANUP_INTERVAL", 1*time.Minute)
 
 	// PROMETHEUS_METRICS_CACHE_FETCH_INTERVAL (default: 30s, 0 = disable background fetching)
-	config.FetchInterval = ParseDurationFromConfig(cm.Data, "PROMETHEUS_METRICS_CACHE_FETCH_INTERVAL", 30*time.Second)
+	config.FetchInterval = ParseDurationFromConfig(data, "PROMETHEUS_METRICS_CACHE_FETCH_INTERVAL", 30*time.Second)
 
 	// Freshness thresholds
 	// PROMETHEUS_METRICS_CACHE_FRESH_THRESHOLD (default: 1m)
-	config.FreshnessThresholds.FreshThreshold = ParseDurationFromConfig(cm.Data, "PROMETHEUS_METRICS_CACHE_FRESH_THRESHOLD", 1*time.Minute)
+	config.FreshnessThresholds.FreshThreshold = ParseDurationFromConfig(data, "PROMETHEUS_METRICS_CACHE_FRESH_THRESHOLD", 1*time.Minute)
 
 	// PROMETHEUS_METRICS_CACHE_STALE_THRESHOLD (default: 2m)
-	config.FreshnessThresholds.StaleThreshold = ParseDurationFromConfig(cm.Data, "PROMETHEUS_METRICS_CACHE_STALE_THRESHOLD", 2*time.Minute)
+	config.FreshnessThresholds.StaleThreshold = ParseDurationFromConfig(data, "PROMETHEUS_METRICS_CACHE_STALE_THRESHOLD", 2*time.Minute)
 
 	// PROMETHEUS_METRICS_CACHE_UNAVAILABLE_THRESHOLD (default: 5m)
-	config.FreshnessThresholds.UnavailableThreshold = ParseDurationFromConfig(cm.Data, "PROMETHEUS_METRICS_CACHE_UNAVAILABLE_THRESHOLD", 5*time.Minute)
+	config.FreshnessThresholds.UnavailableThreshold = ParseDurationFromConfig(data, "PROMETHEUS_METRICS_CACHE_UNAVAILABLE_THRESHOLD", 5*time.Minute)
 
-	return config, nil
+	return config
+}
+
+// ReadPrometheusCacheConfig reads Prometheus collector cache configuration from the ConfigMap
+func ReadPrometheusCacheConfig(ctx context.Context, k8sClient client.Client) (*CacheConfig, error) {
+	cm := corev1.ConfigMap{}
+	err := utils.GetConfigMapWithBackoff(ctx, k8sClient, ConfigMapName(), Namespace(), &cm)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get configmap for Prometheus cache config: %w", err)
+	}
+
+	return ParsePrometheusCacheConfigFromData(cm.Data), nil
 }
 
 // ParsePrometheusConfigFromEnv parses Prometheus configuration from environment variables.

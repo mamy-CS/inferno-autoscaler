@@ -43,8 +43,8 @@ type ImmutableParameterChange struct {
 //
 // Immutable parameters (require restart):
 // - PROMETHEUS_BASE_URL (connection endpoint)
-// - METRICS_ADDR (infrastructure)
-// - PROBE_ADDR (infrastructure)
+// - METRICS_BIND_ADDRESS (infrastructure)
+// - HEALTH_PROBE_BIND_ADDRESS (infrastructure)
 // - LEADER_ELECTION_ID (coordination)
 // - TLS certificate paths (security-sensitive)
 //
@@ -73,12 +73,12 @@ func DetectImmutableParameterChanges(cfg *Config, configMapData map[string]strin
 		}
 	}
 
-	// Check METRICS_ADDR
-	if newAddr, ok := configMapData["METRICS_ADDR"]; ok {
+	// Check METRICS_BIND_ADDRESS
+	if newAddr, ok := configMapData["METRICS_BIND_ADDRESS"]; ok {
 		currentAddr := cfg.Static.MetricsAddr
 		if newAddr != currentAddr {
 			changes = append(changes, ImmutableParameterChange{
-				Key:       "METRICS_ADDR",
+				Key:       "METRICS_BIND_ADDRESS",
 				OldValue:  currentAddr,
 				NewValue:  newAddr,
 				Parameter: "Metrics bind address",
@@ -86,12 +86,12 @@ func DetectImmutableParameterChanges(cfg *Config, configMapData map[string]strin
 		}
 	}
 
-	// Check PROBE_ADDR
-	if newAddr, ok := configMapData["PROBE_ADDR"]; ok {
+	// Check HEALTH_PROBE_BIND_ADDRESS
+	if newAddr, ok := configMapData["HEALTH_PROBE_BIND_ADDRESS"]; ok {
 		currentAddr := cfg.Static.ProbeAddr
 		if newAddr != currentAddr {
 			changes = append(changes, ImmutableParameterChange{
-				Key:       "PROBE_ADDR",
+				Key:       "HEALTH_PROBE_BIND_ADDRESS",
 				OldValue:  currentAddr,
 				NewValue:  newAddr,
 				Parameter: "Health probe bind address",

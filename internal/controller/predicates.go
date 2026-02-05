@@ -1,9 +1,12 @@
 package controller
 
 import (
+	"context"
+
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/config"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/constants"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/metrics"
+	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
@@ -139,17 +142,38 @@ func DeploymentPredicate() predicate.Predicate {
 }
 
 // VariantAutoscalingPredicate returns a predicate that filters VariantAutoscaling events
-// based on the controller instance label. This enables multi-controller isolation where
-// each controller instance only manages VAs that are explicitly assigned to it.
+// based on the controller instance label and namespace exclusion annotation.
+// This enables multi-controller isolation and namespace exclusion.
 //
 // Filtering behavior:
+//   - Excluded namespaces: VAs in namespaces with wva.llmd.ai/exclude: "true" annotation are filtered out
+//   - Controller instance: If CONTROLLER_INSTANCE env var is set, only allow VAs with matching wva.llmd.ai/controller-instance label
 //   - If CONTROLLER_INSTANCE env var is not set: allow all VAs (backwards compatible)
-//   - If CONTROLLER_INSTANCE is set: only allow VAs with matching wva.llmd.ai/controller-instance label
 //
 // This predicate should be used with the VA watch to ensure controllers only reconcile
 // their assigned VAs, preventing conflicts when multiple controllers run simultaneously.
-func VariantAutoscalingPredicate() predicate.Predicate {
+//
+// The client parameter is used to fetch namespace objects to check for exclusion annotations.
+func VariantAutoscalingPredicate(k8sClient client.Client) predicate.Predicate {
 	return predicate.NewPredicateFuncs(func(obj client.Object) bool {
+		// Check namespace exclusion first (highest priority)
+		namespace := obj.GetNamespace()
+		if namespace != "" {
+			var ns corev1.Namespace
+			// Use background context for predicate (no cancellation needed)
+			if err := k8sClient.Get(context.Background(), client.ObjectKey{Name: namespace}, &ns); err == nil {
+				annotations := ns.GetAnnotations()
+				if annotations != nil {
+					if value, exists := annotations[constants.NamespaceExcludeAnnotationKey]; exists && value == "true" {
+						// Namespace is excluded - filter out this VA
+						return false
+					}
+				}
+			}
+			// If namespace fetch fails, proceed with other checks (fail open)
+		}
+
+		// Check controller instance label
 		controllerInstance := metrics.GetControllerInstance()
 
 		// If no controller instance configured, allow all VAs (backwards compatible)

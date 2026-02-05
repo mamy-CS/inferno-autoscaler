@@ -35,7 +35,6 @@ import (
 
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/config"
-	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/constants"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
 	testutils "github.com/llm-d-incubation/workload-variant-autoscaler/test/utils"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/test/utils/resources"
@@ -360,115 +359,6 @@ var _ = Describe("VariantAutoscalings Controller", func() {
 		})
 	})
 
-	Context("Namespace-Local ConfigMap Watching", func() {
-		ctx := context.Background()
-		var controllerReconciler *VariantAutoscalingReconciler
-
-		BeforeEach(func() {
-			logging.NewTestLogger()
-			ns := &v1.Namespace{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "workload-variant-autoscaler-system",
-				},
-			}
-			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, ns))).NotTo(HaveOccurred())
-
-			By("creating the required configmaps")
-			configMap := testutils.CreateVariantAutoscalingConfigMap(config.DefaultConfigMapName, ns.Name)
-			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, configMap))).NotTo(HaveOccurred())
-
-			By("creating the reconciler")
-			controllerReconciler = &VariantAutoscalingReconciler{
-				Client:   k8sClient,
-				Recorder: record.NewFakeRecorder(10),
-				Config:   config.NewTestConfig(),
-			}
-		})
-
-		It("should watch namespace-local ConfigMaps for namespaces with opt-in label", func() {
-			By("Creating a namespace with opt-in label")
-			labeledNS := &v1.Namespace{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "labeled-namespace",
-					Labels: map[string]string{
-						constants.NamespaceConfigEnabledLabelKey: "true",
-					},
-				},
-			}
-			Expect(k8sClient.Create(ctx, labeledNS)).To(Succeed())
-
-			By("Creating a namespace-local ConfigMap in labeled namespace")
-			namespaceLocalCM := &v1.ConfigMap{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      config.SaturationConfigMapName(),
-					Namespace: "labeled-namespace",
-				},
-				Data: map[string]string{
-					"default": "kvCacheThreshold: 0.70\nqueueLengthThreshold: 3",
-				},
-			}
-			Expect(k8sClient.Create(ctx, namespaceLocalCM)).To(Succeed())
-
-			By("Verifying namespace is considered for watching")
-			// The shouldWatchNamespaceLocalConfigMap should return true for labeled namespace
-			// even without VAs
-			result := controllerReconciler.shouldWatchNamespaceLocalConfigMap(ctx, "labeled-namespace")
-			Expect(result).To(BeTrue(), "Labeled namespace should be watched even without VAs")
-
-			By("Verifying namespace without label is not watched (without VAs)")
-			unlabeledNS := &v1.Namespace{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "unlabeled-namespace",
-				},
-			}
-			Expect(k8sClient.Create(ctx, unlabeledNS)).To(Succeed())
-
-			result = controllerReconciler.shouldWatchNamespaceLocalConfigMap(ctx, "unlabeled-namespace")
-			Expect(result).To(BeFalse(), "Unlabeled namespace without VAs should not be watched")
-
-			// Cleanup
-			Expect(k8sClient.Delete(ctx, namespaceLocalCM)).To(Succeed())
-			Expect(k8sClient.Delete(ctx, labeledNS)).To(Succeed())
-			Expect(k8sClient.Delete(ctx, unlabeledNS)).To(Succeed())
-		})
-
-		It("should watch namespace-local ConfigMaps for namespaces with VAs (VA-based tracking)", func() {
-			By("Creating a namespace without opt-in label")
-			vaNS := &v1.Namespace{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "va-namespace",
-				},
-			}
-			Expect(k8sClient.Create(ctx, vaNS)).To(Succeed())
-
-			By("Creating a VA in the namespace to trigger tracking")
-			va := &llmdVariantAutoscalingV1alpha1.VariantAutoscaling{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-va",
-					Namespace: "va-namespace",
-				},
-				Spec: llmdVariantAutoscalingV1alpha1.VariantAutoscalingSpec{
-					ScaleTargetRef: autoscalingv1.CrossVersionObjectReference{
-						Kind: "Deployment",
-						Name: "test-deployment",
-					},
-					ModelID: "test-model",
-				},
-			}
-			Expect(k8sClient.Create(ctx, va)).To(Succeed())
-
-			By("Tracking the namespace (simulating VA reconciliation)")
-			controllerReconciler.trackNamespace("va-namespace")
-
-			By("Verifying namespace is considered for watching")
-			result := controllerReconciler.shouldWatchNamespaceLocalConfigMap(ctx, "va-namespace")
-			Expect(result).To(BeTrue(), "Namespace with VAs should be watched")
-
-			// Cleanup
-			controllerReconciler.untrackNamespace("va-namespace")
-			Expect(k8sClient.Delete(ctx, va)).To(Succeed())
-			Expect(k8sClient.Delete(ctx, vaNS)).To(Succeed())
-		})
-	})
+	// ConfigMap-related tests have been moved to configmap_handler_test.go
 
 })

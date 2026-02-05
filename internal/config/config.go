@@ -9,7 +9,7 @@ import (
 	interfaces "github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
 )
 
-// configCache holds typed caches for namespace-aware configuration lookups.
+// configCache holds typed caches for all configuration lookups.
 // This avoids unsafe type assertions and provides better type safety.
 type configCache struct {
 	// saturationCache caches saturation config per namespace
@@ -19,6 +19,12 @@ type configCache struct {
 	// scaleToZeroCache caches scale-to-zero config per namespace
 	// Key: namespace (empty string for global)
 	scaleToZeroCache map[string]ScaleToZeroConfigData
+
+	// optimizationIntervalCache caches the optimization interval (single value, not namespace-keyed)
+	optimizationIntervalCache *time.Duration
+
+	// prometheusCacheConfigCache caches the Prometheus cache config (single value, not namespace-keyed)
+	prometheusCacheConfigCache *CacheConfig
 }
 
 // Config is the unified configuration structure for the WVA controller.
@@ -80,6 +86,11 @@ type EPPConfig struct {
 
 // NamespaceConfig holds configuration for a specific namespace.
 // This structure is used both for global defaults and namespace-local overrides.
+//
+// NamespaceConfig is exported for use in DynamicConfig and testing. Production code should
+// use the resolved getter methods (e.g., SaturationConfigForNamespace, ScaleToZeroConfigForNamespace)
+// rather than accessing NamespaceConfig directly. These getters handle namespace-local resolution
+// and thread-safe access automatically.
 type NamespaceConfig struct {
 	// Saturation scaling configuration (per-accelerator)
 	SaturationConfig map[string]interfaces.SaturationScalingConfig
@@ -112,11 +123,30 @@ type DynamicConfig struct {
 }
 
 // OptimizationInterval returns the current optimization interval.
-// Thread-safe.
+// Thread-safe. Results are cached to avoid repeated mutex contention.
 func (c *Config) OptimizationInterval() time.Duration {
+	// Check cache first (read lock)
 	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.Dynamic.OptimizationInterval
+	if c.cache.optimizationIntervalCache != nil {
+		interval := *c.cache.optimizationIntervalCache
+		c.mu.RUnlock()
+		return interval
+	}
+	c.mu.RUnlock()
+
+	// Cache miss - resolve and cache (write lock)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Double-check after acquiring write lock (another goroutine might have cached it)
+	if c.cache.optimizationIntervalCache != nil {
+		return *c.cache.optimizationIntervalCache
+	}
+
+	// Cache the value
+	interval := c.Dynamic.OptimizationInterval
+	c.cache.optimizationIntervalCache = &interval
+	return interval
 }
 
 // SaturationConfig returns the current global saturation scaling configuration.
@@ -290,14 +320,40 @@ func copyScaleToZeroConfig(src ScaleToZeroConfigData) ScaleToZeroConfigData {
 
 // PrometheusCacheConfig returns the current Prometheus cache configuration.
 // Thread-safe.
+// PrometheusCacheConfig returns the current Prometheus cache configuration.
+// Thread-safe. Returns a copy to prevent external modifications.
+// Results are cached to avoid repeated mutex contention and copying.
 func (c *Config) PrometheusCacheConfig() *CacheConfig {
+	// Check cache first (read lock)
 	c.mu.RLock()
-	defer c.mu.RUnlock()
+	if c.cache.prometheusCacheConfigCache != nil {
+		// Return a copy of the cached value
+		cp := *c.cache.prometheusCacheConfigCache
+		c.mu.RUnlock()
+		return &cp
+	}
+	c.mu.RUnlock()
+
+	// Cache miss - resolve and cache (write lock)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Double-check after acquiring write lock (another goroutine might have cached it)
+	if c.cache.prometheusCacheConfigCache != nil {
+		cp := *c.cache.prometheusCacheConfigCache
+		return &cp
+	}
+
+	// Resolve and cache
 	if c.Dynamic.PrometheusCache == nil {
+		// Cache nil to avoid repeated lookups
+		c.cache.prometheusCacheConfigCache = nil
 		return nil
 	}
-	// Return a copy
+
+	// Create copy for cache and return
 	cp := *c.Dynamic.PrometheusCache
+	c.cache.prometheusCacheConfigCache = &cp
 	return &cp
 }
 
@@ -317,14 +373,19 @@ func (c *Config) invalidateAllCaches() {
 	// Clear all cache entries by reassigning empty maps (more efficient than deleting keys)
 	c.cache.saturationCache = make(map[string]map[string]interfaces.SaturationScalingConfig)
 	c.cache.scaleToZeroCache = make(map[string]ScaleToZeroConfigData)
+	// Clear single-value caches
+	c.cache.optimizationIntervalCache = nil
+	c.cache.prometheusCacheConfigCache = nil
 }
 
 // UpdateOptimizationInterval updates the optimization interval.
-// Thread-safe.
+// Thread-safe. Invalidates the cache to ensure subsequent reads return the new value.
 func (c *Config) UpdateOptimizationInterval(interval time.Duration) {
 	c.mu.Lock()
 	oldInterval := c.Dynamic.OptimizationInterval
 	c.Dynamic.OptimizationInterval = interval
+	// Invalidate cache
+	c.cache.optimizationIntervalCache = nil
 	c.mu.Unlock()
 	if oldInterval != interval {
 		ctrl.Log.Info("Updated optimization interval", "old", oldInterval, "new", interval)
@@ -473,6 +534,8 @@ func (c *Config) RemoveNamespaceConfig(namespace string) {
 
 // UpdatePrometheusCacheConfig updates the Prometheus cache configuration.
 // Thread-safe.
+// UpdatePrometheusCacheConfig updates the Prometheus cache configuration.
+// Thread-safe. Invalidates the cache to ensure subsequent reads return the new value.
 func (c *Config) UpdatePrometheusCacheConfig(cacheConfig *CacheConfig) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -483,6 +546,8 @@ func (c *Config) UpdatePrometheusCacheConfig(cacheConfig *CacheConfig) {
 		cp := *cacheConfig
 		c.Dynamic.PrometheusCache = &cp
 	}
+	// Invalidate cache
+	c.cache.prometheusCacheConfigCache = nil
 }
 
 // DynamicConfig returns a copy of the current dynamic configuration.
@@ -526,8 +591,10 @@ func NewTestConfig() *Config {
 			NamespaceConfigs: make(map[string]*NamespaceConfig),
 		},
 		cache: configCache{
-			saturationCache:  make(map[string]map[string]interfaces.SaturationScalingConfig),
-			scaleToZeroCache: make(map[string]ScaleToZeroConfigData),
+			saturationCache:            make(map[string]map[string]interfaces.SaturationScalingConfig),
+			scaleToZeroCache:           make(map[string]ScaleToZeroConfigData),
+			optimizationIntervalCache:  nil,
+			prometheusCacheConfigCache: nil,
 		},
 	}
 }

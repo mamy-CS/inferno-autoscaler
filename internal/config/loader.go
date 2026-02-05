@@ -17,17 +17,19 @@ import (
 
 // StaticConfigFlags holds CLI flag values for static configuration.
 // This is passed from main.go to Load() function.
+// Boolean and duration flags use pointers to distinguish between "unset" (nil) and "explicitly set" (false/true or 0/non-zero).
+// This allows proper precedence: flag > env > ConfigMap.
 type StaticConfigFlags struct {
 	MetricsAddr          string
 	ProbeAddr            string
-	EnableLeaderElection bool
+	EnableLeaderElection *bool // nil = unset, false/true = explicitly set
 	LeaderElectionID     string
-	LeaseDuration        time.Duration
-	RenewDeadline        time.Duration
-	RetryPeriod          time.Duration
-	RestTimeout          time.Duration
-	SecureMetrics        bool
-	EnableHTTP2          bool
+	LeaseDuration        *time.Duration // nil = unset, duration = explicitly set (even if 0)
+	RenewDeadline        *time.Duration // nil = unset, duration = explicitly set (even if 0)
+	RetryPeriod          *time.Duration // nil = unset, duration = explicitly set (even if 0)
+	RestTimeout          *time.Duration // nil = unset, duration = explicitly set (even if 0)
+	SecureMetrics        *bool          // nil = unset, false/true = explicitly set
+	EnableHTTP2          *bool          // nil = unset, false/true = explicitly set
 	WatchNamespace       string
 	LoggerVerbosity      int
 	WebhookCertPath      string
@@ -51,8 +53,10 @@ func Load(ctx context.Context, flags StaticConfigFlags, k8sClient client.Client)
 	cfg := &Config{
 		// Initialize cache to avoid nil checks
 		cache: configCache{
-			saturationCache:  make(map[string]map[string]interfaces.SaturationScalingConfig),
-			scaleToZeroCache: make(map[string]ScaleToZeroConfigData),
+			saturationCache:            make(map[string]map[string]interfaces.SaturationScalingConfig),
+			scaleToZeroCache:           make(map[string]ScaleToZeroConfigData),
+			optimizationIntervalCache:  nil,
+			prometheusCacheConfigCache: nil,
 		},
 	}
 
@@ -116,10 +120,16 @@ func loadStaticConfig(ctx context.Context, static *StaticConfig, flags StaticCon
 	static.ProbeAddr = getStringValue(flags.ProbeAddr, os.Getenv("HEALTH_PROBE_BIND_ADDRESS"), cmData["HEALTH_PROBE_BIND_ADDRESS"], static.ProbeAddr)
 	static.EnableLeaderElection = getBoolValue(flags.EnableLeaderElection, parseBoolEnv("LEADER_ELECT"), ParseBoolFromConfig(cmData, "LEADER_ELECT", static.EnableLeaderElection))
 	static.LeaderElectionID = getStringValue(flags.LeaderElectionID, os.Getenv("LEADER_ELECTION_ID"), cmData["LEADER_ELECTION_ID"], static.LeaderElectionID)
-	static.LeaseDuration = getDurationValue(flags.LeaseDuration, parseDurationEnv("LEADER_ELECTION_LEASE_DURATION"), ParseDurationFromConfig(cmData, "LEADER_ELECTION_LEASE_DURATION", static.LeaseDuration))
-	static.RenewDeadline = getDurationValue(flags.RenewDeadline, parseDurationEnv("LEADER_ELECTION_RENEW_DEADLINE"), ParseDurationFromConfig(cmData, "LEADER_ELECTION_RENEW_DEADLINE", static.RenewDeadline))
-	static.RetryPeriod = getDurationValue(flags.RetryPeriod, parseDurationEnv("LEADER_ELECTION_RETRY_PERIOD"), ParseDurationFromConfig(cmData, "LEADER_ELECTION_RETRY_PERIOD", static.RetryPeriod))
-	static.RestTimeout = getDurationValue(flags.RestTimeout, parseDurationEnv("REST_CLIENT_TIMEOUT"), ParseDurationFromConfig(cmData, "REST_CLIENT_TIMEOUT", static.RestTimeout))
+	// Parse duration from ConfigMap (returns nil if key doesn't exist or is invalid)
+	leaseDurationCM, _ := parseDurationFromConfigWithExists(cmData, "LEADER_ELECTION_LEASE_DURATION")
+	renewDeadlineCM, _ := parseDurationFromConfigWithExists(cmData, "LEADER_ELECTION_RENEW_DEADLINE")
+	retryPeriodCM, _ := parseDurationFromConfigWithExists(cmData, "LEADER_ELECTION_RETRY_PERIOD")
+	restTimeoutCM, _ := parseDurationFromConfigWithExists(cmData, "REST_CLIENT_TIMEOUT")
+
+	static.LeaseDuration = getDurationValue(flags.LeaseDuration, parseDurationEnv("LEADER_ELECTION_LEASE_DURATION"), leaseDurationCM, static.LeaseDuration)
+	static.RenewDeadline = getDurationValue(flags.RenewDeadline, parseDurationEnv("LEADER_ELECTION_RENEW_DEADLINE"), renewDeadlineCM, static.RenewDeadline)
+	static.RetryPeriod = getDurationValue(flags.RetryPeriod, parseDurationEnv("LEADER_ELECTION_RETRY_PERIOD"), retryPeriodCM, static.RetryPeriod)
+	static.RestTimeout = getDurationValue(flags.RestTimeout, parseDurationEnv("REST_CLIENT_TIMEOUT"), restTimeoutCM, static.RestTimeout)
 	static.SecureMetrics = getBoolValue(flags.SecureMetrics, parseBoolEnv("METRICS_SECURE"), ParseBoolFromConfig(cmData, "METRICS_SECURE", static.SecureMetrics))
 	static.EnableHTTP2 = getBoolValue(flags.EnableHTTP2, parseBoolEnv("ENABLE_HTTP2"), ParseBoolFromConfig(cmData, "ENABLE_HTTP2", static.EnableHTTP2))
 	static.WatchNamespace = getStringValue(flags.WatchNamespace, os.Getenv("WATCH_NAMESPACE"), cmData["WATCH_NAMESPACE"], static.WatchNamespace)
@@ -242,29 +252,51 @@ func getStringValue(flag, env, cm, def string) string {
 	return def
 }
 
-func getBoolValue(flag bool, env *bool, cm bool) bool {
+// getBoolValue implements precedence: flag > env > cm
+// flag: *bool (nil = unset, false/true = explicitly set)
+// env: *bool (nil = unset, false/true = explicitly set)
+// cm: bool (ConfigMap value or default)
+func getBoolValue(flag *bool, env *bool, cm bool) bool {
 	// Precedence: flag > env > cm
-	// If flag is explicitly set (non-zero), use it
-	// Note: For bool, we can't distinguish "unset" from "false", so we check env first
+	if flag != nil {
+		return *flag
+	}
 	if env != nil {
 		return *env
 	}
-	// If flag is set (true), it takes precedence over cm
-	if flag {
-		return true
-	}
-	// Otherwise use cm value
 	return cm
 }
 
-func getDurationValue(flag time.Duration, env *time.Duration, cm time.Duration) time.Duration {
+// getDurationValue implements precedence: flag > env > cm > defaultValue
+// flag: *time.Duration (nil = unset, duration = explicitly set, even if 0 or negative)
+// env: *time.Duration (nil = unset, duration = explicitly set, even if 0 or negative)
+// cm: *time.Duration (nil = key not in ConfigMap or invalid, duration = explicitly set, even if 0 or negative)
+// defaultValue: fallback when all are unset
+func getDurationValue(flag *time.Duration, env *time.Duration, cm *time.Duration, defaultValue time.Duration) time.Duration {
+	// Precedence: flag > env > cm > defaultValue
+	if flag != nil {
+		return *flag // Use flag even if it's 0 or negative
+	}
 	if env != nil {
-		return *env
+		return *env // Use env even if it's 0 or negative
 	}
-	if cm > 0 {
-		return cm
+	if cm != nil {
+		return *cm // Use cm even if it's 0 or negative
 	}
-	return flag
+	return defaultValue
+}
+
+// parseDurationFromConfigWithExists parses a duration from ConfigMap and returns whether the key existed.
+// Returns (nil, false) if key doesn't exist or value is invalid.
+// Returns (&duration, true) if key exists and value is valid (even if 0 or negative).
+func parseDurationFromConfigWithExists(data map[string]string, key string) (*time.Duration, bool) {
+	if valStr, exists := data[key]; exists && valStr != "" {
+		if d, err := time.ParseDuration(valStr); err == nil {
+			return &d, true
+		}
+		ctrl.Log.Info("Invalid duration value in ConfigMap, treating as unset", "value", valStr, "key", key)
+	}
+	return nil, false
 }
 
 func getIntValue(flag int, env *int, cm int) int {

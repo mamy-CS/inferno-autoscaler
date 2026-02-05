@@ -75,32 +75,34 @@ spec:
         env:
           - name: LOG_LEVEL
             value: "debug"  # or "info", "warn", "error"
+          - name: CONFIG_MAP_NAME
+            value: workload-variant-autoscaler-wva-variantautoscaling-config
           - name: PROMETHEUS_BASE_URL
             valueFrom:
               configMapKeyRef:
-                name: variantautoscaling-config
+                name: workload-variant-autoscaler-wva-variantautoscaling-config
                 key: PROMETHEUS_BASE_URL
           - name: PROMETHEUS_TLS_INSECURE_SKIP_VERIFY
             valueFrom:
               configMapKeyRef:
-                name: variantautoscaling-config
+                name: workload-variant-autoscaler-wva-variantautoscaling-config
                 key: PROMETHEUS_TLS_INSECURE_SKIP_VERIFY
           - name: PROMETHEUS_TOKEN_PATH
             value: "/var/run/secrets/kubernetes.io/serviceaccount/token"
           - name: WVA_SCALE_TO_ZERO
             valueFrom:
               configMapKeyRef:
-                name: variantautoscaling-config
+                name: workload-variant-autoscaler-wva-variantautoscaling-config
                 key: WVA_SCALE_TO_ZERO
           - name: WVA_LIMITED_MODE
             valueFrom:
               configMapKeyRef:
-                name: variantautoscaling-config
+                name: workload-variant-autoscaler-wva-variantautoscaling-config
                 key: WVA_LIMITED_MODE
           - name: WVA_NODE_SELECTOR
             valueFrom:
               configMapKeyRef:
-                name: variantautoscaling-config
+                name: workload-variant-autoscaler-wva-variantautoscaling-config
                 key: WVA_NODE_SELECTOR
           - name: POD_NAMESPACE
             valueFrom:

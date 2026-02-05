@@ -169,17 +169,18 @@ func main() {
 	}
 
 	// Create StaticConfigFlags from parsed flags
+	// For boolean and duration flags, pass pointers to distinguish "unset" from "explicitly set"
 	flags := config.StaticConfigFlags{
 		MetricsAddr:          metricsAddr,
 		ProbeAddr:            probeAddr,
-		EnableLeaderElection: enableLeaderElection,
+		EnableLeaderElection: &enableLeaderElection,
 		LeaderElectionID:     "72dd1cf1.llm-d.ai", // Default, can be overridden via env/ConfigMap
-		LeaseDuration:        leaseDuration,
-		RenewDeadline:        renewDeadline,
-		RetryPeriod:          retryPeriod,
-		RestTimeout:          restTimeout,
-		SecureMetrics:        secureMetrics,
-		EnableHTTP2:          enableHTTP2,
+		LeaseDuration:        &leaseDuration,
+		RenewDeadline:        &renewDeadline,
+		RetryPeriod:          &retryPeriod,
+		RestTimeout:          &restTimeout,
+		SecureMetrics:        &secureMetrics,
+		EnableHTTP2:          &enableHTTP2,
 		WatchNamespace:       watchNamespace,
 		LoggerVerbosity:      loggerVerbosity,
 		WebhookCertPath:      webhookCertPath,

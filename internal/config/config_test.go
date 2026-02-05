@@ -239,20 +239,20 @@ func TestDetectImmutableParameterChanges(t *testing.T) {
 			errorMsg:    "PROMETHEUS_BASE_URL",
 		},
 		{
-			name: "Attempt to change METRICS_ADDR",
+			name: "Attempt to change METRICS_BIND_ADDRESS",
 			configMap: map[string]string{
-				"METRICS_ADDR": ":9443",
+				"METRICS_BIND_ADDRESS": ":9443",
 			},
 			expectError: true,
-			errorMsg:    "METRICS_ADDR",
+			errorMsg:    "METRICS_BIND_ADDRESS",
 		},
 		{
-			name: "Attempt to change PROBE_ADDR",
+			name: "Attempt to change HEALTH_PROBE_BIND_ADDRESS",
 			configMap: map[string]string{
-				"PROBE_ADDR": ":8082",
+				"HEALTH_PROBE_BIND_ADDRESS": ":8082",
 			},
 			expectError: true,
-			errorMsg:    "PROBE_ADDR",
+			errorMsg:    "HEALTH_PROBE_BIND_ADDRESS",
 		},
 		{
 			name: "Attempt to change LEADER_ELECTION_ID",
@@ -265,8 +265,8 @@ func TestDetectImmutableParameterChanges(t *testing.T) {
 		{
 			name: "Multiple immutable parameter changes",
 			configMap: map[string]string{
-				"PROMETHEUS_BASE_URL": "https://prometheus-new:9090",
-				"METRICS_ADDR":        ":9443",
+				"PROMETHEUS_BASE_URL":  "https://prometheus-new:9090",
+				"METRICS_BIND_ADDRESS": ":9443",
 			},
 			expectError: true,
 			errorMsg:    "PROMETHEUS_BASE_URL",
