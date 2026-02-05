@@ -164,10 +164,12 @@ var _ = Describe("CollectModelRequestCount", func() {
 		})
 	})
 
-	Context("when no metrics are available (empty vector)", func() {
+	Context("when query succeeds but returns empty result (no requests in retention period)", func() {
 		BeforeEach(func() {
 			mockAPI = &mockPrometheusAPI{
 				queryFunc: func(ctx context.Context, query string, ts time.Time, opts ...v1.Option) (model.Value, v1.Warnings, error) {
+					// Prometheus returns empty vector when query succeeds but no time series match
+					// This is the normal case when there are genuinely no requests in the retention period
 					return model.Vector{}, nil, nil
 				},
 			}
@@ -177,13 +179,13 @@ var _ = Describe("CollectModelRequestCount", func() {
 			RegisterScaleToZeroQueries(registry)
 		})
 
-		It("should return an error to prevent premature scale-to-zero", func() {
+		It("should return 0 requests when query succeeds but returns empty result (allows scale-to-zero)", func() {
 			count, err := CollectModelRequestCount(ctx, metricsSource, "my-model", "default", 10*time.Minute)
 
-			// Error returned to signal we can't confirm request count,
-			// which prevents the enforcer from scaling to zero
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("no values"))
+			// No error returned - empty results from a successful query mean no requests in retention period,
+			// which allows the enforcer to scale to zero. This is different from query failures or nil results,
+			// which would indicate metrics system issues and should return errors.
+			Expect(err).NotTo(HaveOccurred())
 			Expect(count).To(Equal(0.0))
 		})
 	})

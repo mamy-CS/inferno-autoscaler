@@ -64,7 +64,7 @@ func (e *Enforcer) EnforcePolicy(
 
 	// Check if scale-to-zero is enabled for this model
 	scaleToZeroEnabled := config.IsScaleToZeroEnabled(scaleToZeroConfig, modelID)
-	
+
 	logger.Info("Scale-to-zero check",
 		"modelID", modelID,
 		"namespace", namespace,
