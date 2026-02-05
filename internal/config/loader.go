@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -152,7 +153,10 @@ func loadStaticConfig(ctx context.Context, static *StaticConfig, flags StaticCon
 	static.Prometheus = promConfig
 
 	// Load feature flags from ConfigMap
-	static.ScaleToZeroEnabled = ParseBoolFromConfig(cmData, "WVA_SCALE_TO_ZERO", false)
+	// Check both ConfigMap and environment variable (for backwards compatibility with main branch behavior)
+	// Main branch checked os.Getenv("WVA_SCALE_TO_ZERO") directly, so we need to preserve that behavior
+	static.ScaleToZeroEnabled = ParseBoolFromConfig(cmData, "WVA_SCALE_TO_ZERO", false) ||
+		strings.EqualFold(os.Getenv("WVA_SCALE_TO_ZERO"), "true")
 	static.LimitedModeEnabled = ParseBoolFromConfig(cmData, "WVA_LIMITED_MODE", false)
 	static.ScaleFromZeroMaxConcurrency = ParseIntFromConfig(cmData, "SCALE_FROM_ZERO_ENGINE_MAX_CONCURRENCY", 10, 1)
 

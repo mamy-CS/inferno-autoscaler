@@ -72,6 +72,9 @@ type Engine struct {
 	// GPULimiter constrains scaling decisions based on available GPU resources.
 	// Only applied when EnableLimiter is true in the saturation config.
 	GPULimiter pipeline.Limiter
+
+	// metricsRegistry is used to access metrics sources for request count queries
+	metricsRegistry *source.SourceRegistry
 }
 
 // getVariantKey returns a unique key for a variant combining namespace and name.
@@ -108,6 +111,7 @@ func NewEngine(client client.Client, scheme *runtime.Scheme, recorder record.Eve
 		ReplicaMetricsCollector: collector.NewReplicaMetricsCollector(promSource, client),
 		ScaleToZeroEnforcer:     pipeline.NewEnforcer(requestCountFunc),
 		GPULimiter:              gpuLimiter,
+		metricsRegistry:         metricsRegistry,
 	}
 
 	engine.executor = executor.NewPollingExecutor(executor.PollingConfig{
