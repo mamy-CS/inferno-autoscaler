@@ -271,7 +271,7 @@ func TestLoad_DynamicConfig_InvalidOptimizationInterval(t *testing.T) {
 func TestLoad_DynamicConfig_SaturationConfig(t *testing.T) {
 	ctx := context.Background()
 	_ = os.Setenv("PROMETHEUS_BASE_URL", "https://prometheus:9090")
-		// Ensure namespace matches what Namespace() returns
+	// Ensure namespace matches what Namespace() returns
 	_ = os.Setenv("POD_NAMESPACE", "workload-variant-autoscaler-system")
 	defer func() {
 		_ = os.Unsetenv("PROMETHEUS_BASE_URL")
@@ -373,7 +373,7 @@ queueSpareTrigger: 3`,
 func TestLoad_DynamicConfig_ScaleToZeroConfig(t *testing.T) {
 	ctx := context.Background()
 	_ = os.Setenv("PROMETHEUS_BASE_URL", "https://prometheus:9090")
-		// Ensure namespace matches what Namespace() returns
+	// Ensure namespace matches what Namespace() returns
 	_ = os.Setenv("POD_NAMESPACE", "workload-variant-autoscaler-system")
 	defer func() {
 		_ = os.Unsetenv("PROMETHEUS_BASE_URL")

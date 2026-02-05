@@ -24,8 +24,8 @@ func ConfigMapPredicate() predicate.Predicate {
 
 		// Well-known ConfigMap names
 		wellKnownNames := map[string]bool{
-			config.ConfigMapName():              true,
-			config.SaturationConfigMapName():    true,
+			config.ConfigMapName():                 true,
+			config.SaturationConfigMapName():       true,
 			config.DefaultScaleToZeroConfigMapName: true,
 		}
 
