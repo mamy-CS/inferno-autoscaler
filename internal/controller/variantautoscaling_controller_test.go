@@ -67,10 +67,10 @@ var _ = Describe("VariantAutoscalings Controller", func() {
 
 			By("creating the required configmap for optimization")
 			configMap := testutils.CreateServiceClassConfigMap(ns.Name)
-			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
+			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, configMap))).To(Succeed())
 
 			configMap = testutils.CreateVariantAutoscalingConfigMap(config.DefaultConfigMapName, ns.Name)
-			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
+			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, configMap))).To(Succeed())
 
 			By("creating the custom resource for the Kind VariantAutoscalings")
 			err := k8sClient.Get(ctx, typeNamespacedName, VariantAutoscalings)
@@ -153,10 +153,10 @@ var _ = Describe("VariantAutoscalings Controller", func() {
 
 			By("creating the required configmaps")
 			configMap := testutils.CreateServiceClassConfigMap(ns.Name)
-			Expect(k8sClient.Create(ctx, configMap)).NotTo(HaveOccurred())
+			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, configMap))).NotTo(HaveOccurred())
 
 			configMap = testutils.CreateVariantAutoscalingConfigMap(config.DefaultConfigMapName, ns.Name)
-			Expect(k8sClient.Create(ctx, configMap)).NotTo(HaveOccurred())
+			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, configMap))).NotTo(HaveOccurred())
 		})
 
 		AfterEach(func() {
