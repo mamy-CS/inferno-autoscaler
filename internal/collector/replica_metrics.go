@@ -207,7 +207,7 @@ func (c *ReplicaMetricsCollector) CollectReplicaMetrics(
 				"deployments", getDeploymentNames(deployments))
 			continue
 		}
-		variantKey := utils.GetVariantKey(namespace, vaName)
+		variantKey := utils.GetNamespacedKey(namespace, vaName)
 
 		// Get accelerator name from VariantAutoscaling label
 		acceleratorName := ""

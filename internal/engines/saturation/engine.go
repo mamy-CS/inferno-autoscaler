@@ -194,7 +194,7 @@ func (e *Engine) optimize(ctx context.Context) error {
 	vaMap := make(map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling, len(activeVAs))
 	for i := range activeVAs {
 		va := activeVAs[i] // Copy to local variable to ensure stable pointer
-		vaMap[utils.GetVariantKey(va.Namespace, va.Name)] = &va
+		vaMap[utils.GetNamespacedKey(va.Namespace, va.Name)] = &va
 	}
 
 	// Create map to store current allocations populated during metrics collection
@@ -330,7 +330,7 @@ func (e *Engine) BuildVariantStates(
 
 		// Try to look up in provided map first (optimization)
 		if deployments != nil {
-			deploy, found = deployments[utils.GetDeploymentKey(va.Namespace, va.GetScaleTargetName())]
+			deploy, found = deployments[utils.GetNamespacedKey(va.Namespace, va.GetScaleTargetName())]
 		}
 
 		if !found {
@@ -529,11 +529,11 @@ func (e *Engine) RunSaturationAnalysis(
 		}
 
 		// Populate maps indexed by Deployment namespace/name
-		deploymentKey := utils.GetDeploymentKey(va.Namespace, va.GetScaleTargetName())
+		deploymentKey := utils.GetNamespacedKey(va.Namespace, va.GetScaleTargetName())
 		deployments[deploymentKey] = &deploy
 
 		// Populate maps indexed by VariantAutoscaling namespace/name
-		variantKey := utils.GetVariantKey(va.Namespace, va.Name)
+		variantKey := utils.GetNamespacedKey(va.Namespace, va.Name)
 		variantAutoscalings[variantKey] = va
 		variantCosts[variantKey] = cost
 	}
@@ -600,7 +600,7 @@ func (e *Engine) applySaturationDecisions(
 	// Use namespace/variantName as key to match vaMap and avoid collisions
 	decisionMap := make(map[string]interfaces.VariantDecision)
 	for _, d := range decisions {
-		decisionMap[utils.GetVariantKey(d.Namespace, d.VariantName)] = d
+		decisionMap[utils.GetNamespacedKey(d.Namespace, d.VariantName)] = d
 	}
 
 	// Iterate over ALL active VAs to ensure we update status and trigger reconciliation for everyone
@@ -824,7 +824,7 @@ func (e *Engine) emitSafetyNetMetrics(
 		if err != nil {
 			logger.Error(err, "Safety net: failed to get current replicas from Deployment for metrics", "using cached allocation",
 				"variant", va.Name)
-			if curr, ok := currentAllocations[utils.GetVariantKey(va.Namespace, va.Name)]; ok {
+			if curr, ok := currentAllocations[utils.GetNamespacedKey(va.Namespace, va.Name)]; ok {
 				currentReplicas = int32(curr.NumReplicas)
 			}
 		}
@@ -843,7 +843,7 @@ func (e *Engine) emitSafetyNetMetrics(
 		// with required accelerator field
 		accelerator := va.Status.DesiredOptimizedAlloc.Accelerator
 		if accelerator == "" {
-			if curr, ok := currentAllocations[utils.GetVariantKey(va.Namespace, va.Name)]; ok {
+			if curr, ok := currentAllocations[utils.GetNamespacedKey(va.Namespace, va.Name)]; ok {
 				accelerator = curr.Accelerator
 			}
 		}

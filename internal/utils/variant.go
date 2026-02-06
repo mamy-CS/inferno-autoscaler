@@ -212,12 +212,7 @@ func GetDesiredReplicas(deploy *appsv1.Deployment) int32 {
 	return *deploy.Spec.Replicas
 }
 
-// GetVariantKey returns a unique key for a VariantAutoscaling combining namespace and name.
-func GetVariantKey(namespace, name string) string {
-	return namespace + "/" + name
-}
-
-// GetDeploymentKey returns a unique key for a Deployment combining namespace and name.
-func GetDeploymentKey(namespace, name string) string {
+// GetNamespacedKey is a helper for building namespaced resource keys.
+func GetNamespacedKey(namespace, name string) string {
 	return namespace + "/" + name
 }
