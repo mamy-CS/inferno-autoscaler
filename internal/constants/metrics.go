@@ -52,6 +52,11 @@ const (
 	// VLLMNumRequestsWaiting tracks the number of requests waiting in the queue.
 	// Used by saturation analyzer to detect request queue saturation.
 	VLLMNumRequestsWaiting = "vllm:num_requests_waiting"
+
+	// VLLMCacheConfigInfo is an info-style gauge that exposes KV cache configuration as labels.
+	// Labels include num_gpu_blocks, block_size, cache_dtype, etc.
+	// Value is always 1.0. Used by Saturation Analyzer V2 for token capacity computation.
+	VLLMCacheConfigInfo = "vllm:cache_config_info"
 )
 
 // WVA Output Metrics

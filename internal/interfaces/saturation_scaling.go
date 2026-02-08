@@ -28,6 +28,21 @@ type SaturationScalingConfig struct {
 	// to constrain scaling decisions based on available cluster resources.
 	// Default is false (limiter disabled).
 	EnableLimiter bool `yaml:"enableLimiter,omitempty"`
+
+	// AnalyzerName selects which analyzer to use.
+	// "saturation" uses the V2 token-based analyzer.
+	// Empty string (default) uses the V1 percentage-based analyzer.
+	AnalyzerName string `yaml:"analyzerName,omitempty"`
+
+	// ScaleUpThreshold is the utilization threshold above which scale-up is triggered.
+	// Used by V2 analyzer: requiredCapacity = totalDemand / ScaleUpThreshold - anticipatedSupply
+	// Default: 0.85 (85% utilization triggers scale-up)
+	ScaleUpThreshold float64 `yaml:"scaleUpThreshold,omitempty"`
+
+	// ScaleDownBoundary is the utilization boundary below which scale-down is safe.
+	// Used by V2 analyzer: spareCapacity = currentSupply - totalDemand / ScaleDownBoundary
+	// Default: 0.70 (70% utilization allows scale-down)
+	ScaleDownBoundary float64 `yaml:"scaleDownBoundary,omitempty"`
 }
 
 // Validate checks for invalid threshold values.
@@ -50,5 +65,19 @@ func (c *SaturationScalingConfig) Validate() error {
 		return fmt.Errorf("kvCacheThreshold (%.2f) should be >= kvSpareTrigger (%.2f)",
 			c.KvCacheThreshold, c.KvSpareTrigger)
 	}
+
+	// V2 analyzer threshold validation
+	if c.AnalyzerName == "saturation" {
+		if c.ScaleUpThreshold <= 0 || c.ScaleUpThreshold > 1 {
+			return fmt.Errorf("scaleUpThreshold must be between 0 and 1 (exclusive/inclusive), got %.2f", c.ScaleUpThreshold)
+		}
+		if c.ScaleDownBoundary <= 0 || c.ScaleDownBoundary > 1 {
+			return fmt.Errorf("scaleDownBoundary must be between 0 and 1 (exclusive/inclusive), got %.2f", c.ScaleDownBoundary)
+		}
+		if c.ScaleUpThreshold <= c.ScaleDownBoundary {
+			return fmt.Errorf("scaleUpThreshold (%.2f) must be > scaleDownBoundary (%.2f)", c.ScaleUpThreshold, c.ScaleDownBoundary)
+		}
+	}
+
 	return nil
 }

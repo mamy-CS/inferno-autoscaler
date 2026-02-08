@@ -23,6 +23,8 @@ package collector
 import (
 	"context"
 	"fmt"
+	"math"
+	"strconv"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -88,10 +90,13 @@ func (c *ReplicaMetricsCollector) CollectReplicaMetrics(
 		source.ParamNamespace: namespace,
 	}
 
-	// Refresh saturation queries (KV cache and queue length)
+	// Refresh saturation queries (KV cache, queue length, and V2 token capacity queries)
 	queries := []string{
 		registration.QueryKvCacheUsage,
 		registration.QueryQueueLength,
+		registration.QueryCacheConfigInfo,
+		registration.QueryAvgOutputTokens,
+		registration.QueryAvgInputTokens,
 	}
 
 	results, err := c.source.Refresh(ctx, source.RefreshSpec{
@@ -110,6 +115,12 @@ func (c *ReplicaMetricsCollector) CollectReplicaMetrics(
 		queueLen       int
 		queueTimestamp time.Time
 		hasQueue       bool
+		// V2 fields for token-based capacity analysis
+		numGpuBlocks    int64
+		blockSize       int64
+		avgOutputTokens float64
+		avgInputTokens  float64
+		hasCacheConfig  bool
 	}
 
 	// Extract per-pod metrics from results
@@ -170,6 +181,91 @@ func (c *ReplicaMetricsCollector) CollectReplicaMetrics(
 		}
 	}
 
+	// Process cache config info results (V2)
+	if result := results[registration.QueryCacheConfigInfo]; result != nil {
+		if !result.HasError() {
+			for _, value := range result.Values {
+				podName := value.Labels["pod"]
+				if podName == "" {
+					podName = value.Labels["pod_name"]
+				}
+				if podName == "" {
+					continue
+				}
+
+				if podData[podName] == nil {
+					podData[podName] = &podMetricData{}
+				}
+
+				// Parse num_gpu_blocks and block_size from string labels
+				if blocksStr, ok := value.Labels["num_gpu_blocks"]; ok && blocksStr != "" {
+					if blocks, err := strconv.ParseInt(blocksStr, 10, 64); err == nil {
+						podData[podName].numGpuBlocks = blocks
+					}
+				}
+				if sizeStr, ok := value.Labels["block_size"]; ok && sizeStr != "" {
+					if size, err := strconv.ParseInt(sizeStr, 10, 64); err == nil {
+						podData[podName].blockSize = size
+					}
+				}
+				if podData[podName].numGpuBlocks > 0 && podData[podName].blockSize > 0 {
+					podData[podName].hasCacheConfig = true
+				}
+
+				logger.V(logging.DEBUG).Info("Cache config info metric",
+					"pod", podName,
+					"numGpuBlocks", podData[podName].numGpuBlocks,
+					"blockSize", podData[podName].blockSize)
+			}
+		}
+	}
+
+	// Process average output tokens results (V2)
+	if result := results[registration.QueryAvgOutputTokens]; result != nil {
+		if !result.HasError() {
+			for _, value := range result.Values {
+				podName := value.Labels["pod"]
+				if podName == "" {
+					podName = value.Labels["pod_name"]
+				}
+				if podName == "" {
+					continue
+				}
+
+				if podData[podName] == nil {
+					podData[podName] = &podMetricData{}
+				}
+				// NaN check: rate division by zero produces NaN
+				if !math.IsNaN(value.Value) && !math.IsInf(value.Value, 0) {
+					podData[podName].avgOutputTokens = value.Value
+				}
+			}
+		}
+	}
+
+	// Process average input tokens results (V2)
+	if result := results[registration.QueryAvgInputTokens]; result != nil {
+		if !result.HasError() {
+			for _, value := range result.Values {
+				podName := value.Labels["pod"]
+				if podName == "" {
+					podName = value.Labels["pod_name"]
+				}
+				if podName == "" {
+					continue
+				}
+
+				if podData[podName] == nil {
+					podData[podName] = &podMetricData{}
+				}
+				// NaN check: rate division by zero produces NaN
+				if !math.IsNaN(value.Value) && !math.IsInf(value.Value, 0) {
+					podData[podName].avgInputTokens = value.Value
+				}
+			}
+		}
+	}
+
 	// Build replica metrics from pod data
 	replicaMetrics := make([]interfaces.ReplicaMetrics, 0, len(podData))
 	collectedAt := time.Now()
@@ -227,15 +323,29 @@ func (c *ReplicaMetricsCollector) CollectReplicaMetrics(
 			}
 		}
 
+		// Compute V2 derived fields (zero-valued when unavailable, backward compatible)
+		var totalKvCapacityTokens int64
+		var tokensInUse int64
+		if data.hasCacheConfig {
+			totalKvCapacityTokens = data.numGpuBlocks * data.blockSize
+			tokensInUse = int64(kvUsage * float64(totalKvCapacityTokens))
+		}
+
 		metric := interfaces.ReplicaMetrics{
-			PodName:         podName,
-			ModelID:         modelID,
-			Namespace:       namespace,
-			VariantName:     vaName,
-			AcceleratorName: acceleratorName,
-			KvCacheUsage:    kvUsage,
-			QueueLength:     queueLen,
-			Cost:            cost,
+			PodName:               podName,
+			ModelID:               modelID,
+			Namespace:             namespace,
+			VariantName:           vaName,
+			AcceleratorName:       acceleratorName,
+			KvCacheUsage:          kvUsage,
+			QueueLength:           queueLen,
+			Cost:                  cost,
+			NumGpuBlocks:          data.numGpuBlocks,
+			BlockSize:             data.blockSize,
+			TotalKvCapacityTokens: totalKvCapacityTokens,
+			TokensInUse:           tokensInUse,
+			AvgOutputTokens:       data.avgOutputTokens,
+			AvgInputTokens:        data.avgInputTokens,
 			Metadata: &interfaces.ReplicaMetricsMetadata{
 				CollectedAt:     collectedAt,
 				Age:             0, // Fresh
