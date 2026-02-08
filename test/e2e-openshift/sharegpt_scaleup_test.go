@@ -317,7 +317,7 @@ var _ = Describe("ShareGPT Scale-Up Test", Ordered, func() {
 						DoRaw(ctx)
 					g.Expect(err).NotTo(HaveOccurred(), "Should be able to query external metrics API")
 					g.Expect(string(result)).To(ContainSubstring(constants.WVADesiredReplicas), "Metric should be available")
-					g.Expect(string(result)).To(ContainSubstring(model.deployment), "Metric should be for the correct variant")
+					g.Expect(string(result)).To(ContainSubstring(vaName), "Metric should be for the correct variant")
 				}, 5*time.Minute, 5*time.Second).Should(Succeed())
 			})
 
@@ -444,9 +444,7 @@ exit 1`,
 				By("waiting for load generation to ramp up (30 seconds)")
 				time.Sleep(30 * time.Second)
 
-				By("monitoring VariantAutoscaling and HPA for scale-up")
-				zeroArrivalCount := 0
-				loadGenLogsShown := false
+				By("monitoring VariantAutoscaling for scale-up")
 				Eventually(func(g Gomega) {
 					va := &v1alpha1.VariantAutoscaling{}
 					err := crClient.Get(ctx, client.ObjectKey{
@@ -456,27 +454,13 @@ exit 1`,
 					g.Expect(err).NotTo(HaveOccurred(), "Should be able to get VariantAutoscaling")
 
 					scaledOptimized = int32(va.Status.DesiredOptimizedAlloc.NumReplicas)
-					// currentRateStr := va.Status.DesiredOptimizedAlloc.Load.ArrivalRate (Load not in status)
-					currentRateStr := "unknown"
 
-					_, _ = fmt.Fprintf(GinkgoWriter, "VA optimized replicas: %d (initial: %d, minReplicas: %d), arrival rate: %s\n",
-						scaledOptimized, initialOptimized, hpaMinReplicas, currentRateStr)
+					_, _ = fmt.Fprintf(GinkgoWriter, "VA optimized replicas: %d (initial: %d, minReplicas: %d)\n",
+						scaledOptimized, initialOptimized, hpaMinReplicas)
 
 					// Log queue metrics for observability
 					if podQueues, totalQueue, qErr := utils.GetQueueMetrics(model.namespace); qErr == nil {
 						_, _ = fmt.Fprintf(GinkgoWriter, "Queue metrics: total=%.0f, per-pod=%v\n", totalQueue, podQueues)
-					}
-
-					// Log load gen job output if arrival rate stays at 0 for too long (debugging)
-					if currentRateStr == "0.00" || currentRateStr == "" {
-						zeroArrivalCount++
-						// After 6 iterations (60s) with zero arrival rate, log load gen jobs
-						if zeroArrivalCount >= 6 && !loadGenLogsShown {
-							loadGenLogsShown = true
-							logLoadGenJobLogs(ctx, jobBaseName, model.namespace, scaledLoadWorkers)
-						}
-					} else {
-						zeroArrivalCount = 0 // Reset counter when we see traffic
 					}
 
 					if !lowLoad {
@@ -487,7 +471,10 @@ exit 1`,
 					} else {
 						_, _ = fmt.Fprintf(GinkgoWriter, "Low load detected, skipping scale-up recommendation check\n")
 					}
+				}, 5*time.Minute, 10*time.Second).Should(Succeed())
 
+				By("monitoring HPA for scale-up")
+				Eventually(func(g Gomega) {
 					hpa, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(model.namespace).Get(ctx, hpaName, metav1.GetOptions{})
 					g.Expect(err).NotTo(HaveOccurred(), "Should be able to get HPA")
 
@@ -499,7 +486,6 @@ exit 1`,
 						g.Expect(hpa.Status.DesiredReplicas).To(BeNumerically(">", initialOptimized),
 							fmt.Sprintf("HPA should desire more replicas than initial (desired: %d, initial: %d)", hpa.Status.DesiredReplicas, initialOptimized))
 					}
-
 				}, 5*time.Minute, 10*time.Second).Should(Succeed())
 
 				_, _ = fmt.Fprintf(GinkgoWriter, "WVA detected load and recommended %d replicas (up from %d)\n", scaledOptimized, initialOptimized)
@@ -712,53 +698,6 @@ func deleteParallelLoadJobs(ctx context.Context, baseName, namespace string, num
 			_, _ = fmt.Fprintf(GinkgoWriter, "Warning: failed to delete job %s: %v\n", jobName, err)
 		}
 	}
-}
-
-// logLoadGenJobLogs captures and logs output from load generation pods for debugging
-func logLoadGenJobLogs(ctx context.Context, baseName, namespace string, numWorkers int) {
-	_, _ = fmt.Fprintf(GinkgoWriter, "\n=== LOAD GENERATION JOB LOGS (debugging zero arrival rate) ===\n")
-
-	podList, err := k8sClient.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: fmt.Sprintf("experiment=%s", baseName),
-	})
-	if err != nil {
-		_, _ = fmt.Fprintf(GinkgoWriter, "Failed to list load gen pods: %v\n", err)
-		return
-	}
-
-	if len(podList.Items) == 0 {
-		_, _ = fmt.Fprintf(GinkgoWriter, "No load gen pods found with label experiment=%s\n", baseName)
-		return
-	}
-
-	// Log status and logs for first 3 pods (to avoid too much output)
-	maxPods := 3
-	if len(podList.Items) < maxPods {
-		maxPods = len(podList.Items)
-	}
-
-	for i := 0; i < maxPods; i++ {
-		pod := podList.Items[i]
-		_, _ = fmt.Fprintf(GinkgoWriter, "\n--- Pod: %s (Phase: %s) ---\n", pod.Name, pod.Status.Phase)
-
-		// Get pod logs
-		logOpts := &corev1.PodLogOptions{
-			TailLines: ptr(int64(50)), // Last 50 lines
-		}
-		logs, err := k8sClient.CoreV1().Pods(namespace).GetLogs(pod.Name, logOpts).DoRaw(ctx)
-		if err != nil {
-			_, _ = fmt.Fprintf(GinkgoWriter, "Failed to get logs: %v\n", err)
-			continue
-		}
-		_, _ = fmt.Fprintf(GinkgoWriter, "%s\n", string(logs))
-	}
-
-	_, _ = fmt.Fprintf(GinkgoWriter, "=== END LOAD GENERATION JOB LOGS ===\n\n")
-}
-
-// ptr returns a pointer to the given value (helper for int64)
-func ptr(i int64) *int64 {
-	return &i
 }
 
 // PodScrapingSource tests using existing EPP pods in OpenShift cluster

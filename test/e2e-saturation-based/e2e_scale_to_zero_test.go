@@ -47,7 +47,7 @@ const (
 
 // This test follows the same pattern as the saturation test (Single VariantAutoscaling)
 // but adds scale-to-zero ConfigMap and tests scale-to-zero behavior after load stops.
-var _ = Describe("Test workload-variant-autoscaler - Scale-to-Zero Feature", Ordered, func() {
+var _ = Describe("Test workload-variant-autoscaler - Single VariantAutoscaling - Scale-to-Zero Feature", Ordered, func() {
 	var (
 		name            string
 		namespace       string
@@ -63,7 +63,6 @@ var _ = Describe("Test workload-variant-autoscaler - Scale-to-Zero Feature", Ord
 		ctx             context.Context
 	)
 
-	// BeforeAll - same as saturation test + scale-to-zero ConfigMap
 	BeforeAll(func() {
 		if os.Getenv("KUBECONFIG") == "" {
 			Skip("KUBECONFIG is not set; skipping e2e test")
@@ -109,9 +108,10 @@ retention_period: %s`, modelName, retentionPeriodShort),
 		}
 
 		// Delete existing ConfigMap if it exists
-		_ = k8sClient.CoreV1().ConfigMaps(controllerNamespace).Delete(ctx, scaleToZeroConfigMapName, metav1.DeleteOptions{})
+		err := k8sClient.CoreV1().ConfigMaps(controllerNamespace).Delete(ctx, scaleToZeroConfigMapName, metav1.DeleteOptions{})
+		Expect(client.IgnoreNotFound(err)).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to delete existing scale-to-zero ConfigMap: %s", scaleToZeroConfigMapName))
 
-		_, err := k8sClient.CoreV1().ConfigMaps(controllerNamespace).Create(ctx, scaleToZeroCM, metav1.CreateOptions{})
+		_, err = k8sClient.CoreV1().ConfigMaps(controllerNamespace).Create(ctx, scaleToZeroCM, metav1.CreateOptions{})
 		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to create scale-to-zero ConfigMap: %s", scaleToZeroConfigMapName))
 
 		By("ensuring unique app label for deployment and service")
@@ -145,12 +145,12 @@ retention_period: %s`, modelName, retentionPeriodShort),
 		}, 2*time.Minute, 5*time.Second).Should(Succeed())
 
 		By("creating VariantAutoscaling resource")
-		variantAutoscaling := utils.CreateVariantAutoscalingResource(namespace, deployName, modelName, a100Acc, 10.0)
+		variantAutoscaling := utils.CreateVariantAutoscalingResource(namespace, name, deployName, modelName, a100Acc, 10.0)
 		err = crClient.Create(ctx, variantAutoscaling)
-		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to create VariantAutoscaling for: %s", deployName))
+		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to create VariantAutoscaling: %s", name))
 
 		By("creating HorizontalPodAutoscaler for deployment")
-		hpa := utils.CreateHPAOnDesiredReplicaMetrics(hpaName, namespace, deployName, deployName, 10)
+		hpa := utils.CreateHPAOnDesiredReplicaMetrics(hpaName, namespace, deployName, name, 10)
 		_, err = k8sClient.AutoscalingV2().HorizontalPodAutoscalers(namespace).Create(ctx, hpa, metav1.CreateOptions{})
 		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to create HPA: %s", hpaName))
 	})
@@ -187,12 +187,12 @@ retention_period: %s`, modelName, retentionPeriodShort),
 			va := &v1alpha1.VariantAutoscaling{}
 			err := crClient.Get(ctx, client.ObjectKey{
 				Namespace: namespace,
-				Name:      deployName,
+				Name:      name,
 			}, va)
-			Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to get VariantAutoscaling: %s", deployName))
+			Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to get VariantAutoscaling: %s", name))
 			Expect(va.Spec.ModelID).To(Equal(modelName))
 
-			_, _ = fmt.Fprintf(GinkgoWriter, "VariantAutoscaling resource verified: %s\n", deployName)
+			_, _ = fmt.Fprintf(GinkgoWriter, "VariantAutoscaling resource verified: %s\n", name)
 		})
 
 		It("should have HPA created and configured correctly", func() {
@@ -221,9 +221,9 @@ retention_period: %s`, modelName, retentionPeriodShort),
 				va := &v1alpha1.VariantAutoscaling{}
 				err := crClient.Get(ctx, client.ObjectKey{
 					Namespace: namespace,
-					Name:      deployName,
+					Name:      name,
 				}, va)
-				g.Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to fetch VariantAutoscaling for: %s", deployName))
+				g.Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to fetch VariantAutoscaling: %s", name))
 
 				// Wait for DesiredOptimizedAlloc to be populated (ensures reconciliation loop is active)
 				g.Expect(va.Status.DesiredOptimizedAlloc.Accelerator).NotTo(BeEmpty(),
@@ -240,7 +240,7 @@ retention_period: %s`, modelName, retentionPeriodShort),
 					DoRaw(ctx)
 				g.Expect(err).NotTo(HaveOccurred(), "Should be able to query external metrics API")
 				g.Expect(string(result)).To(ContainSubstring(constants.WVADesiredReplicas), "Metric should be available")
-				g.Expect(string(result)).To(ContainSubstring(deployName), "Metric should be for the correct variant")
+				g.Expect(string(result)).To(ContainSubstring(name), "Metric should be for the correct variant")
 			}, 2*time.Minute, 5*time.Second).Should(Succeed())
 
 			By("verifying variant has expected initial replicas (before load)")
@@ -248,7 +248,7 @@ retention_period: %s`, modelName, retentionPeriodShort),
 				va := &v1alpha1.VariantAutoscaling{}
 				err := crClient.Get(ctx, client.ObjectKey{
 					Namespace: namespace,
-					Name:      deployName,
+					Name:      name,
 				}, va)
 				g.Expect(err).NotTo(HaveOccurred())
 
@@ -258,7 +258,7 @@ retention_period: %s`, modelName, retentionPeriodShort),
 			}, 10*time.Minute, 5*time.Second).Should(Succeed())
 
 			By("logging VariantAutoscaling status before load")
-			err := utils.LogVariantAutoscalingStatus(ctx, deployName, namespace, crClient, GinkgoWriter)
+			err := utils.LogVariantAutoscalingStatus(ctx, name, namespace, crClient, GinkgoWriter)
 			Expect(err).NotTo(HaveOccurred(), "Should be able to log VariantAutoscaling status before load")
 		})
 	})
@@ -283,8 +283,8 @@ retention_period: %s`, modelName, retentionPeriodShort),
 				namespace,
 				fmt.Sprintf("http://%s:%d", gatewayName, 80),
 				modelName,
-				loadRatePerSecond,
-				maxExecutionTimeSec,
+				5,  // Reduced rate (was loadRatePerSecond=8)
+				10, // Drastically reduced duration to prevent queue backlog (was 60s)
 				inputTokens,
 				outputTokens,
 				k8sClient,
@@ -321,7 +321,7 @@ retention_period: %s`, modelName, retentionPeriodShort),
 				va := &v1alpha1.VariantAutoscaling{}
 				err := crClient.Get(ctx, client.ObjectKey{
 					Namespace: namespace,
-					Name:      deployName,
+					Name:      name,
 				}, va)
 				g.Expect(err).NotTo(HaveOccurred())
 
@@ -334,7 +334,7 @@ retention_period: %s`, modelName, retentionPeriodShort),
 			}, 10*time.Minute, 10*time.Second).Should(Succeed())
 
 			By("logging VariantAutoscaling status after scale-up")
-			err = utils.LogVariantAutoscalingStatus(ctx, deployName, namespace, crClient, GinkgoWriter)
+			err = utils.LogVariantAutoscalingStatus(ctx, name, namespace, crClient, GinkgoWriter)
 			Expect(err).NotTo(HaveOccurred(), "Should be able to log VariantAutoscaling status after scale-up")
 		})
 	})
@@ -373,7 +373,7 @@ retention_period: %s`, modelName, retentionPeriodShort),
 				va := &v1alpha1.VariantAutoscaling{}
 				err := crClient.Get(ctx, client.ObjectKey{
 					Namespace: namespace,
-					Name:      deployName,
+					Name:      name,
 				}, va)
 				g.Expect(err).NotTo(HaveOccurred())
 
@@ -386,7 +386,7 @@ retention_period: %s`, modelName, retentionPeriodShort),
 			}, 5*time.Minute, 10*time.Second).Should(Succeed())
 
 			By("logging VariantAutoscaling status after scale-to-zero decision")
-			err = utils.LogVariantAutoscalingStatus(ctx, deployName, namespace, crClient, GinkgoWriter)
+			err = utils.LogVariantAutoscalingStatus(ctx, name, namespace, crClient, GinkgoWriter)
 			Expect(err).NotTo(HaveOccurred(), "Should be able to log VariantAutoscaling status after scale-to-zero")
 		})
 
@@ -470,7 +470,7 @@ retention_period: %s`, modelName, retentionPeriodShort),
 			va := &v1alpha1.VariantAutoscaling{}
 			err = crClient.Get(ctx, client.ObjectKey{
 				Namespace: namespace,
-				Name:      deployName,
+				Name:      name,
 			}, va)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(va.Status.DesiredOptimizedAlloc.NumReplicas).To(Equal(0),
@@ -487,10 +487,10 @@ retention_period: %s`, modelName, retentionPeriodShort),
 
 		// Delete VariantAutoscaling resource
 		va := &v1alpha1.VariantAutoscaling{}
-		err = crClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: deployName}, va)
+		err = crClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, va)
 		if err == nil {
 			err = crClient.Delete(ctx, va)
-			Expect(client.IgnoreNotFound(err)).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to delete VariantAutoscaling: %s", deployName))
+			Expect(client.IgnoreNotFound(err)).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to delete VariantAutoscaling: %s", name))
 		}
 
 		// Delete ServiceMonitor
@@ -616,12 +616,12 @@ enable_scale_to_zero: false`, modelName),
 		}, 2*time.Minute, 5*time.Second).Should(Succeed())
 
 		By("creating VariantAutoscaling resource")
-		variantAutoscaling := utils.CreateVariantAutoscalingResource(namespace, deployName, modelName, a100Acc, 10.0)
+		variantAutoscaling := utils.CreateVariantAutoscalingResource(namespace, name, deployName, modelName, a100Acc, 10.0)
 		err = crClient.Create(ctx, variantAutoscaling)
 		Expect(err).NotTo(HaveOccurred())
 
 		By("creating HPA (minReplicas depends on feature gate availability)")
-		hpa := utils.CreateHPAOnDesiredReplicaMetrics(hpaName, namespace, deployName, deployName, 10)
+		hpa := utils.CreateHPAOnDesiredReplicaMetrics(hpaName, namespace, deployName, name, 10)
 		// Use minReplicas=0 only if HPAScaleToZero feature gate is enabled, otherwise use 1
 		if utils.IsHPAScaleToZeroEnabled(ctx, k8sClient, GinkgoWriter) {
 			minReplicas := int32(0)
@@ -651,7 +651,7 @@ enable_scale_to_zero: false`, modelName),
 				va := &v1alpha1.VariantAutoscaling{}
 				err := crClient.Get(ctx, client.ObjectKey{
 					Namespace: namespace,
-					Name:      deployName,
+					Name:      name,
 				}, va)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(va.Status.DesiredOptimizedAlloc.Accelerator).NotTo(BeEmpty())
@@ -705,7 +705,7 @@ enable_scale_to_zero: false`, modelName),
 			va := &v1alpha1.VariantAutoscaling{}
 			err = crClient.Get(ctx, client.ObjectKey{
 				Namespace: namespace,
-				Name:      deployName,
+				Name:      name,
 			}, va)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(va.Status.DesiredOptimizedAlloc.NumReplicas).To(BeNumerically(">=", 1),
@@ -754,7 +754,7 @@ enable_scale_to_zero: false`, modelName),
 		_ = k8sClient.AutoscalingV2().HorizontalPodAutoscalers(namespace).Delete(ctx, hpaName, metav1.DeleteOptions{})
 
 		va := &v1alpha1.VariantAutoscaling{}
-		if err := crClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: deployName}, va); err == nil {
+		if err := crClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, va); err == nil {
 			_ = crClient.Delete(ctx, va)
 		}
 

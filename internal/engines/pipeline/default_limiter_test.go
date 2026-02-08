@@ -98,7 +98,7 @@ func (m *mockTypeAllocator) Remaining() int {
 
 // mockAlgorithm implements AllocationAlgorithm for testing
 type mockAlgorithm struct {
-	name       string
+	name         string
 	allocateFunc func(ctx context.Context, decisions []*interfaces.VariantDecision, allocator ResourceAllocator) error
 }
 

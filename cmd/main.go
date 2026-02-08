@@ -50,6 +50,7 @@ import (
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/datastore"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/saturation"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/scalefromzero"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/indexers"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/metrics"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/utils"
@@ -304,6 +305,14 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Setup custom indexes for lookups on VariantAutoscalings
+	setupLog.Info("Setting up indexes")
+	if err := indexers.SetupIndexes(context.Background(), mgr); err != nil {
+		setupLog.Error(err, "unable to setup indexes")
+		os.Exit(1)
+	}
+	setupLog.Info("Indexes setup completed")
+
 	// Initialize metrics
 	setupLog.Info("Creating metrics emitter instance")
 	// Force initialization of metrics by creating a metrics emitter
@@ -423,10 +432,16 @@ func main() {
 	// +kubebuilder:scaffold:builder
 
 	// Create InferencePool reconciler
+	poolGroupEnv := os.Getenv("POOL_GROUP")
+	poolGKNN, err := poolutil.GetPoolGKNN(poolGroupEnv)
+	if err != nil {
+		setupLog.Error(err, "unable to create default pool GKNN from POOL_GROUP", "poolGroup", poolGroupEnv)
+		os.Exit(1)
+	}
 	inferencePoolReconciler := &controller.InferencePoolReconciler{
 		Datastore: ds,
 		Client:    mgr.GetClient(),
-		PoolGKNN:  poolutil.DefaultPoolGKNN(),
+		PoolGKNN:  poolGKNN,
 	}
 
 	if err = inferencePoolReconciler.SetupWithManager(mgr); err != nil {

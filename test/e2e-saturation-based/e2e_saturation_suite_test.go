@@ -57,7 +57,7 @@ var (
 const (
 	maximumAvailableGPUs = 4
 	numNodes             = 3
-	gpuTypes             = "mix"
+	gpuTypes             = "nvidia-mix"
 
 	kindClusterName = "wva-gpu-cluster"
 )

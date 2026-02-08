@@ -48,6 +48,7 @@ LLM_D_OWNER=${LLM_D_OWNER:-"llm-d"}
 LLM_D_PROJECT=${LLM_D_PROJECT:-"llm-d"}
 LLM_D_RELEASE=${LLM_D_RELEASE:-"v0.3.0"}
 LLM_D_MODELSERVICE_NAME=${LLM_D_MODELSERVICE_NAME:-"ms-$WELL_LIT_PATH_NAME-llm-d-modelservice"}
+LLM_D_EPP_NAME=${LLM_D_EPP_NAME:-"gaie-$WELL_LIT_PATH_NAME-epp"}
 CLIENT_PREREQ_DIR=${CLIENT_PREREQ_DIR:-"$WVA_PROJECT/$LLM_D_PROJECT/guides/prereq/client-setup"}
 GATEWAY_PREREQ_DIR=${GATEWAY_PREREQ_DIR:-"$WVA_PROJECT/$LLM_D_PROJECT/guides/prereq/gateway-provider"}
 EXAMPLE_DIR=${EXAMPLE_DIR:-"$WVA_PROJECT/$LLM_D_PROJECT/guides/$WELL_LIT_PATH_NAME"}
@@ -55,6 +56,9 @@ LLM_D_MODELSERVICE_VALUES=${LLM_D_MODELSERVICE_VALUES:-"$EXAMPLE_DIR/ms-$WELL_LI
 ITL_AVERAGE_LATENCY_MS=${ITL_AVERAGE_LATENCY_MS:-20}
 TTFT_AVERAGE_LATENCY_MS=${TTFT_AVERAGE_LATENCY_MS:-200}
 ENABLE_SCALE_TO_ZERO=${ENABLE_SCALE_TO_ZERO:-true}
+# llm-d-inference scheduler with image with flowcontrol support
+# TODO: update once the llm-d-inference-scheduler v0.5.0 is released
+LLM_D_INFERENCE_SCHEDULER_IMG=${LLM_D_INFERENCE_SCHEDULER_IMG:-"ghcr.io/llm-d/llm-d-inference-scheduler:v0.5.0-rc.1"}
 
 # Gateway Configuration
 GATEWAY_PROVIDER=${GATEWAY_PROVIDER:-"istio"} # Options: kgateway, istio
@@ -64,7 +68,7 @@ INSTALL_GATEWAY_CTRLPLANE_ORIGINAL="${INSTALL_GATEWAY_CTRLPLANE:-}"
 INSTALL_GATEWAY_CTRLPLANE="${INSTALL_GATEWAY_CTRLPLANE:-false}"
 
 # Model and SLO Configuration
-DEFAULT_MODEL_ID=${DEFAULT_MODEL_ID:-"Qwen/Qwen3-0.6B"}
+DEFAULT_MODEL_ID=${DEFAULT_MODEL_ID:-"Qwen/Qwen3-32B"}
 MODEL_ID=${MODEL_ID:-"unsloth/Meta-Llama-3.1-8B"}
 ACCELERATOR_TYPE=${ACCELERATOR_TYPE:-"H100"}
 SLO_TPOT=${SLO_TPOT:-10}  # Target time-per-output-token SLO (in ms)
@@ -94,6 +98,8 @@ SKIP_CHECKS=${SKIP_CHECKS:-false}
 E2E_TESTS_ENABLED=${E2E_TESTS_ENABLED:-false}
 # vLLM max-num-seqs (max concurrent sequences per replica, lower = easier to saturate for testing)
 VLLM_MAX_NUM_SEQS=${VLLM_MAX_NUM_SEQS:-""}
+# Decode replicas override (useful for e2e testing with limited GPUs)
+DECODE_REPLICAS=${DECODE_REPLICAS:-""}
 
 # Environment-related variables
 SCRIPT_DIR=$(cd $(dirname "${BASH_SOURCE[0]}") && pwd)
@@ -737,7 +743,7 @@ deploy_llm_d_infrastructure() {
 
         # Increase model-storage volume size
         log_info "Increasing model-storage volume size for model: $MODEL_ID"
-        yq eval '.modelArtifacts.size = "30Gi"' -i "$LLM_D_MODELSERVICE_VALUES"
+        yq eval '.modelArtifacts.size = "100Gi"' -i "$LLM_D_MODELSERVICE_VALUES"
     fi
 
     # Configure llm-d-inference-simulator if needed
@@ -758,41 +764,40 @@ deploy_llm_d_infrastructure() {
       yq eval ".decode.containers[0].args += [\"--max-num-seqs=$VLLM_MAX_NUM_SEQS\"]" -i "$LLM_D_MODELSERVICE_VALUES"
     fi
 
+    # Configure decode replicas if set (useful for e2e testing with limited GPUs)
+    if [ -n "$DECODE_REPLICAS" ]; then
+      log_info "Setting decode replicas to $DECODE_REPLICAS"
+      yq eval ".decode.replicas = $DECODE_REPLICAS" -i "$LLM_D_MODELSERVICE_VALUES"
+    fi
+
     # Deploy llm-d core components
     log_info "Deploying llm-d core components"
     helmfile apply -e $GATEWAY_PROVIDER -n ${LLMD_NS}
     kubectl apply -f httproute.yaml -n ${LLMD_NS}
 
-    # if [ "$GATEWAY_PROVIDER" == "kgateway" ]; then
-    #     log_info "Patching kgateway service to NodePort"
-    #     export GATEWAY_NAME="infra-inference-scheduling-inference-gateway"
-    #     kubectl patch gatewayparameters.gateway.kgateway.dev $GATEWAY_NAME \
-    #     -n $LLMD_NS \
-    #     --type='merge' \
-    #     -p '{"spec":{"kube":{"service":{"type":"NodePort"}}}}'
-    # fi
-
-    # Patch llm-d-inference-simulator deployment if scale-to-zero is enabled
+    # Patch llm-d-inference-scheduler deployment if scale-to-zero is enabled
     if [ "$ENABLE_SCALE_TO_ZERO" == "true" ]; then
-        # Patch llm-d-inference-simulator deployment to use the correct image
-        log_info "Patching llm-d-inference-simulator deployment to enable flowcontrol and use a new image"
-        export DEPLOYMENT_NAME="gaie-sim-epp"
-        export NEW_IMAGE="ghcr.io/llm-d/llm-d-inference-scheduler:v0.5.0-rc.1"
-        kubectl patch deployment $DEPLOYMENT_NAME -n $LLMD_NS --type='json' -p='[
-            {
-                "op": "replace",
-                "path": "/spec/template/spec/containers/0/image",
-                "value": "'$NEW_IMAGE'"
-            },
-            {
-                "op": "add",
-                "path": "/spec/template/spec/containers/0/env/-",
-                "value": {
-                "name": "ENABLE_EXPERIMENTAL_FLOW_CONTROL_LAYER",
-                "value": "true"
+        # Patch llm-d-inference-scheduler to enable flowcontrol and use new image
+        log_info "Patching llm-d-inference-scheduler deployment to enable flowcontrol and use a new image"
+        if kubectl get deployment "$LLM_D_EPP_NAME" -n "$LLMD_NS" &> /dev/null; then
+            kubectl patch deployment "$LLM_D_EPP_NAME" -n "$LLMD_NS" --type='json' -p='[
+                {
+                    "op": "replace",
+                    "path": "/spec/template/spec/containers/0/image",
+                    "value": "'$LLM_D_INFERENCE_SCHEDULER_IMG'"
+                },
+                {
+                    "op": "add",
+                    "path": "/spec/template/spec/containers/0/env/-",
+                    "value": {
+                    "name": "ENABLE_EXPERIMENTAL_FLOW_CONTROL_LAYER",
+                    "value": "true"
+                    }
                 }
-            }
-        ]'
+            ]'
+        else
+            log_warning "Skipping inference-scheduler patch for SCALE_TO_ZERO: Deployment $LLM_D_EPP_NAME not found in $LLMD_NS"
+        fi
     fi
     
     log_info "Waiting for llm-d components to initialize..."

@@ -106,7 +106,7 @@ var _ = Describe("Test workload-variant-autoscaler - GPU Limiter Feature", Order
 	var (
 		ctx context.Context
 
-		// Resource names - following saturation test pattern
+		// Resource names
 		name           string
 		deployName     string
 		serviceName    string
@@ -184,17 +184,30 @@ enableLimiter: true`
 		_, err = k8sClient.CoreV1().ConfigMaps(controllerNamespace).Update(ctx, cm, metav1.UpdateOptions{})
 		Expect(err).NotTo(HaveOccurred(), "Should be able to update saturation ConfigMap to enable limiter")
 
-		By("waiting for controller to process ConfigMap update")
-		// The controller watches ConfigMaps and updates the global config cache.
-		// Wait to ensure the watch event is processed before proceeding.
-		time.Sleep(5 * time.Second)
+		By("restarting controller-manager pods to load limiter configuration")
+		podList, err := k8sClient.CoreV1().Pods(controllerNamespace).List(ctx, metav1.ListOptions{
+			LabelSelector: "app.kubernetes.io/name=workload-variant-autoscaler",
+		})
+		Expect(err).NotTo(HaveOccurred(), "Should be able to list manager pods")
 
-		// Verify the ConfigMap was updated correctly
-		cm, err = k8sClient.CoreV1().ConfigMaps(controllerNamespace).Get(ctx, saturationConfigMapName, metav1.GetOptions{})
-		Expect(err).NotTo(HaveOccurred())
-		Expect(cm.Data["default"]).To(ContainSubstring("enableLimiter: true"),
-			"ConfigMap should have enableLimiter: true")
-		_, _ = fmt.Fprintf(GinkgoWriter, "ConfigMap updated with enableLimiter: true, waited for controller to process\n")
+		for _, pod := range podList.Items {
+			err = k8sClient.CoreV1().Pods(controllerNamespace).Delete(ctx, pod.Name, metav1.DeleteOptions{})
+			Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to delete pod %s", pod.Name))
+		}
+
+		// Wait for new controller pods to be running
+		Eventually(func(g Gomega) {
+			newPodList, err := k8sClient.CoreV1().Pods(controllerNamespace).List(ctx, metav1.ListOptions{
+				LabelSelector: "app.kubernetes.io/name=workload-variant-autoscaler",
+			})
+			g.Expect(err).NotTo(HaveOccurred(), "Should be able to list manager pods")
+			g.Expect(newPodList.Items).NotTo(BeEmpty(), "Pod list should not be empty")
+			for _, pod := range newPodList.Items {
+				g.Expect(pod.Status.Phase).To(Equal(corev1.PodRunning), fmt.Sprintf("Pod %s is not running", pod.Name))
+			}
+		}, 2*time.Minute, 1*time.Second).Should(Succeed())
+
+		_, _ = fmt.Fprintf(GinkgoWriter, "Controller pods restarted with limiter enabled\n")
 
 		By("ensuring unique app label for deployment")
 		utils.ValidateAppLabelUniqueness(namespace, appLabel, k8sClient, crClient)
@@ -231,20 +244,20 @@ enableLimiter: true`
 		}, 2*time.Minute, 5*time.Second).Should(Succeed())
 
 		By("creating VariantAutoscaling resource")
-		va := utils.CreateVariantAutoscalingResource(namespace, deployName, limiterModel1, accelerator, 30.0)
+		va := utils.CreateVariantAutoscalingResource(namespace, name, deployName, llamaModelId, accelerator, 30.0)
 		err = crClient.Create(ctx, va)
 		Expect(err).NotTo(HaveOccurred())
 		_, _ = fmt.Fprintf(GinkgoWriter, "VariantAutoscaling created with accelerator: %s\n", accelerator)
 
 		By("creating HPA for deployment")
-		hpa := utils.CreateHPAOnDesiredReplicaMetrics(hpaName, namespace, deployName, deployName, 10)
+		hpa := utils.CreateHPAOnDesiredReplicaMetrics(hpaName, namespace, deployName, name, 10)
 		_, err = k8sClient.AutoscalingV2().HorizontalPodAutoscalers(namespace).Create(ctx, hpa, metav1.CreateOptions{})
 		Expect(err).NotTo(HaveOccurred())
 
 		By("waiting for metrics pipeline to be ready")
 		Eventually(func(g Gomega) {
 			va := &v1alpha1.VariantAutoscaling{}
-			err := crClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: deployName}, va)
+			err := crClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, va)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(va.Status.DesiredOptimizedAlloc.Accelerator).NotTo(BeEmpty(),
 				"VariantAutoscaling DesiredOptimizedAlloc should be populated")
@@ -262,7 +275,7 @@ enableLimiter: true`
 
 		// Delete VA
 		va := &v1alpha1.VariantAutoscaling{}
-		if err := crClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: deployName}, va); err == nil {
+		if err := crClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, va); err == nil {
 			_ = crClient.Delete(ctx, va)
 		}
 
@@ -331,25 +344,8 @@ enableLimiter: true`
 		})
 	})
 
-	Context("Scenario 2: Limiter constrains scale-up under high load", func() {
-		It("should cap scale-up at GPU capacity limit even under heavy load", func() {
-			By("ensuring limiter is enabled in ConfigMap before test")
-			// Re-apply ConfigMap setting to ensure limiter is enabled
-			// This protects against other tests modifying the ConfigMap
-			cm, err := k8sClient.CoreV1().ConfigMaps(controllerNamespace).Get(ctx, saturationConfigMapName, metav1.GetOptions{})
-			Expect(err).NotTo(HaveOccurred())
-			cm.Data["default"] = `kvCacheThreshold: 0.80
-queueLengthThreshold: 5
-kvSpareTrigger: 0.1
-queueSpareTrigger: 3
-enableLimiter: true`
-			_, err = k8sClient.CoreV1().ConfigMaps(controllerNamespace).Update(ctx, cm, metav1.UpdateOptions{})
-			Expect(err).NotTo(HaveOccurred())
-			_, _ = fmt.Fprintf(GinkgoWriter, "Re-applied ConfigMap with enableLimiter: true\n")
-
-			// Wait for controller to process ConfigMap update
-			time.Sleep(5 * time.Second)
-
+	Context("Scenario 2: Scale-up under load with limiter constraint", func() {
+		It("should scale up when saturation is detected but be constrained by GPU capacity", func() {
 			By("setting up port-forward to Prometheus service")
 			prometheusPortForwardCmd := utils.SetUpPortForward(k8sClient, ctx, "kube-prometheus-stack-prometheus", controllerMonitoringNamespace, prometheusLocalPort, 9090)
 			defer func() {
@@ -410,7 +406,7 @@ enableLimiter: true`
 				va := &v1alpha1.VariantAutoscaling{}
 				err := crClient.Get(ctx, client.ObjectKey{
 					Namespace: namespace,
-					Name:      deployName,
+					Name:      name,
 				}, va)
 				g.Expect(err).NotTo(HaveOccurred())
 
@@ -424,23 +420,34 @@ enableLimiter: true`
 				g.Expect(accelerator).NotTo(BeEmpty(),
 					"DesiredOptimizedAlloc.Accelerator should be populated when metrics are flowing")
 
-				// Should scale up from initial replica
-				if desiredReplicas > int(initialReplicas) {
-					scaledUp = true
-				}
-				g.Expect(scaledUp).To(BeTrue(),
-					fmt.Sprintf("Should scale up from %d under heavy load", initialReplicas))
+				// Should scale up from initial 1 replica due to saturation
+				g.Expect(finalReplicas).To(BeNumerically(">", int(initialReplicas)),
+					fmt.Sprintf("Should scale up from %d under load", initialReplicas))
 
 			}, 10*time.Minute, 10*time.Second).Should(Succeed())
 
-			By("verifying limiter constrains DesiredOptimizedAlloc.NumReplicas")
-			// The limiter should cap DesiredOptimizedAlloc.NumReplicas to the GPU-limited max
-			Expect(desiredReplicas).To(BeNumerically("<=", maxReplicasOnNode),
-				fmt.Sprintf("Limiter should cap DesiredOptimizedAlloc.NumReplicas at %d (%d GPUs / %d GPUs per replica)",
-					maxReplicasOnNode, gpusOnTargetNode, gpusPerReplicaLimiter))
+			By("verifying scale-up is constrained by GPU capacity via limiter")
+			Consistently(func(g Gomega) {
+				va := &v1alpha1.VariantAutoscaling{}
+				err := crClient.Get(ctx, client.ObjectKey{
+					Namespace: namespace,
+					Name:      name,
+				}, va)
+				g.Expect(err).NotTo(HaveOccurred())
 
-			By("logging VariantAutoscaling status after limiter constraint test")
-			err = utils.LogVariantAutoscalingStatus(ctx, deployName, namespace, crClient, GinkgoWriter)
+				finalReplicas = va.Status.DesiredOptimizedAlloc.NumReplicas
+				_, _ = fmt.Fprintf(GinkgoWriter, "Checking DesiredOptimizedAlloc.NumReplicas=%d against max=%d\n",
+					finalReplicas, maxReplicasOnNode)
+
+				// Final replicas should not exceed max allowed by GPU capacity
+				g.Expect(finalReplicas).To(BeNumerically("<=", maxReplicasOnNode),
+					fmt.Sprintf("Final replicas %d should be less than or equal to max %d due to GPU limiter",
+						finalReplicas, maxReplicasOnNode))
+
+			}, 2*time.Minute, 10*time.Second).Should(Succeed())
+
+			By("logging VariantAutoscaling status after scale-up")
+			err = utils.LogVariantAutoscalingStatus(ctx, name, namespace, crClient, GinkgoWriter)
 			Expect(err).NotTo(HaveOccurred(), "Should be able to log VariantAutoscaling status")
 
 			_, _ = fmt.Fprintf(GinkgoWriter, "Limiter successfully constrained scale-up: desiredReplicas=%d (GPU max=%d)\n",

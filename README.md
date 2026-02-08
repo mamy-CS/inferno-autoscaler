@@ -80,7 +80,6 @@ See the [Installation Guide](docs/user-guide/installation.md) for detailed instr
 
 ### Design & Architecture
 - [Architecture Overview](docs/design/modeling-optimization.md)
-- [**Architecture Limitations**](docs/design/architecture-limitations.md) - **Important:** Read this if using HSSM, MoE, or non-standard architectures
 - [Architecture Diagrams](docs/design/diagrams/) - Visual architecture and workflow diagrams
 -->
 <!-- 
@@ -193,7 +192,7 @@ kubectl get crd variantautoscalings.llmd.ai -o jsonpath='{.spec.versions[0].sche
 
 We welcome contributions! See the llm-d Contributing Guide for guidelines.
 
-Join the [llm-d autoscaling community meetings](https://join.slack.com/share/enQtOTg1MzkwODExNDI5Mi02NWQwOWEwOWM4Y2Y3MTc4OTQyY2Y1ZDVlZmU2MjBmZDUwNjJhZGM3MjY4ZTQ5OTdjZjgzMmI0NjI0ZTBhZTM4) to get involved.
+Join the [llm-d autoscaling community meetings](https://llm-d.ai/slack) to get involved.
 
 ## License
 
@@ -202,7 +201,7 @@ Apache 2.0 - see [LICENSE](LICENSE) for details.
 ## Related Projects
 
 - [llm-d infrastructure](https://github.com/llm-d-incubation/llm-d-infra)
-- [llm-d main repository](https://github.com/llm-d-incubation/llm-d)
+- [llm-d main repository](https://github.com/llm-d/llm-d)
 
 ## References
 

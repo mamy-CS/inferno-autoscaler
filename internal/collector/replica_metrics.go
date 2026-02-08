@@ -35,6 +35,7 @@ import (
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/saturation"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/utils"
 )
 
 // ReplicaMetricsCollector collects replica-level metrics for saturation analysis
@@ -65,9 +66,9 @@ func NewReplicaMetricsCollector(metricsSource source.MetricsSource, k8sClient cl
 //   - ctx: Context for the operation
 //   - modelID: The model identifier to collect metrics for
 //   - namespace: The namespace where the model is deployed
-//   - deployments: Map of deployment name to deployment object
-//   - variantAutoscalings: Map of deployment name to VA object
-//   - variantCosts: Map of deployment name to cost value
+//   - deployments: Map of Deployment namespace/name to Deployment
+//   - variantAutoscalings: Map of VariantAutoscaling namespace/name to VariantAutoscaling object
+//   - variantCosts: Map of VariantAutoscaling namespace/name to cost value
 //
 // Returns:
 //   - []interfaces.ReplicaMetrics: Per-pod metrics for saturation analysis
@@ -197,30 +198,31 @@ func (c *ReplicaMetricsCollector) CollectReplicaMetrics(
 			queueLen = 0
 		}
 
-		// Match pod to variant using deployment label selectors
-		variantName := c.podVAMapper.FindVAForPod(ctx, podName, namespace, deployments, variantAutoscalings)
+		// Match Pod to VariantAutoscaling using indexed lookup
+		vaName := c.podVAMapper.FindVAForPod(ctx, podName, namespace, deployments)
 
-		if variantName == "" {
+		if vaName == "" {
 			logger.Info("Skipping pod that doesn't match any deployment",
 				"pod", podName,
 				"deployments", getDeploymentNames(deployments))
 			continue
 		}
+		variantKey := utils.GetNamespacedKey(namespace, vaName)
 
 		// Get accelerator name from VariantAutoscaling label
 		acceleratorName := ""
-		if va, ok := variantAutoscalings[variantName]; ok && va != nil {
+		if va, ok := variantAutoscalings[variantKey]; ok && va != nil {
 			if va.Labels != nil {
-				if accName, exists := va.Labels["inference.optimization/acceleratorName"]; exists {
+				if accName, exists := va.Labels[utils.AcceleratorNameLabel]; exists {
 					acceleratorName = accName
 				}
 			}
 		}
 
-		// Look up cost by variant name
+		// Look up cost by VariantAutoscaling namespace/name
 		cost := saturation.DefaultVariantCost
 		if variantCosts != nil {
-			if c, ok := variantCosts[variantName]; ok {
+			if c, ok := variantCosts[variantKey]; ok {
 				cost = c
 			}
 		}
@@ -229,7 +231,7 @@ func (c *ReplicaMetricsCollector) CollectReplicaMetrics(
 			PodName:         podName,
 			ModelID:         modelID,
 			Namespace:       namespace,
-			VariantName:     variantName,
+			VariantName:     vaName,
 			AcceleratorName: acceleratorName,
 			KvCacheUsage:    kvUsage,
 			QueueLength:     queueLen,
@@ -255,8 +257,8 @@ func (c *ReplicaMetricsCollector) CollectReplicaMetrics(
 // getDeploymentNames extracts deployment names from the deployments map.
 func getDeploymentNames(deployments map[string]*appsv1.Deployment) []string {
 	names := make([]string, 0, len(deployments))
-	for name := range deployments {
-		names = append(names, name)
+	for _, deploy := range deployments {
+		names = append(names, deploy.Name)
 	}
 	return names
 }

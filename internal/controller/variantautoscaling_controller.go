@@ -40,6 +40,7 @@ import (
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/config"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/common"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/indexers"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/utils"
@@ -59,6 +60,7 @@ type VariantAutoscalingReconciler struct {
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups="",resources=nodes/status,verbs=get;list;update;patch;watch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups="apps",resources=replicasets,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get
@@ -239,6 +241,7 @@ func (r *VariantAutoscalingReconciler) Reconcile(ctx context.Context, req ctrl.R
 // handleDeploymentEvent maps Deployment events to VA reconcile requests.
 // When a Deployment is created, this finds any VAs that reference it and triggers reconciliation.
 // This handles the race condition where VA is created before its target deployment.
+// Uses custom indexes for efficient VA lookup instead of listing all VAs.
 func (r *VariantAutoscalingReconciler) handleDeploymentEvent(ctx context.Context, obj client.Object) []reconcile.Request {
 	deploy, ok := obj.(*appsv1.Deployment)
 	if !ok {
@@ -247,31 +250,28 @@ func (r *VariantAutoscalingReconciler) handleDeploymentEvent(ctx context.Context
 
 	logger := ctrl.LoggerFrom(ctx)
 
-	// List all VAs in the same namespace
-	var vaList llmdVariantAutoscalingV1alpha1.VariantAutoscalingList
-	if err := r.List(ctx, &vaList, client.InNamespace(deploy.Namespace)); err != nil {
-		logger.Error(err, "Failed to list VAs for deployment event")
+	// Use indexed lookup for VA targeting this Deployment
+	va, err := indexers.FindVAForDeployment(ctx, r.Client, deploy.Name, deploy.Namespace)
+	if err != nil {
+		logger.Error(err, "Failed to find VA for deployment event using index")
 		return nil
 	}
 
-	// Find VAs that reference this deployment
-	var requests []reconcile.Request
-	for _, va := range vaList.Items {
-		if va.GetScaleTargetName() == deploy.Name {
-			logger.V(logging.DEBUG).Info("Deployment created, triggering VA reconciliation",
-				"deployment", deploy.Name,
-				"va", va.Name,
-				"namespace", deploy.Namespace)
-			requests = append(requests, reconcile.Request{
-				NamespacedName: client.ObjectKey{
-					Namespace: va.Namespace,
-					Name:      va.Name,
-				},
-			})
-		}
+	if va == nil {
+		return nil
 	}
 
-	return requests
+	logger.V(logging.DEBUG).Info("Deployment created, triggering VA reconciliation",
+		"deployment", deploy.Name,
+		"va", va.Name,
+		"namespace", deploy.Namespace)
+
+	return []reconcile.Request{{
+		NamespacedName: client.ObjectKey{
+			Namespace: deploy.Namespace,
+			Name:      va.Name,
+		},
+	}}
 }
 
 // SetupWithManager sets up the controller with the Manager.
