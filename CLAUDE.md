@@ -69,9 +69,9 @@ There are 3 main types of documentation targeting different audiences:
 
 - use make targets for running e2e tests (e.g., `make test-e2e`) and document the process in `docs/developer-guide/testing.md`
 - **Never use images from docker.io in e2e tests.** All container images must use fully-qualified registry paths (e.g., `registry.k8s.io/`, `quay.io/`, or a private registry). Do not rely on Docker Hub as a default registry.
-- For Kind clusters, images are loaded locally via `kind load docker-image` and `imagePullPolicy` is set to `IfNotPresent` to avoid pulling from remote registries.
-- Keep the Kind cluster running after e2e tests complete; do not delete it automatically.
-- Assume multiple e2e test runs can execute concurrently against the same Kind cluster.
+- For saturation-based Kind E2E suites, each test run is responsible for creating its own Kind cluster and loading images locally via `kind load docker-image`, with `imagePullPolicy` set to `IfNotPresent` to avoid pulling from remote registries.
+- By default, the saturation-based Kind E2E suite tears down the Kind cluster in `AfterSuite`.
+- To skip Kind cluster teardown for debugging, set `INFRA_TEARDOWN_SKIP=true` before running the suite; in this mode, you are responsible for cleaning up the cluster manually.
 
 ## CLI Tools
 
