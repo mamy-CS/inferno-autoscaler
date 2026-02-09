@@ -49,24 +49,36 @@ workload-variant-autoscaler/
 ├── deploy/                # Deployment scripts
 │   ├── kubernetes/       # K8s deployment
 │   ├── openshift/        # OpenShift deployment
-│   └── kind/             # Local development
+│   └── kind-emulator/    # Local Kind cluster with GPU emulation
 ├── docs/                  # Documentation
 ├── internal/              # Private application code
-│   ├── controller/       # Controller implementation
-│   ├── collector/        # Metrics collection
-│   ├── optimizer/        # Optimization logic
 │   ├── actuator/         # Metric emission & scaling
-│   └── modelanalyzer/    # Model analysis
+│   ├── collector/        # Metrics collection
+│   ├── config/           # Internal configuration
+│   ├── constants/        # Application constants
+│   ├── controller/       # Controller implementation
+│   ├── datastore/        # Data storage abstractions
+│   ├── discovery/        # Resource discovery
+│   ├── engines/          # Scaling engines (saturation, scale-from-zero)
+│   ├── indexers/         # Kubernetes indexers
+│   ├── interfaces/       # Interface definitions
+│   ├── logging/          # Logging utilities
+│   ├── metrics/          # Metrics definitions
+│   ├── modelanalyzer/    # Model analysis
+│   ├── saturation/       # Saturation detection logic
+│   └── utils/            # Utility functions
 ├── pkg/                   # Public libraries
 │   ├── analyzer/         # Queue theory models
 │   ├── solver/           # Optimization algorithms
 │   ├── core/             # Core domain models
-│   └── config/           # Configuration structures
+│   ├── config/           # Configuration structures
+│   └── manager/          # Manager utilities
 ├── test/                  # Tests
-│   ├── e2e/              # End-to-end tests
-│   └── utils/            # Test utilities
-└── tools/                 # Development tools
-    └── vllm-emulator/    # Testing emulator
+│   ├── e2e-saturation-based/  # Saturation-based E2E tests (Kind)
+│   ├── e2e-openshift/         # OpenShift E2E tests
+│   └── utils/                 # Test utilities
+└── charts/                # Helm charts
+    └── workload-variant-autoscaler/
 ```
 
 ## Development Workflow
@@ -90,7 +102,7 @@ make create-kind-cluster
 make deploy IMG=<your-image>
 
 # Or deploy with llm-d infrastructure
-make deploy-llm-d-wva-emulated-on-kind
+make deploy-wva-emulated-on-kind
 ```
 
 ### Making Changes
@@ -159,7 +171,7 @@ PLATFORMS=linux/arm64,linux/amd64 make docker-buildx IMG=<your-registry>/wva-con
 make test
 
 # Run specific package tests
-go test ./internal/optimizer/...
+go test ./internal/controller/...
 
 # With coverage
 go test -cover ./...
@@ -226,7 +238,7 @@ See [OpenShift E2E Tests README](../../test/e2e-openshift/README.md) for detaile
 1. **Deploy to Kind cluster:**
 
    ```bash
-   make deploy-llm-d-wva-emulated-on-kind IMG=<your-image>
+   make deploy-wva-emulated-on-kind IMG=<your-image>
    ```
 
 2. **Create test resources:**
