@@ -57,13 +57,13 @@ There are 3 main types of documentation targeting different audiences:
    - Installation and configuration
    - Deployment guidelines
    - Monitoring and troubleshooting
-   - usually in the `docs/user-guide/admin` subdirectory
+   - usually located under the `docs/user-guide/` directory (for example, in an admin-focused subdirectory)
 
 3. **End-User Documentation** - For application developers creating applications that use the autoscaler
    - Usage guides and examples
    - API reference
    - Best practices and common patterns
-   - usually in the `docs/user-guide/users` subdirectory
+   - usually located under the `docs/user-guide/` directory (for example, in an end-user-focused subdirectory)
 
 ## E2E Testing
 
