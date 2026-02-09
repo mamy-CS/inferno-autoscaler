@@ -354,7 +354,7 @@ enableLimiter: true`
 			}()
 
 			By("waiting for Prometheus port-forward to be ready")
-			err = utils.VerifyPortForwardReadiness(ctx, prometheusLocalPort, fmt.Sprintf("https://localhost:%d/api/v1/query?query=up", prometheusLocalPort))
+			err := utils.VerifyPortForwardReadiness(ctx, prometheusLocalPort, fmt.Sprintf("https://localhost:%d/api/v1/query?query=up", prometheusLocalPort))
 			Expect(err).NotTo(HaveOccurred(), "Prometheus port-forward should be ready within timeout")
 
 			By("starting HIGH load generation to trigger scale-up beyond GPU capacity")
@@ -399,7 +399,6 @@ enableLimiter: true`
 
 			By("waiting for saturation detection and verifying limiter constraint")
 			var desiredReplicas int
-			var scaledUp bool
 
 			// First, wait for scale-up to occur (proves saturation was detected)
 			Eventually(func(g Gomega) {
@@ -421,7 +420,7 @@ enableLimiter: true`
 					"DesiredOptimizedAlloc.Accelerator should be populated when metrics are flowing")
 
 				// Should scale up from initial 1 replica due to saturation
-				g.Expect(finalReplicas).To(BeNumerically(">", int(initialReplicas)),
+				g.Expect(desiredReplicas).To(BeNumerically(">", int(initialReplicas)),
 					fmt.Sprintf("Should scale up from %d under load", initialReplicas))
 
 			}, 10*time.Minute, 10*time.Second).Should(Succeed())
@@ -435,14 +434,14 @@ enableLimiter: true`
 				}, va)
 				g.Expect(err).NotTo(HaveOccurred())
 
-				finalReplicas = va.Status.DesiredOptimizedAlloc.NumReplicas
+				desiredReplicas = va.Status.DesiredOptimizedAlloc.NumReplicas
 				_, _ = fmt.Fprintf(GinkgoWriter, "Checking DesiredOptimizedAlloc.NumReplicas=%d against max=%d\n",
-					finalReplicas, maxReplicasOnNode)
+					desiredReplicas, maxReplicasOnNode)
 
 				// Final replicas should not exceed max allowed by GPU capacity
-				g.Expect(finalReplicas).To(BeNumerically("<=", maxReplicasOnNode),
+				g.Expect(desiredReplicas).To(BeNumerically("<=", maxReplicasOnNode),
 					fmt.Sprintf("Final replicas %d should be less than or equal to max %d due to GPU limiter",
-						finalReplicas, maxReplicasOnNode))
+						desiredReplicas, maxReplicasOnNode))
 
 			}, 2*time.Minute, 10*time.Second).Should(Succeed())
 
