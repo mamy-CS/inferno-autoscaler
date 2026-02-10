@@ -45,8 +45,33 @@ type SaturationScalingConfig struct {
 	ScaleDownBoundary float64 `yaml:"scaleDownBoundary,omitempty"`
 }
 
+// GetAnalyzerName implements the AnalyzerConfig interface.
+func (c *SaturationScalingConfig) GetAnalyzerName() string {
+	return c.AnalyzerName
+}
+
+// V2 analyzer default thresholds, applied when fields are omitted from YAML config.
+const (
+	DefaultScaleUpThreshold  = 0.85
+	DefaultScaleDownBoundary = 0.70
+)
+
+// ApplyDefaults fills in zero-valued V2 fields with their defaults.
+// Must be called before Validate() to handle omitempty zero-values correctly.
+func (c *SaturationScalingConfig) ApplyDefaults() {
+	if c.AnalyzerName == "saturation" {
+		if c.ScaleUpThreshold == 0 {
+			c.ScaleUpThreshold = DefaultScaleUpThreshold
+		}
+		if c.ScaleDownBoundary == 0 {
+			c.ScaleDownBoundary = DefaultScaleDownBoundary
+		}
+	}
+}
+
 // Validate checks for invalid threshold values.
 // Returns error with descriptive message if validation fails.
+// Call ApplyDefaults() before Validate() to handle zero-valued omitempty fields.
 func (c *SaturationScalingConfig) Validate() error {
 	if c.KvCacheThreshold < 0 || c.KvCacheThreshold > 1 {
 		return fmt.Errorf("kvCacheThreshold must be between 0 and 1, got %.2f", c.KvCacheThreshold)
@@ -69,10 +94,10 @@ func (c *SaturationScalingConfig) Validate() error {
 	// V2 analyzer threshold validation
 	if c.AnalyzerName == "saturation" {
 		if c.ScaleUpThreshold <= 0 || c.ScaleUpThreshold > 1 {
-			return fmt.Errorf("scaleUpThreshold must be between 0 and 1 (exclusive/inclusive), got %.2f", c.ScaleUpThreshold)
+			return fmt.Errorf("scaleUpThreshold must be in (0, 1], got %.2f", c.ScaleUpThreshold)
 		}
 		if c.ScaleDownBoundary <= 0 || c.ScaleDownBoundary > 1 {
-			return fmt.Errorf("scaleDownBoundary must be between 0 and 1 (exclusive/inclusive), got %.2f", c.ScaleDownBoundary)
+			return fmt.Errorf("scaleDownBoundary must be in (0, 1], got %.2f", c.ScaleDownBoundary)
 		}
 		if c.ScaleUpThreshold <= c.ScaleDownBoundary {
 			return fmt.Errorf("scaleUpThreshold (%.2f) must be > scaleDownBoundary (%.2f)", c.ScaleUpThreshold, c.ScaleDownBoundary)

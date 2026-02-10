@@ -327,8 +327,20 @@ func (c *ReplicaMetricsCollector) CollectReplicaMetrics(
 		var totalKvCapacityTokens int64
 		var tokensInUse int64
 		if data.hasCacheConfig {
-			totalKvCapacityTokens = data.numGpuBlocks * data.blockSize
-			tokensInUse = int64(kvUsage * float64(totalKvCapacityTokens))
+			// Overflow-safe multiplication: check before computing
+			if data.numGpuBlocks > 0 && data.blockSize > math.MaxInt64/data.numGpuBlocks {
+				totalKvCapacityTokens = math.MaxInt64
+			} else {
+				totalKvCapacityTokens = data.numGpuBlocks * data.blockSize
+			}
+			// Use math.Round for accurate float-to-int conversion and clamp to valid range
+			rounded := math.Round(kvUsage * float64(totalKvCapacityTokens))
+			if rounded < 0 {
+				rounded = 0
+			} else if rounded > float64(totalKvCapacityTokens) {
+				rounded = float64(totalKvCapacityTokens)
+			}
+			tokensInUse = int64(rounded)
 		}
 
 		metric := interfaces.ReplicaMetrics{

@@ -43,11 +43,12 @@ func RegisterSaturationQueries(sourceRegistry *source.SourceRegistry) {
 	// --- V2 queries for token-based capacity analysis ---
 
 	// Cache config info per pod (static labels with block size and GPU blocks count)
+	// Uses max to deduplicate when multiple series exist per pod with different label combinations
 	// Used by Saturation Analyzer V2 for token capacity computation
 	registry.MustRegister(source.QueryTemplate{
 		Name:        QueryCacheConfigInfo,
 		Type:        source.QueryTypePromQL,
-		Template:    `vllm:cache_config_info{namespace="{{.namespace}}",model_name="{{.modelID}}"}`,
+		Template:    `max by (pod, num_gpu_blocks, block_size) (vllm:cache_config_info{namespace="{{.namespace}}",model_name="{{.modelID}}"})`,
 		Params:      []string{source.ParamNamespace, source.ParamModelID},
 		Description: "KV cache configuration info per pod (num_gpu_blocks and block_size as labels)",
 	})

@@ -21,13 +21,20 @@ type Analyzer interface {
 	Analyze(ctx context.Context, input AnalyzerInput) (*AnalyzerResult, error)
 }
 
+// AnalyzerConfig is the interface for analyzer-specific configuration.
+// Each analyzer defines its own config type that implements this interface.
+type AnalyzerConfig interface {
+	// GetAnalyzerName returns the name of the analyzer this config is for.
+	GetAnalyzerName() string
+}
+
 // AnalyzerInput is the common input provided to all analyzers.
 type AnalyzerInput struct {
 	ModelID        string
 	Namespace      string
 	ReplicaMetrics []ReplicaMetrics
 	VariantStates  []VariantReplicaState
-	Config         SaturationScalingConfig
+	Config         AnalyzerConfig
 }
 
 // AnalyzerResult is the common output produced by all analyzers.
