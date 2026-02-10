@@ -41,6 +41,15 @@ import (
 	v1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
 )
 
+// Shared test configuration constants
+const (
+	// Scale-to-zero ConfigMap name - used by both scale-to-zero and scale-from-zero tests.
+	// Scale-from-zero tests require this because they need the deployment to first scale TO zero
+	// (when idle) before testing scaling FROM zero (when requests arrive).
+	// Use config package constant to ensure consistency with controller expectations.
+	scaleToZeroConfigMapName = config.DefaultScaleToZeroConfigMapName
+)
+
 var (
 	controllerNamespace = getEnvString("CONTROLLER_NAMESPACE", "workload-variant-autoscaler-system")
 	monitoringNamespace = getEnvString("MONITORING_NAMESPACE", "openshift-user-workload-monitoring")

@@ -34,8 +34,6 @@ import (
 
 // Scale-to-zero test configuration
 const (
-	// Use config package constant to ensure consistency with controller expectations
-	scaleToZeroConfigMapName = config.DefaultScaleToZeroConfigMapName
 	// retentionPeriod for scale-to-zero tests
 	// Using a short period for faster test execution
 	retentionPeriod = "3m"

@@ -42,14 +42,6 @@ const (
 	scaleUpFromZeroTimeout = 5 * time.Minute
 	// Number of requests to send to trigger scale-from-zero
 	scaleFromZeroRequestCount = 10
-	// Scale-to-zero ConfigMap name - required for scale-from-zero tests because:
-	// 1. Scale-from-zero requires the deployment to first scale TO zero (when idle)
-	// 2. Then it tests scaling FROM zero (when requests arrive)
-	// 3. Without scale-to-zero enabled, the deployment never reaches 0 replicas, so
-	//    there's nothing to scale from. The test flow is: enable scale-to-zero →
-	//    wait for scale to zero → test scale from zero when requests arrive.
-	// Use config package constant to ensure consistency with controller expectations
-	scaleToZeroConfigMapName = config.DefaultScaleToZeroConfigMapName
 )
 
 var _ = Describe("Scale-From-Zero Test", Ordered, func() {
