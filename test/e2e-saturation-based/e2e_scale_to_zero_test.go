@@ -115,6 +115,10 @@ retention_period: %s`, modelName, retentionPeriodShort),
 		_, err = k8sClient.CoreV1().ConfigMaps(controllerNamespace).Create(ctx, scaleToZeroCM, metav1.CreateOptions{})
 		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to create scale-to-zero ConfigMap: %s", scaleToZeroConfigMapName))
 
+		// Update MinimumReplicas to 0 since scale-to-zero is explicitly enabled in this test
+		// (via the model-scale-to-zero-config ConfigMap created above).
+		MinimumReplicas = 0
+
 		By("ensuring unique app label for deployment and service")
 		utils.ValidateAppLabelUniqueness(namespace, appLabel, k8sClient, crClient)
 		utils.ValidateVariantAutoscalingUniqueness(namespace, modelName, a100Acc, crClient)
