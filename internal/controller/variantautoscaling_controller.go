@@ -39,7 +39,7 @@ import (
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/config"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/datastore"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/common"
-
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/indexers"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/utils"
 )
