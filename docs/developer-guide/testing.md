@@ -227,10 +227,10 @@ See [Multi-Controller Isolation](../user-guide/multi-controller-isolation.md) fo
 
 ### OpenShift E2E Tests
 
-**Purpose**: Real-world validation with actual vLLM deployments
-**Location**: `test/e2e-openshift/`
-**Environment**: OpenShift cluster with GPU hardware
-**Duration**: ~30-45 minutes (depending on cluster and load)
+- **Purpose**: Real-world validation with actual vLLM deployments
+- **Location**: `test/e2e-openshift/`
+- **Environment**: OpenShift cluster with GPU hardware
+- **Duration**: ~30-45 minutes (depending on cluster and load)
 
 #### Quick Start
 
