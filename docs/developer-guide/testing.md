@@ -139,10 +139,10 @@ WVA provides two E2E test suites for different testing scenarios.
 
 ### Saturation-Based E2E Tests (Kind)
 
-**Purpose**: Fast, isolated testing with emulated infrastructure
-**Location**: `test/e2e-saturation-based/`
-**Environment**: Local Kind cluster with GPU emulation
-**Duration**: ~15-25 minutes
+- **Purpose**: Fast, isolated testing with emulated infrastructure
+- **Location**: `test/e2e-saturation-based/`
+- **Environment**: Local Kind cluster with GPU emulation
+- **Duration**: ~15-25 minutes
 
 #### Quick Start
 
