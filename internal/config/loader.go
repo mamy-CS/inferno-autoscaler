@@ -51,24 +51,11 @@ const (
 // Precedence: flags > env > ConfigMap > defaults
 // Returns error if required configuration is missing or invalid (fail-fast).
 func Load(ctx context.Context, flags StaticConfigFlags, k8sClient client.Client) (*Config, error) {
-	cfg := &Config{
-		// Initialize cache to avoid nil checks
-		cache: configCache{
-			saturationCache:            make(map[string]map[string]interfaces.SaturationScalingConfig),
-			scaleToZeroCache:           make(map[string]ScaleToZeroConfigData),
-			optimizationIntervalCache:  nil,
-			prometheusCacheConfigCache: nil,
-		},
-	}
+	cfg := &Config{}
 
-	// 1. Load static config (flags > env > ConfigMap > defaults)
-	if err := loadStaticConfig(ctx, &cfg.Static, flags, k8sClient); err != nil {
-		return nil, fmt.Errorf("failed to load static config: %w", err)
-	}
-
-	// 2. Load initial dynamic config (ConfigMap > defaults)
-	if err := loadDynamicConfig(ctx, &cfg.Dynamic, k8sClient); err != nil {
-		return nil, fmt.Errorf("failed to load dynamic config: %w", err)
+	// Load configuration (flags > env > ConfigMap > defaults)
+	if err := loadConfig(ctx, cfg, flags, k8sClient); err != nil {
+		return nil, fmt.Errorf("failed to load config: %w", err)
 	}
 
 	// 3. Validate required configuration (fail-fast)
@@ -80,27 +67,55 @@ func Load(ctx context.Context, flags StaticConfigFlags, k8sClient client.Client)
 	return cfg, nil
 }
 
-// loadStaticConfig loads static configuration with precedence: flags > env > ConfigMap > defaults
-func loadStaticConfig(ctx context.Context, static *StaticConfig, flags StaticConfigFlags, k8sClient client.Client) error {
+// loadConfig loads configuration with precedence: flags > env > ConfigMap > defaults
+func loadConfig(ctx context.Context, cfg *Config, flags StaticConfigFlags, k8sClient client.Client) error {
+	cfg.mu.Lock()
+	defer cfg.mu.Unlock()
+
 	// Initialize with defaults
-	*static = StaticConfig{
-		MetricsAddr:          "0", // Disable by default
-		ProbeAddr:            ":8081",
-		EnableLeaderElection: false,
-		LeaderElectionID:     "72dd1cf1.llm-d.ai",
-		LeaseDuration:        60 * time.Second,
-		RenewDeadline:        50 * time.Second,
-		RetryPeriod:          10 * time.Second,
-		RestTimeout:          60 * time.Second,
-		SecureMetrics:        true,
-		EnableHTTP2:          false,
-		WatchNamespace:       "",
-		LoggerVerbosity:      0,
-		WebhookCertName:      "tls.crt",
-		WebhookCertKey:       "tls.key",
-		MetricsCertName:      "tls.crt",
-		MetricsCertKey:       "tls.key",
+	cfg.infrastructure = infrastructureConfig{
+		metricsAddr:          "0", // Disable by default
+		probeAddr:            ":8081",
+		enableLeaderElection: false,
+		leaderElectionID:     "72dd1cf1.llm-d.ai",
+		leaseDuration:        60 * time.Second,
+		renewDeadline:        50 * time.Second,
+		retryPeriod:          10 * time.Second,
+		restTimeout:          60 * time.Second,
+		secureMetrics:        true,
+		enableHTTP2:          false,
+		watchNamespace:       "",
+		loggerVerbosity:      0,
 	}
+
+	cfg.tls = tlsConfig{
+		webhookCertName: "tls.crt",
+		webhookCertKey:  "tls.key",
+		metricsCertName: "tls.crt",
+		metricsCertKey:  "tls.key",
+	}
+
+	cfg.optimization = optimizationConfig{
+		interval: defaultOptimizationInterval,
+	}
+
+	cfg.features = featureFlagsConfig{
+		scaleToZeroEnabled:          false,
+		limitedModeEnabled:          false,
+		scaleFromZeroMaxConcurrency: 10,
+	}
+
+	cfg.saturation = saturationConfig{
+		global:           make(map[string]interfaces.SaturationScalingConfig),
+		namespaceConfigs: make(map[string]map[string]interfaces.SaturationScalingConfig),
+	}
+
+	cfg.scaleToZero = scaleToZeroConfig{
+		global:           make(ScaleToZeroConfigData),
+		namespaceConfigs: make(map[string]ScaleToZeroConfigData),
+	}
+
+	cfg.prometheus.cache = defaultPrometheusCacheConfig()
 
 	// Load from ConfigMap (if available)
 	var cmData map[string]string
@@ -109,38 +124,41 @@ func loadStaticConfig(ctx context.Context, static *StaticConfig, flags StaticCon
 	cmNamespace := Namespace()
 	if err := utils.GetConfigMapWithBackoff(ctx, k8sClient, cmName, cmNamespace, cm); err == nil {
 		cmData = cm.Data
-		ctrl.Log.Info("Loaded ConfigMap for static config", "name", cmName, "namespace", cmNamespace)
+		ctrl.Log.Info("Loaded ConfigMap for config", "name", cmName, "namespace", cmNamespace)
 	} else {
 		ctrl.Log.Info("ConfigMap not found, using defaults and flags", "name", cmName, "namespace", cmNamespace, "error", err)
 		cmData = make(map[string]string)
 	}
 
 	// Apply precedence: flags > env > ConfigMap > defaults
-	// Infrastructure settings (CLI flags take precedence)
-	static.MetricsAddr = getStringValue(flags.MetricsAddr, os.Getenv("METRICS_BIND_ADDRESS"), cmData["METRICS_BIND_ADDRESS"], static.MetricsAddr)
-	static.ProbeAddr = getStringValue(flags.ProbeAddr, os.Getenv("HEALTH_PROBE_BIND_ADDRESS"), cmData["HEALTH_PROBE_BIND_ADDRESS"], static.ProbeAddr)
-	static.EnableLeaderElection = getBoolValue(flags.EnableLeaderElection, parseBoolEnv("LEADER_ELECT"), ParseBoolFromConfig(cmData, "LEADER_ELECT", static.EnableLeaderElection))
-	static.LeaderElectionID = getStringValue(flags.LeaderElectionID, os.Getenv("LEADER_ELECTION_ID"), cmData["LEADER_ELECTION_ID"], static.LeaderElectionID)
-	// Parse duration from ConfigMap (returns nil if key doesn't exist or is invalid)
+	// Infrastructure settings
+	cfg.infrastructure.metricsAddr = getStringValue(flags.MetricsAddr, os.Getenv("METRICS_BIND_ADDRESS"), cmData["METRICS_BIND_ADDRESS"], cfg.infrastructure.metricsAddr)
+	cfg.infrastructure.probeAddr = getStringValue(flags.ProbeAddr, os.Getenv("HEALTH_PROBE_BIND_ADDRESS"), cmData["HEALTH_PROBE_BIND_ADDRESS"], cfg.infrastructure.probeAddr)
+	cfg.infrastructure.enableLeaderElection = getBoolValue(flags.EnableLeaderElection, parseBoolEnv("LEADER_ELECT"), ParseBoolFromConfig(cmData, "LEADER_ELECT", cfg.infrastructure.enableLeaderElection))
+	cfg.infrastructure.leaderElectionID = getStringValue(flags.LeaderElectionID, os.Getenv("LEADER_ELECTION_ID"), cmData["LEADER_ELECTION_ID"], cfg.infrastructure.leaderElectionID)
+
+	// Parse duration from ConfigMap
 	leaseDurationCM, _ := parseDurationFromConfigWithExists(cmData, "LEADER_ELECTION_LEASE_DURATION")
 	renewDeadlineCM, _ := parseDurationFromConfigWithExists(cmData, "LEADER_ELECTION_RENEW_DEADLINE")
 	retryPeriodCM, _ := parseDurationFromConfigWithExists(cmData, "LEADER_ELECTION_RETRY_PERIOD")
 	restTimeoutCM, _ := parseDurationFromConfigWithExists(cmData, "REST_CLIENT_TIMEOUT")
 
-	static.LeaseDuration = getDurationValue(flags.LeaseDuration, parseDurationEnv("LEADER_ELECTION_LEASE_DURATION"), leaseDurationCM, static.LeaseDuration)
-	static.RenewDeadline = getDurationValue(flags.RenewDeadline, parseDurationEnv("LEADER_ELECTION_RENEW_DEADLINE"), renewDeadlineCM, static.RenewDeadline)
-	static.RetryPeriod = getDurationValue(flags.RetryPeriod, parseDurationEnv("LEADER_ELECTION_RETRY_PERIOD"), retryPeriodCM, static.RetryPeriod)
-	static.RestTimeout = getDurationValue(flags.RestTimeout, parseDurationEnv("REST_CLIENT_TIMEOUT"), restTimeoutCM, static.RestTimeout)
-	static.SecureMetrics = getBoolValue(flags.SecureMetrics, parseBoolEnv("METRICS_SECURE"), ParseBoolFromConfig(cmData, "METRICS_SECURE", static.SecureMetrics))
-	static.EnableHTTP2 = getBoolValue(flags.EnableHTTP2, parseBoolEnv("ENABLE_HTTP2"), ParseBoolFromConfig(cmData, "ENABLE_HTTP2", static.EnableHTTP2))
-	static.WatchNamespace = getStringValue(flags.WatchNamespace, os.Getenv("WATCH_NAMESPACE"), cmData["WATCH_NAMESPACE"], static.WatchNamespace)
-	static.LoggerVerbosity = getIntValue(flags.LoggerVerbosity, parseIntEnv("V"), ParseIntFromConfig(cmData, "V", static.LoggerVerbosity, 0))
-	static.WebhookCertPath = getStringValue(flags.WebhookCertPath, os.Getenv("WEBHOOK_CERT_PATH"), cmData["WEBHOOK_CERT_PATH"], static.WebhookCertPath)
-	static.WebhookCertName = getStringValue(flags.WebhookCertName, os.Getenv("WEBHOOK_CERT_NAME"), cmData["WEBHOOK_CERT_NAME"], static.WebhookCertName)
-	static.WebhookCertKey = getStringValue(flags.WebhookCertKey, os.Getenv("WEBHOOK_CERT_KEY"), cmData["WEBHOOK_CERT_KEY"], static.WebhookCertKey)
-	static.MetricsCertPath = getStringValue(flags.MetricsCertPath, os.Getenv("METRICS_CERT_PATH"), cmData["METRICS_CERT_PATH"], static.MetricsCertPath)
-	static.MetricsCertName = getStringValue(flags.MetricsCertName, os.Getenv("METRICS_CERT_NAME"), cmData["METRICS_CERT_NAME"], static.MetricsCertName)
-	static.MetricsCertKey = getStringValue(flags.MetricsCertKey, os.Getenv("METRICS_CERT_KEY"), cmData["METRICS_CERT_KEY"], static.MetricsCertKey)
+	cfg.infrastructure.leaseDuration = getDurationValue(flags.LeaseDuration, parseDurationEnv("LEADER_ELECTION_LEASE_DURATION"), leaseDurationCM, cfg.infrastructure.leaseDuration)
+	cfg.infrastructure.renewDeadline = getDurationValue(flags.RenewDeadline, parseDurationEnv("LEADER_ELECTION_RENEW_DEADLINE"), renewDeadlineCM, cfg.infrastructure.renewDeadline)
+	cfg.infrastructure.retryPeriod = getDurationValue(flags.RetryPeriod, parseDurationEnv("LEADER_ELECTION_RETRY_PERIOD"), retryPeriodCM, cfg.infrastructure.retryPeriod)
+	cfg.infrastructure.restTimeout = getDurationValue(flags.RestTimeout, parseDurationEnv("REST_CLIENT_TIMEOUT"), restTimeoutCM, cfg.infrastructure.restTimeout)
+	cfg.infrastructure.secureMetrics = getBoolValue(flags.SecureMetrics, parseBoolEnv("METRICS_SECURE"), ParseBoolFromConfig(cmData, "METRICS_SECURE", cfg.infrastructure.secureMetrics))
+	cfg.infrastructure.enableHTTP2 = getBoolValue(flags.EnableHTTP2, parseBoolEnv("ENABLE_HTTP2"), ParseBoolFromConfig(cmData, "ENABLE_HTTP2", cfg.infrastructure.enableHTTP2))
+	cfg.infrastructure.watchNamespace = getStringValue(flags.WatchNamespace, os.Getenv("WATCH_NAMESPACE"), cmData["WATCH_NAMESPACE"], cfg.infrastructure.watchNamespace)
+	cfg.infrastructure.loggerVerbosity = getIntValue(flags.LoggerVerbosity, parseIntEnv("V"), ParseIntFromConfig(cmData, "V", cfg.infrastructure.loggerVerbosity, 0))
+
+	// TLS settings
+	cfg.tls.webhookCertPath = getStringValue(flags.WebhookCertPath, os.Getenv("WEBHOOK_CERT_PATH"), cmData["WEBHOOK_CERT_PATH"], cfg.tls.webhookCertPath)
+	cfg.tls.webhookCertName = getStringValue(flags.WebhookCertName, os.Getenv("WEBHOOK_CERT_NAME"), cmData["WEBHOOK_CERT_NAME"], cfg.tls.webhookCertName)
+	cfg.tls.webhookCertKey = getStringValue(flags.WebhookCertKey, os.Getenv("WEBHOOK_CERT_KEY"), cmData["WEBHOOK_CERT_KEY"], cfg.tls.webhookCertKey)
+	cfg.tls.metricsCertPath = getStringValue(flags.MetricsCertPath, os.Getenv("METRICS_CERT_PATH"), cmData["METRICS_CERT_PATH"], cfg.tls.metricsCertPath)
+	cfg.tls.metricsCertName = getStringValue(flags.MetricsCertName, os.Getenv("METRICS_CERT_NAME"), cmData["METRICS_CERT_NAME"], cfg.tls.metricsCertName)
+	cfg.tls.metricsCertKey = getStringValue(flags.MetricsCertKey, os.Getenv("METRICS_CERT_KEY"), cmData["METRICS_CERT_KEY"], cfg.tls.metricsCertKey)
 
 	// Load Prometheus config (required) - env > ConfigMap
 	promConfig, err := GetPrometheusConfig(ctx, k8sClient)
@@ -150,73 +168,59 @@ func loadStaticConfig(ctx context.Context, static *StaticConfig, flags StaticCon
 	if promConfig == nil {
 		return fmt.Errorf("prometheus configuration is required but not found. set PROMETHEUS_BASE_URL environment variable or configure via ConfigMap")
 	}
-	static.Prometheus = promConfig
+	cfg.prometheus.baseURL = promConfig.BaseURL
+	cfg.prometheus.bearerToken = promConfig.BearerToken
+	cfg.prometheus.tokenPath = promConfig.TokenPath
+	cfg.prometheus.insecureSkipVerify = promConfig.InsecureSkipVerify
+	cfg.prometheus.caCertPath = promConfig.CACertPath
+	cfg.prometheus.clientCertPath = promConfig.ClientCertPath
+	cfg.prometheus.clientKeyPath = promConfig.ClientKeyPath
+	cfg.prometheus.serverName = promConfig.ServerName
 
 	// Load feature flags from ConfigMap
-	// Check both ConfigMap and environment variable (for backwards compatibility with main branch behavior)
-	// Main branch checked os.Getenv("WVA_SCALE_TO_ZERO") directly, so we need to preserve that behavior
-	static.ScaleToZeroEnabled = ParseBoolFromConfig(cmData, "WVA_SCALE_TO_ZERO", false) ||
+	cfg.features.scaleToZeroEnabled = ParseBoolFromConfig(cmData, "WVA_SCALE_TO_ZERO", false) ||
 		strings.EqualFold(os.Getenv("WVA_SCALE_TO_ZERO"), "true")
-	static.LimitedModeEnabled = ParseBoolFromConfig(cmData, "WVA_LIMITED_MODE", false)
-	static.ScaleFromZeroMaxConcurrency = ParseIntFromConfig(cmData, "SCALE_FROM_ZERO_ENGINE_MAX_CONCURRENCY", 10, 1)
+	cfg.features.limitedModeEnabled = ParseBoolFromConfig(cmData, "WVA_LIMITED_MODE", false)
+	cfg.features.scaleFromZeroMaxConcurrency = ParseIntFromConfig(cmData, "SCALE_FROM_ZERO_ENGINE_MAX_CONCURRENCY", 10, 1)
 
-	// EPP configuration (env/ConfigMap)
-	if static.EPPConfig == nil {
-		static.EPPConfig = &EPPConfig{}
-	}
-	static.EPPConfig.MetricReaderBearerToken = getStringValue("", os.Getenv("EPP_METRIC_READER_BEARER_TOKEN"), cmData["EPP_METRIC_READER_BEARER_TOKEN"], "")
+	// EPP configuration
+	cfg.epp.metricReaderBearerToken = getStringValue("", os.Getenv("EPP_METRIC_READER_BEARER_TOKEN"), cmData["EPP_METRIC_READER_BEARER_TOKEN"], "")
 
-	return nil
+	// Load dynamic config
+	return loadDynamicConfigNew(ctx, cfg, k8sClient)
 }
 
-// loadDynamicConfig loads dynamic configuration from ConfigMap with defaults as fallback
-func loadDynamicConfig(ctx context.Context, dynamic *DynamicConfig, k8sClient client.Client) error {
-	// Initialize with defaults
-	*dynamic = DynamicConfig{
-		OptimizationInterval: defaultOptimizationInterval,
-		PrometheusCache:      defaultPrometheusCacheConfig(),
-		Global: &NamespaceConfig{
-			SaturationConfig:  make(map[string]interfaces.SaturationScalingConfig),
-			ScaleToZeroConfig: make(ScaleToZeroConfigData),
-		},
-		NamespaceConfigs: make(map[string]*NamespaceConfig),
-	}
-
-	// Load main ConfigMap
+// loadDynamicConfigNew loads dynamic configuration
+func loadDynamicConfigNew(ctx context.Context, cfg *Config, k8sClient client.Client) error {
+	// Load optimization interval
 	cm := &corev1.ConfigMap{}
 	cmName := ConfigMapName()
 	cmNamespace := Namespace()
-	if err := utils.GetConfigMapWithBackoff(ctx, k8sClient, cmName, cmNamespace, cm); err != nil {
-		ctrl.Log.Info("ConfigMap not found for dynamic config, using defaults", "name", cmName, "namespace", cmNamespace, "error", err)
-		// Continue to load other ConfigMaps even if main ConfigMap is not found
-	}
-
-	// Load optimization interval
-	if intervalStr, ok := cm.Data["GLOBAL_OPT_INTERVAL"]; ok {
-		if interval, err := time.ParseDuration(intervalStr); err == nil {
-			dynamic.OptimizationInterval = interval
-		} else {
-			ctrl.Log.Info("Invalid GLOBAL_OPT_INTERVAL, using default", "value", intervalStr, "error", err)
+	if err := utils.GetConfigMapWithBackoff(ctx, k8sClient, cmName, cmNamespace, cm); err == nil {
+		if intervalStr, ok := cm.Data["GLOBAL_OPT_INTERVAL"]; ok {
+			if interval, err := time.ParseDuration(intervalStr); err == nil {
+				cfg.optimization.interval = interval
+			} else {
+				ctrl.Log.Info("Invalid GLOBAL_OPT_INTERVAL, using default", "value", intervalStr, "error", err)
+			}
 		}
 	}
 
 	// Load Prometheus cache config
 	if cacheConfig, err := ReadPrometheusCacheConfig(ctx, k8sClient); err == nil && cacheConfig != nil {
-		dynamic.PrometheusCache = cacheConfig
+		cfg.prometheus.cache = cacheConfig
 	}
 
 	// Load scale-to-zero config (global)
 	scaleToZeroCM := &corev1.ConfigMap{}
 	scaleToZeroCMName := DefaultScaleToZeroConfigMapName
-	// Use GetConfigMapWithBackoff which handles both fake clients (in tests) and real clients (in production)
 	if err := utils.GetConfigMapWithBackoff(ctx, k8sClient, scaleToZeroCMName, cmNamespace, scaleToZeroCM); err == nil {
-		dynamic.Global.ScaleToZeroConfig = ParseScaleToZeroConfigMap(scaleToZeroCM.Data)
+		cfg.scaleToZero.global = ParseScaleToZeroConfigMap(scaleToZeroCM.Data)
 	}
 
 	// Load saturation scaling config (global)
 	saturationCM := &corev1.ConfigMap{}
 	saturationCMName := SaturationConfigMapName()
-	// Use GetConfigMapWithBackoff which handles both fake clients (in tests) and real clients (in production)
 	if err := utils.GetConfigMapWithBackoff(ctx, k8sClient, saturationCMName, cmNamespace, saturationCM); err == nil {
 		configs := make(map[string]interfaces.SaturationScalingConfig)
 		for key, yamlStr := range saturationCM.Data {
@@ -233,7 +237,7 @@ func loadDynamicConfig(ctx context.Context, dynamic *DynamicConfig, k8sClient cl
 			configs[key] = satConfig
 		}
 		if len(configs) > 0 {
-			dynamic.Global.SaturationConfig = configs
+			cfg.saturation.global = configs
 			ctrl.Log.Info("Loaded saturation scaling config", "entries", len(configs))
 		}
 	}

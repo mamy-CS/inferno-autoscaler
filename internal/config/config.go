@@ -1,152 +1,419 @@
 package config
 
 import (
+	"context"
+	"fmt"
+	"os"
 	"sync"
 	"time"
 
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	interfaces "github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
 )
 
-// configCache holds typed caches for all configuration lookups.
-// This avoids unsafe type assertions and provides better type safety.
-type configCache struct {
-	// saturationCache caches saturation config per namespace
-	// Key: namespace (empty string for global)
-	saturationCache map[string]map[string]interfaces.SaturationScalingConfig
+// Config is the unified configuration structure for the WVA controller.
+// All fields are private and accessed via thread-safe getter methods.
+type Config struct {
+	mu sync.RWMutex // Single mutex for all mutable fields
 
-	// scaleToZeroCache caches scale-to-zero config per namespace
-	// Key: namespace (empty string for global)
-	scaleToZeroCache map[string]ScaleToZeroConfigData
-
-	// optimizationIntervalCache caches the optimization interval (single value, not namespace-keyed)
-	optimizationIntervalCache *time.Duration
-
-	// prometheusCacheConfigCache caches the Prometheus cache config (single value, not namespace-keyed)
-	prometheusCacheConfigCache *CacheConfig
+	infrastructure infrastructureConfig
+	tls            tlsConfig
+	prometheus     prometheusConfig
+	epp            eppConfig
+	optimization   optimizationConfig
+	features       featureFlagsConfig
+	saturation     saturationConfig  // namespace-aware
+	scaleToZero    scaleToZeroConfig // namespace-aware
 }
 
-// Config is the unified configuration structure for the WVA controller.
-// It contains both static (immutable after startup) and dynamic (runtime-updatable) configuration.
-type Config struct {
-	// Static configuration (immutable after startup)
-	Static StaticConfig
+// infrastructureConfig holds server/controller infrastructure settings
+type infrastructureConfig struct {
+	metricsAddr          string
+	probeAddr            string
+	enableLeaderElection bool
+	leaderElectionID     string
+	leaseDuration        time.Duration
+	renewDeadline        time.Duration
+	retryPeriod          time.Duration
+	restTimeout          time.Duration
+	secureMetrics        bool
+	enableHTTP2          bool
+	watchNamespace       string
+	loggerVerbosity      int
+}
 
-	// Dynamic configuration (can be updated via ConfigMap changes)
-	// Protected by mutex for thread-safe updates
-	mu      sync.RWMutex
-	Dynamic DynamicConfig
+// tlsConfig holds TLS certificate paths
+type tlsConfig struct {
+	webhookCertPath string
+	webhookCertName string
+	webhookCertKey  string
+	metricsCertPath string
+	metricsCertName string
+	metricsCertKey  string
+}
 
-	// Cache for expensive namespace-aware config lookups
-	// Always initialized (never nil) to avoid nil checks
-	cache configCache
+// prometheusConfig holds all Prometheus-related configuration
+// (both connection settings and cache config)
+type prometheusConfig struct {
+	// Immutable (set at startup)
+	baseURL            string
+	bearerToken        string
+	tokenPath          string
+	insecureSkipVerify bool
+	caCertPath         string
+	clientCertPath     string
+	clientKeyPath      string
+	serverName         string
+
+	// Mutable (can change at runtime)
+	cache *CacheConfig
+}
+
+// eppConfig holds EPP (Endpoint Pool) integration configuration
+type eppConfig struct {
+	metricReaderBearerToken string
+}
+
+// optimizationConfig holds optimization settings
+type optimizationConfig struct {
+	interval time.Duration
+}
+
+// featureFlagsConfig holds feature flags
+type featureFlagsConfig struct {
+	scaleToZeroEnabled          bool
+	limitedModeEnabled          bool
+	scaleFromZeroMaxConcurrency int
+}
+
+// saturationConfig holds saturation scaling configuration (namespace-aware)
+type saturationConfig struct {
+	// Global default configuration
+	global map[string]interfaces.SaturationScalingConfig
+
+	// Namespace-local configuration overrides (keyed by namespace name)
+	namespaceConfigs map[string]map[string]interfaces.SaturationScalingConfig
+}
+
+// scaleToZeroConfig holds scale-to-zero configuration (namespace-aware)
+type scaleToZeroConfig struct {
+	// Global default configuration
+	global ScaleToZeroConfigData
+
+	// Namespace-local configuration overrides (keyed by namespace name)
+	namespaceConfigs map[string]ScaleToZeroConfigData
 }
 
 // StaticConfig holds configuration that is immutable after startup.
 // These settings are loaded once at startup and cannot be changed at runtime.
-type StaticConfig struct {
-	// Infrastructure settings (CLI flags)
-	MetricsAddr          string // Metrics bind address (e.g., ":8443", "0" to disable)
-	ProbeAddr            string // Health probe bind address (e.g., ":8081")
-	EnableLeaderElection bool   // Whether leader election is enabled
-	LeaderElectionID     string // Leader election ID
-	LeaseDuration        time.Duration
-	RenewDeadline        time.Duration
-	RetryPeriod          time.Duration
-	RestTimeout          time.Duration
-	SecureMetrics        bool   // Whether metrics endpoint uses HTTPS
-	EnableHTTP2          bool   // Whether HTTP/2 is enabled
-	WatchNamespace       string // Namespace to watch (empty = all namespaces)
-	LoggerVerbosity      int    // Logger verbosity level
-
-	// TLS certificate paths
-	WebhookCertPath string
-	WebhookCertName string
-	WebhookCertKey  string
-	MetricsCertPath string
-	MetricsCertName string
-	MetricsCertKey  string
-
-	// Connection settings (ConfigMap)
-	Prometheus *interfaces.PrometheusConfig // Prometheus connection config (required)
-	EPPConfig  *EPPConfig                   // EPP integration config (optional)
-
-	// Feature flags (ConfigMap)
-	ScaleToZeroEnabled          bool // WVA_SCALE_TO_ZERO feature flag
-	LimitedModeEnabled          bool // WVA_LIMITED_MODE feature flag
-	ScaleFromZeroMaxConcurrency int  // SCALE_FROM_ZERO_ENGINE_MAX_CONCURRENCY
-}
-
 // EPPConfig holds EPP (Endpoint Pool) integration configuration.
 type EPPConfig struct {
 	// EPP metric reader bearer token for pod scraping
 	MetricReaderBearerToken string // EPP_METRIC_READER_BEARER_TOKEN
 }
 
-// NamespaceConfig holds configuration for a specific namespace.
-// This structure is used both for global defaults and namespace-local overrides.
-//
-// NamespaceConfig is exported for use in DynamicConfig and testing. Production code should
-// use the resolved getter methods (e.g., SaturationConfigForNamespace, ScaleToZeroConfigForNamespace)
-// rather than accessing NamespaceConfig directly. These getters handle namespace-local resolution
-// and thread-safe access automatically.
-type NamespaceConfig struct {
-	// Saturation scaling configuration (per-accelerator)
-	SaturationConfig map[string]interfaces.SaturationScalingConfig
+// ============================================================================
+// Infrastructure Getters (thread-safe)
+// ============================================================================
 
-	// Scale-to-zero configuration (per-model)
-	ScaleToZeroConfig ScaleToZeroConfigData
+// MetricsAddr returns the metrics bind address.
+// Thread-safe.
+func (c *Config) MetricsAddr() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.infrastructure.metricsAddr
 }
 
-// DynamicConfig holds configuration that can be updated at runtime via ConfigMap changes.
-// All access must be protected by the Config's mutex.
-//
-// The structure supports namespace-local ConfigMap overrides:
-// - Global: Default configuration used when no namespace-local override exists
-// - NamespaceConfigs: Per-namespace overrides (keyed by namespace name)
-//
-// Resolution order: namespace-local > global
-type DynamicConfig struct {
-	// Optimization settings (global only, not namespace-specific)
-	OptimizationInterval time.Duration // GLOBAL_OPT_INTERVAL
-
-	// Prometheus metrics cache configuration (global only, not namespace-specific)
-	PrometheusCache *CacheConfig
-
-	// Global default configuration (used when namespace-local override doesn't exist)
-	Global *NamespaceConfig
-
-	// Namespace-local configuration overrides (keyed by namespace name)
-	// Only populated when namespace-local ConfigMaps are detected
-	NamespaceConfigs map[string]*NamespaceConfig
+// ProbeAddr returns the health probe bind address.
+// Thread-safe.
+func (c *Config) ProbeAddr() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.infrastructure.probeAddr
 }
+
+// EnableLeaderElection returns whether leader election is enabled.
+// Thread-safe.
+func (c *Config) EnableLeaderElection() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.infrastructure.enableLeaderElection
+}
+
+// LeaderElectionID returns the leader election ID.
+// Thread-safe.
+func (c *Config) LeaderElectionID() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.infrastructure.leaderElectionID
+}
+
+// LeaseDuration returns the leader election lease duration.
+// Thread-safe.
+func (c *Config) LeaseDuration() time.Duration {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.infrastructure.leaseDuration
+}
+
+// RenewDeadline returns the leader election renew deadline.
+// Thread-safe.
+func (c *Config) RenewDeadline() time.Duration {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.infrastructure.renewDeadline
+}
+
+// RetryPeriod returns the leader election retry period.
+// Thread-safe.
+func (c *Config) RetryPeriod() time.Duration {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.infrastructure.retryPeriod
+}
+
+// RestTimeout returns the REST client timeout.
+// Thread-safe.
+func (c *Config) RestTimeout() time.Duration {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.infrastructure.restTimeout
+}
+
+// SecureMetrics returns whether metrics endpoint uses HTTPS.
+// Thread-safe.
+func (c *Config) SecureMetrics() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.infrastructure.secureMetrics
+}
+
+// EnableHTTP2 returns whether HTTP/2 is enabled.
+// Thread-safe.
+func (c *Config) EnableHTTP2() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.infrastructure.enableHTTP2
+}
+
+// WatchNamespace returns the namespace to watch (empty = all namespaces).
+// Thread-safe.
+func (c *Config) WatchNamespace() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.infrastructure.watchNamespace
+}
+
+// LoggerVerbosity returns the logger verbosity level.
+// Thread-safe.
+func (c *Config) LoggerVerbosity() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.infrastructure.loggerVerbosity
+}
+
+// ============================================================================
+// TLS Getters (thread-safe)
+// ============================================================================
+
+// WebhookCertPath returns the webhook certificate path.
+// Thread-safe.
+func (c *Config) WebhookCertPath() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.tls.webhookCertPath
+}
+
+// WebhookCertName returns the webhook certificate name.
+// Thread-safe.
+func (c *Config) WebhookCertName() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.tls.webhookCertName
+}
+
+// WebhookCertKey returns the webhook certificate key.
+// Thread-safe.
+func (c *Config) WebhookCertKey() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.tls.webhookCertKey
+}
+
+// MetricsCertPath returns the metrics certificate path.
+// Thread-safe.
+func (c *Config) MetricsCertPath() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.tls.metricsCertPath
+}
+
+// MetricsCertName returns the metrics certificate name.
+// Thread-safe.
+func (c *Config) MetricsCertName() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.tls.metricsCertName
+}
+
+// MetricsCertKey returns the metrics certificate key.
+// Thread-safe.
+func (c *Config) MetricsCertKey() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.tls.metricsCertKey
+}
+
+// ============================================================================
+// Prometheus Getters (thread-safe)
+// ============================================================================
+
+// PrometheusBaseURL returns the Prometheus base URL.
+// Thread-safe.
+func (c *Config) PrometheusBaseURL() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.prometheus.baseURL
+}
+
+// PrometheusBearerToken returns the Prometheus bearer token.
+// Thread-safe.
+func (c *Config) PrometheusBearerToken() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.prometheus.bearerToken
+}
+
+// PrometheusTokenPath returns the Prometheus token path.
+// Thread-safe.
+func (c *Config) PrometheusTokenPath() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.prometheus.tokenPath
+}
+
+// PrometheusInsecureSkipVerify returns whether to skip TLS verification.
+// Thread-safe.
+func (c *Config) PrometheusInsecureSkipVerify() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.prometheus.insecureSkipVerify
+}
+
+// PrometheusCACertPath returns the Prometheus CA certificate path.
+// Thread-safe.
+func (c *Config) PrometheusCACertPath() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.prometheus.caCertPath
+}
+
+// PrometheusClientCertPath returns the Prometheus client certificate path.
+// Thread-safe.
+func (c *Config) PrometheusClientCertPath() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.prometheus.clientCertPath
+}
+
+// PrometheusClientKeyPath returns the Prometheus client key path.
+// Thread-safe.
+func (c *Config) PrometheusClientKeyPath() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.prometheus.clientKeyPath
+}
+
+// PrometheusServerName returns the Prometheus server name.
+// Thread-safe.
+func (c *Config) PrometheusServerName() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.prometheus.serverName
+}
+
+// PrometheusCacheConfig returns the current Prometheus cache configuration.
+// Thread-safe. Returns a copy to prevent external modifications.
+func (c *Config) PrometheusCacheConfig() *CacheConfig {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.prometheus.cache == nil {
+		return nil
+	}
+	// Return a copy to prevent external modifications
+	cp := *c.prometheus.cache
+	return &cp
+}
+
+// Prometheus returns the full Prometheus configuration as an interfaces.PrometheusConfig.
+// Thread-safe. Returns a copy to prevent external modifications.
+func (c *Config) Prometheus() *interfaces.PrometheusConfig {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return &interfaces.PrometheusConfig{
+		BaseURL:            c.prometheus.baseURL,
+		BearerToken:        c.prometheus.bearerToken,
+		TokenPath:          c.prometheus.tokenPath,
+		InsecureSkipVerify: c.prometheus.insecureSkipVerify,
+		CACertPath:         c.prometheus.caCertPath,
+		ClientCertPath:     c.prometheus.clientCertPath,
+		ClientKeyPath:      c.prometheus.clientKeyPath,
+		ServerName:         c.prometheus.serverName,
+	}
+}
+
+// ============================================================================
+// EPP Getters (thread-safe)
+// ============================================================================
+
+// EPPMetricReaderBearerToken returns the EPP metric reader bearer token.
+// Thread-safe.
+func (c *Config) EPPMetricReaderBearerToken() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.epp.metricReaderBearerToken
+}
+
+// ============================================================================
+// Optimization Getters (thread-safe)
+// ============================================================================
 
 // OptimizationInterval returns the current optimization interval.
-// Thread-safe. Results are cached to avoid repeated mutex contention.
+// Thread-safe.
 func (c *Config) OptimizationInterval() time.Duration {
-	// Check cache first (read lock)
 	c.mu.RLock()
-	if c.cache.optimizationIntervalCache != nil {
-		interval := *c.cache.optimizationIntervalCache
-		c.mu.RUnlock()
-		return interval
-	}
-	c.mu.RUnlock()
+	defer c.mu.RUnlock()
+	return c.optimization.interval
+}
 
-	// Cache miss - resolve and cache (write lock)
-	c.mu.Lock()
-	defer c.mu.Unlock()
+// ============================================================================
+// Feature Flags Getters (thread-safe)
+// ============================================================================
 
-	// Double-check after acquiring write lock (another goroutine might have cached it)
-	if c.cache.optimizationIntervalCache != nil {
-		return *c.cache.optimizationIntervalCache
-	}
+// ScaleToZeroEnabled returns whether scale-to-zero is enabled.
+// Thread-safe.
+func (c *Config) ScaleToZeroEnabled() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.features.scaleToZeroEnabled
+}
 
-	// Cache the value
-	interval := c.Dynamic.OptimizationInterval
-	c.cache.optimizationIntervalCache = &interval
-	return interval
+// LimitedModeEnabled returns whether limited mode is enabled.
+// Thread-safe.
+func (c *Config) LimitedModeEnabled() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.features.limitedModeEnabled
+}
+
+// ScaleFromZeroMaxConcurrency returns the scale-from-zero max concurrency.
+// Thread-safe.
+func (c *Config) ScaleFromZeroMaxConcurrency() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.features.scaleFromZeroMaxConcurrency
 }
 
 // SaturationConfig returns the current global saturation scaling configuration.
@@ -156,106 +423,55 @@ func (c *Config) SaturationConfig() map[string]interfaces.SaturationScalingConfi
 	return c.SaturationConfigForNamespace("")
 }
 
-// resolveNamespaceConfig is a generic helper that resolves namespace-local or global configuration.
-// It implements the common resolution logic: namespace-local > global.
+// resolveSaturationConfig resolves saturation config for a namespace (namespace-local > global).
 // Must be called while holding at least a read lock.
-// Returns the source config (not a copy) - callers are responsible for copying if needed.
-func (c *Config) resolveNamespaceConfig(namespace string, getter func(*NamespaceConfig) interface{}) interface{} {
+func (c *Config) resolveSaturationConfig(namespace string) map[string]interfaces.SaturationScalingConfig {
 	// Check namespace-local first (if namespace is provided)
 	if namespace != "" {
-		if nsConfig, exists := c.Dynamic.NamespaceConfigs[namespace]; exists {
-			if result := getter(nsConfig); result != nil {
-				return result
+		if nsConfig, exists := c.saturation.namespaceConfigs[namespace]; exists {
+			if len(nsConfig) > 0 {
+				return nsConfig
 			}
 		}
 	}
 
-	// Fall back to global if no namespace-local config found
-	if c.Dynamic.Global != nil {
-		return getter(c.Dynamic.Global)
+	// Fall back to global
+	if len(c.saturation.global) > 0 {
+		return c.saturation.global
 	}
 
 	return nil
 }
 
-// resolveCached is a generic helper that implements the double-checked locking pattern
-// for cached configuration lookups. It checks the cache, resolves if needed, copies the result,
-// and caches it for future lookups.
-// T is the return type (e.g., map[string]interfaces.SaturationScalingConfig or ScaleToZeroConfigData).
-// Must be called without holding any locks.
-// The resolver function should return the source config (may be nil/zero value).
-// The copier function should handle nil/zero values and return an appropriate default.
-func resolveCached[T any](
-	cache *map[string]T,
-	mu *sync.RWMutex,
-	namespace string,
-	resolver func() T,
-	copier func(T) T,
-) T {
-	// Check cache first (read lock)
-	mu.RLock()
-	if *cache != nil {
-		if cached, ok := (*cache)[namespace]; ok {
-			// Cache hit - return cached copy
-			mu.RUnlock()
-			return copier(cached)
+// resolveScaleToZeroConfig resolves scale-to-zero config for a namespace (namespace-local > global).
+// Must be called while holding at least a read lock.
+func (c *Config) resolveScaleToZeroConfig(namespace string) ScaleToZeroConfigData {
+	// Check namespace-local first (if namespace is provided)
+	if namespace != "" {
+		if nsConfig, exists := c.scaleToZero.namespaceConfigs[namespace]; exists {
+			if len(nsConfig) > 0 {
+				return nsConfig
+			}
 		}
 	}
-	mu.RUnlock()
 
-	// Cache miss - resolve and cache (write lock)
-	mu.Lock()
-	defer mu.Unlock()
-
-	// Initialize cache if nil (defensive programming)
-	if *cache == nil {
-		*cache = make(map[string]T)
+	// Fall back to global
+	if len(c.scaleToZero.global) > 0 {
+		return c.scaleToZero.global
 	}
 
-	// Double-check after acquiring write lock (another goroutine might have cached it)
-	if cached, ok := (*cache)[namespace]; ok {
-		return copier(cached)
-	}
-
-	// Resolve configuration (must be called while holding write lock for resolveNamespaceConfig)
-	sourceConfig := resolver()
-
-	// Create copy for return and cache (copier handles nil/zero values)
-	result := copier(sourceConfig)
-
-	// Cache the result
-	(*cache)[namespace] = result
-
-	return result
+	return nil
 }
 
 // SaturationConfigForNamespace returns the saturation scaling configuration for the given namespace.
 // Resolution order: namespace-local > global
 // Thread-safe. Returns a copy to prevent external modifications.
 // If namespace is empty, returns global config.
-// Results are cached to avoid repeated resolution and copying.
 func (c *Config) SaturationConfigForNamespace(namespace string) map[string]interfaces.SaturationScalingConfig {
-	return resolveCached(
-		&c.cache.saturationCache,
-		&c.mu,
-		namespace,
-		func() map[string]interfaces.SaturationScalingConfig {
-			var sourceConfig map[string]interfaces.SaturationScalingConfig
-			if resolved := c.resolveNamespaceConfig(namespace, func(ns *NamespaceConfig) interface{} {
-				if len(ns.SaturationConfig) > 0 {
-					return ns.SaturationConfig
-				}
-				return nil
-			}); resolved != nil {
-				sourceConfig = resolved.(map[string]interfaces.SaturationScalingConfig)
-			}
-			if sourceConfig == nil {
-				return make(map[string]interfaces.SaturationScalingConfig)
-			}
-			return sourceConfig
-		},
-		copySaturationConfig,
-	)
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	sourceConfig := c.resolveSaturationConfig(namespace)
+	return copySaturationConfig(sourceConfig)
 }
 
 // copySaturationConfig creates a deep copy of the saturation config map.
@@ -281,29 +497,11 @@ func (c *Config) ScaleToZeroConfig() ScaleToZeroConfigData {
 // Resolution order: namespace-local > global
 // Thread-safe. Returns a copy to prevent external modifications.
 // If namespace is empty, returns global config.
-// Results are cached to avoid repeated resolution and copying.
 func (c *Config) ScaleToZeroConfigForNamespace(namespace string) ScaleToZeroConfigData {
-	return resolveCached(
-		&c.cache.scaleToZeroCache,
-		&c.mu,
-		namespace,
-		func() ScaleToZeroConfigData {
-			var sourceConfig ScaleToZeroConfigData
-			if resolved := c.resolveNamespaceConfig(namespace, func(ns *NamespaceConfig) interface{} {
-				if len(ns.ScaleToZeroConfig) > 0 {
-					return ns.ScaleToZeroConfig
-				}
-				return nil
-			}); resolved != nil {
-				sourceConfig = resolved.(ScaleToZeroConfigData)
-			}
-			if sourceConfig == nil {
-				return make(ScaleToZeroConfigData)
-			}
-			return sourceConfig
-		},
-		copyScaleToZeroConfig,
-	)
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	sourceConfig := c.resolveScaleToZeroConfig(namespace)
+	return copyScaleToZeroConfig(sourceConfig)
 }
 
 // copyScaleToZeroConfig creates a deep copy of the scale-to-zero config map.
@@ -318,74 +516,12 @@ func copyScaleToZeroConfig(src ScaleToZeroConfigData) ScaleToZeroConfigData {
 	return result
 }
 
-// PrometheusCacheConfig returns the current Prometheus cache configuration.
-// Thread-safe.
-// PrometheusCacheConfig returns the current Prometheus cache configuration.
-// Thread-safe. Returns a copy to prevent external modifications.
-// Results are cached to avoid repeated mutex contention and copying.
-func (c *Config) PrometheusCacheConfig() *CacheConfig {
-	// Check cache first (read lock)
-	c.mu.RLock()
-	if c.cache.prometheusCacheConfigCache != nil {
-		// Return a copy of the cached value
-		cp := *c.cache.prometheusCacheConfigCache
-		c.mu.RUnlock()
-		return &cp
-	}
-	c.mu.RUnlock()
-
-	// Cache miss - resolve and cache (write lock)
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	// Double-check after acquiring write lock (another goroutine might have cached it)
-	if c.cache.prometheusCacheConfigCache != nil {
-		cp := *c.cache.prometheusCacheConfigCache
-		return &cp
-	}
-
-	// Resolve and cache
-	if c.Dynamic.PrometheusCache == nil {
-		// Cache nil to avoid repeated lookups
-		c.cache.prometheusCacheConfigCache = nil
-		return nil
-	}
-
-	// Create copy for cache and return
-	cp := *c.Dynamic.PrometheusCache
-	c.cache.prometheusCacheConfigCache = &cp
-	return &cp
-}
-
-// UpdateDynamicConfig updates the entire dynamic configuration.
-// Thread-safe. Should be called when ConfigMap changes are detected.
-func (c *Config) UpdateDynamicConfig(dynamic DynamicConfig) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.Dynamic = dynamic
-	// Invalidate all caches since the entire dynamic config changed
-	c.invalidateAllCaches()
-}
-
-// invalidateAllCaches invalidates all cached configurations.
-// Must be called while holding the write lock.
-func (c *Config) invalidateAllCaches() {
-	// Clear all cache entries by reassigning empty maps (more efficient than deleting keys)
-	c.cache.saturationCache = make(map[string]map[string]interfaces.SaturationScalingConfig)
-	c.cache.scaleToZeroCache = make(map[string]ScaleToZeroConfigData)
-	// Clear single-value caches
-	c.cache.optimizationIntervalCache = nil
-	c.cache.prometheusCacheConfigCache = nil
-}
-
 // UpdateOptimizationInterval updates the optimization interval.
-// Thread-safe. Invalidates the cache to ensure subsequent reads return the new value.
+// Thread-safe.
 func (c *Config) UpdateOptimizationInterval(interval time.Duration) {
 	c.mu.Lock()
-	oldInterval := c.Dynamic.OptimizationInterval
-	c.Dynamic.OptimizationInterval = interval
-	// Invalidate cache
-	c.cache.optimizationIntervalCache = nil
+	oldInterval := c.optimization.interval
+	c.optimization.interval = interval
 	c.mu.Unlock()
 	if oldInterval != interval {
 		ctrl.Log.Info("Updated optimization interval", "old", oldInterval, "new", interval)
@@ -415,49 +551,25 @@ func (c *Config) UpdateSaturationConfigForNamespace(namespace string, config map
 	var oldCount int
 	if namespace == "" {
 		// Update global
-		if c.Dynamic.Global == nil {
-			c.Dynamic.Global = &NamespaceConfig{}
-		}
-		oldCount = len(c.Dynamic.Global.SaturationConfig)
-		c.Dynamic.Global.SaturationConfig = newConfig
-		newCount := len(c.Dynamic.Global.SaturationConfig)
+		oldCount = len(c.saturation.global)
+		c.saturation.global = newConfig
+		newCount := len(c.saturation.global)
 		if oldCount != newCount {
 			ctrl.Log.Info("Updated global saturation config", "oldEntries", oldCount, "newEntries", newCount)
 		}
 	} else {
 		// Update namespace-local
-		if c.Dynamic.NamespaceConfigs == nil {
-			c.Dynamic.NamespaceConfigs = make(map[string]*NamespaceConfig)
+		if c.saturation.namespaceConfigs == nil {
+			c.saturation.namespaceConfigs = make(map[string]map[string]interfaces.SaturationScalingConfig)
 		}
-		if c.Dynamic.NamespaceConfigs[namespace] == nil {
-			c.Dynamic.NamespaceConfigs[namespace] = &NamespaceConfig{}
-		}
-		oldCount = len(c.Dynamic.NamespaceConfigs[namespace].SaturationConfig)
-		c.Dynamic.NamespaceConfigs[namespace].SaturationConfig = newConfig
-		newCount := len(c.Dynamic.NamespaceConfigs[namespace].SaturationConfig)
+		oldCount = len(c.saturation.namespaceConfigs[namespace])
+		c.saturation.namespaceConfigs[namespace] = newConfig
+		newCount := len(c.saturation.namespaceConfigs[namespace])
 		if oldCount != newCount {
 			ctrl.Log.Info("Updated namespace-local saturation config", "namespace", namespace, "oldEntries", oldCount, "newEntries", newCount)
 		}
 	}
 
-	// Invalidate cache for this namespace and global (global changes affect all namespaces)
-	c.invalidateNamespaceCache(namespace, true)
-}
-
-// invalidateNamespaceCache invalidates cached configurations for the given namespace.
-// If invalidateGlobal is true and namespace is not empty, also invalidates global cache.
-// This is needed because namespace-local changes might affect resolution logic.
-// Must be called while holding the write lock.
-func (c *Config) invalidateNamespaceCache(namespace string, invalidateGlobal bool) {
-	// Invalidate both caches for the namespace
-	delete(c.cache.saturationCache, namespace)
-	delete(c.cache.scaleToZeroCache, namespace)
-
-	// Also invalidate global cache if requested (for namespace-local updates)
-	if invalidateGlobal && namespace != "" {
-		delete(c.cache.saturationCache, "")
-		delete(c.cache.scaleToZeroCache, "")
-	}
 }
 
 // UpdateScaleToZeroConfig updates the global scale-to-zero configuration.
@@ -483,33 +595,25 @@ func (c *Config) UpdateScaleToZeroConfigForNamespace(namespace string, config Sc
 	var oldCount int
 	if namespace == "" {
 		// Update global
-		if c.Dynamic.Global == nil {
-			c.Dynamic.Global = &NamespaceConfig{}
-		}
-		oldCount = len(c.Dynamic.Global.ScaleToZeroConfig)
-		c.Dynamic.Global.ScaleToZeroConfig = newConfig
-		newCount := len(c.Dynamic.Global.ScaleToZeroConfig)
+		oldCount = len(c.scaleToZero.global)
+		c.scaleToZero.global = newConfig
+		newCount := len(c.scaleToZero.global)
 		if oldCount != newCount {
 			ctrl.Log.Info("Updated global scale-to-zero config", "oldModels", oldCount, "newModels", newCount)
 		}
 	} else {
 		// Update namespace-local
-		if c.Dynamic.NamespaceConfigs == nil {
-			c.Dynamic.NamespaceConfigs = make(map[string]*NamespaceConfig)
+		if c.scaleToZero.namespaceConfigs == nil {
+			c.scaleToZero.namespaceConfigs = make(map[string]ScaleToZeroConfigData)
 		}
-		if c.Dynamic.NamespaceConfigs[namespace] == nil {
-			c.Dynamic.NamespaceConfigs[namespace] = &NamespaceConfig{}
-		}
-		oldCount = len(c.Dynamic.NamespaceConfigs[namespace].ScaleToZeroConfig)
-		c.Dynamic.NamespaceConfigs[namespace].ScaleToZeroConfig = newConfig
-		newCount := len(c.Dynamic.NamespaceConfigs[namespace].ScaleToZeroConfig)
+		oldCount = len(c.scaleToZero.namespaceConfigs[namespace])
+		c.scaleToZero.namespaceConfigs[namespace] = newConfig
+		newCount := len(c.scaleToZero.namespaceConfigs[namespace])
 		if oldCount != newCount {
 			ctrl.Log.Info("Updated namespace-local scale-to-zero config", "namespace", namespace, "oldModels", oldCount, "newModels", newCount)
 		}
 	}
 
-	// Invalidate cache for this namespace and global (global changes affect all namespaces)
-	c.invalidateNamespaceCache(namespace, true)
 }
 
 // RemoveNamespaceConfig removes the namespace-local configuration for the given namespace.
@@ -521,41 +625,36 @@ func (c *Config) RemoveNamespaceConfig(namespace string) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.Dynamic.NamespaceConfigs != nil {
-		if _, exists := c.Dynamic.NamespaceConfigs[namespace]; exists {
-			delete(c.Dynamic.NamespaceConfigs, namespace)
-			ctrl.Log.Info("Removed namespace-local config", "namespace", namespace)
-			// Invalidate cache for this namespace (will now fall back to global)
-			// Don't invalidate global cache - we're just removing namespace-local override
-			c.invalidateNamespaceCache(namespace, false)
+	removed := false
+	if c.saturation.namespaceConfigs != nil {
+		if _, exists := c.saturation.namespaceConfigs[namespace]; exists {
+			delete(c.saturation.namespaceConfigs, namespace)
+			removed = true
 		}
+	}
+	if c.scaleToZero.namespaceConfigs != nil {
+		if _, exists := c.scaleToZero.namespaceConfigs[namespace]; exists {
+			delete(c.scaleToZero.namespaceConfigs, namespace)
+			removed = true
+		}
+	}
+	if removed {
+		ctrl.Log.Info("Removed namespace-local config", "namespace", namespace)
 	}
 }
 
 // UpdatePrometheusCacheConfig updates the Prometheus cache configuration.
 // Thread-safe.
-// UpdatePrometheusCacheConfig updates the Prometheus cache configuration.
-// Thread-safe. Invalidates the cache to ensure subsequent reads return the new value.
 func (c *Config) UpdatePrometheusCacheConfig(cacheConfig *CacheConfig) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if cacheConfig == nil {
-		c.Dynamic.PrometheusCache = nil
+		c.prometheus.cache = nil
 	} else {
 		// Make a copy
 		cp := *cacheConfig
-		c.Dynamic.PrometheusCache = &cp
+		c.prometheus.cache = &cp
 	}
-	// Invalidate cache
-	c.cache.prometheusCacheConfigCache = nil
-}
-
-// DynamicConfig returns a copy of the current dynamic configuration.
-// Thread-safe.
-func (c *Config) DynamicConfig() DynamicConfig {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.Dynamic
 }
 
 // NewTestConfig creates a minimal Config for testing purposes.
@@ -564,37 +663,103 @@ func (c *Config) DynamicConfig() DynamicConfig {
 // where a valid Config instance is needed but full configuration is not required.
 // NOTE: This function is exported for testing purposes only and should not be used in production code.
 func NewTestConfig() *Config {
-	return &Config{
-		Static: StaticConfig{
-			MetricsAddr:                 "0",
-			ProbeAddr:                   ":8081",
-			EnableLeaderElection:        false,
-			LeaderElectionID:            "test-election-id",
-			LeaseDuration:               60 * time.Second,
-			RenewDeadline:               50 * time.Second,
-			RetryPeriod:                 10 * time.Second,
-			RestTimeout:                 60 * time.Second,
-			SecureMetrics:               false,
-			EnableHTTP2:                 false,
-			WatchNamespace:              "",
-			LoggerVerbosity:             0,
-			ScaleToZeroEnabled:          false,
-			LimitedModeEnabled:          false,
-			ScaleFromZeroMaxConcurrency: 10,
+	cfg := &Config{
+		infrastructure: infrastructureConfig{
+			metricsAddr:          "0",
+			probeAddr:            ":8081",
+			enableLeaderElection: false,
+			leaderElectionID:     "test-election-id",
+			leaseDuration:        60 * time.Second,
+			renewDeadline:        50 * time.Second,
+			retryPeriod:          10 * time.Second,
+			restTimeout:          60 * time.Second,
+			secureMetrics:        false,
+			enableHTTP2:          false,
+			watchNamespace:       "",
+			loggerVerbosity:      0,
 		},
-		Dynamic: DynamicConfig{
-			OptimizationInterval: 60 * time.Second,
-			Global: &NamespaceConfig{
-				SaturationConfig:  make(map[string]interfaces.SaturationScalingConfig),
-				ScaleToZeroConfig: make(ScaleToZeroConfigData),
-			},
-			NamespaceConfigs: make(map[string]*NamespaceConfig),
+		tls: tlsConfig{
+			webhookCertName: "tls.crt",
+			webhookCertKey:  "tls.key",
+			metricsCertName: "tls.crt",
+			metricsCertKey:  "tls.key",
 		},
-		cache: configCache{
-			saturationCache:            make(map[string]map[string]interfaces.SaturationScalingConfig),
-			scaleToZeroCache:           make(map[string]ScaleToZeroConfigData),
-			optimizationIntervalCache:  nil,
-			prometheusCacheConfigCache: nil,
+		optimization: optimizationConfig{
+			interval: 60 * time.Second,
 		},
+		features: featureFlagsConfig{
+			scaleToZeroEnabled:          false,
+			limitedModeEnabled:          false,
+			scaleFromZeroMaxConcurrency: 10,
+		},
+		saturation: saturationConfig{
+			global:           make(map[string]interfaces.SaturationScalingConfig),
+			namespaceConfigs: make(map[string]map[string]interfaces.SaturationScalingConfig),
+		},
+		scaleToZero: scaleToZeroConfig{
+			global:           make(ScaleToZeroConfigData),
+			namespaceConfigs: make(map[string]ScaleToZeroConfigData),
+		},
+	}
+	return cfg
+}
+
+// NewTestConfigWithPrometheus creates a test Config with Prometheus configuration.
+// This is a convenience helper for tests that need a Config with Prometheus already configured.
+// It uses the public Load API internally, so it's safe for use in other packages.
+func NewTestConfigWithPrometheus(ctx context.Context, prometheusURL string, k8sClient client.Client) (*Config, error) {
+	// Set environment variable for Prometheus URL
+	_ = os.Setenv("PROMETHEUS_BASE_URL", prometheusURL)
+	defer func() { _ = os.Unsetenv("PROMETHEUS_BASE_URL") }()
+
+	flags := StaticConfigFlags{}
+	cfg, err := Load(ctx, flags, k8sClient)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create test config: %w", err)
+	}
+	return cfg, nil
+}
+
+// setPrometheusConfigForTesting sets the Prometheus configuration for testing purposes only.
+// This is internal and can only be used by tests in the config package.
+//
+//nolint:unused // Used by tests in config_test.go
+func (c *Config) setPrometheusConfigForTesting(promConfig *interfaces.PrometheusConfig) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if promConfig != nil {
+		c.prometheus.baseURL = promConfig.BaseURL
+		c.prometheus.bearerToken = promConfig.BearerToken
+		c.prometheus.tokenPath = promConfig.TokenPath
+		c.prometheus.insecureSkipVerify = promConfig.InsecureSkipVerify
+		c.prometheus.caCertPath = promConfig.CACertPath
+		c.prometheus.clientCertPath = promConfig.ClientCertPath
+		c.prometheus.clientKeyPath = promConfig.ClientKeyPath
+		c.prometheus.serverName = promConfig.ServerName
+	}
+}
+
+// setOptimizationIntervalForTesting sets the optimization interval for testing purposes only.
+// This is internal and can only be used by tests in the config package.
+//
+//nolint:unused // Used by tests in config_test.go
+func (c *Config) setOptimizationIntervalForTesting(interval time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.optimization.interval = interval
+}
+
+// setPrometheusCacheConfigForTesting sets the Prometheus cache configuration for testing purposes only.
+// This is internal and can only be used by tests in the config package.
+//
+//nolint:unused // Used by tests in config_test.go
+func (c *Config) setPrometheusCacheConfigForTesting(cacheConfig *CacheConfig) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if cacheConfig == nil {
+		c.prometheus.cache = nil
+	} else {
+		cp := *cacheConfig
+		c.prometheus.cache = &cp
 	}
 }

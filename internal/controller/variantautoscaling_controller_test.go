@@ -35,6 +35,7 @@ import (
 
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/config"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/datastore"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
 	testutils "github.com/llm-d-incubation/workload-variant-autoscaler/test/utils"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/test/utils/resources"
@@ -128,8 +129,9 @@ var _ = Describe("VariantAutoscalings Controller", func() {
 
 			// Initialize MetricsCollector with mock Prometheus API
 			controllerReconciler := &VariantAutoscalingReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				Client:    k8sClient,
+				Scheme:    k8sClient.Scheme(),
+				Datastore: datastore.NewDatastore(config.NewTestConfig()),
 			}
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
@@ -213,9 +215,10 @@ var _ = Describe("VariantAutoscalings Controller", func() {
 			logging.NewTestLogger()
 			fakeRecorder = record.NewFakeRecorder(10)
 			controllerReconciler = &VariantAutoscalingReconciler{
-				Client:   k8sClient,
-				Scheme:   k8sClient.Scheme(),
-				Recorder: fakeRecorder,
+				Client:    k8sClient,
+				Scheme:    k8sClient.Scheme(),
+				Recorder:  fakeRecorder,
+				Datastore: datastore.NewDatastore(config.NewTestConfig()),
 			}
 		})
 
@@ -316,8 +319,9 @@ var _ = Describe("VariantAutoscalings Controller", func() {
 
 			// Mock controller components
 			controllerReconciler := &VariantAutoscalingReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				Client:    k8sClient,
+				Scheme:    k8sClient.Scheme(),
+				Datastore: datastore.NewDatastore(config.NewTestConfig()),
 			}
 
 			By("Reconciling - expect TargetNotFound")

@@ -75,7 +75,7 @@ func NewEngine(client client.Client, mapper meta.RESTMapper, restConfig *rest.Co
 		return nil, fmt.Errorf("config is nil in NewEngine - this should not happen")
 	}
 
-	maxConcurrency := cfg.Static.ScaleFromZeroMaxConcurrency
+	maxConcurrency := cfg.ScaleFromZeroMaxConcurrency()
 	if maxConcurrency <= 0 {
 		return nil, fmt.Errorf("invalid scale-from-zero max concurrency: must be positive, got %d", maxConcurrency)
 	}

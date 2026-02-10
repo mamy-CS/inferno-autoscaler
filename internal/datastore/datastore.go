@@ -19,6 +19,7 @@ package datastore
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/source"
@@ -34,6 +35,7 @@ var (
 )
 
 // The datastore is a local cache of relevant data for the given InferencePool (currently all pulled from k8s-api)
+// It also tracks namespaces that should be watched for ConfigMaps (namespaces with VariantAutoscaling or InferencePool resources).
 type Datastore interface {
 	// InferencePool operations
 	PoolSet(ctx context.Context, client client.Client, pool *poolutil.EndpointPool) error
@@ -45,21 +47,35 @@ type Datastore interface {
 
 	// Clears the store state, happens when the pool gets deleted.
 	Clear()
+
+	// Namespace tracking operations
+	// Track a resource in a namespace (e.g., VariantAutoscaling or InferencePool)
+	// Idempotent: tracking the same resource multiple times has no effect.
+	NamespaceTrack(resourceType, resourceName, namespace string)
+	// Untrack a resource from a namespace.
+	// When the namespace has no more tracked resources, it is removed from tracking.
+	NamespaceUntrack(resourceType, resourceName, namespace string)
+	// IsNamespaceTracked returns true if the namespace has any tracked resources.
+	IsNamespaceTracked(namespace string) bool
+	// ListTrackedNamespaces returns all namespaces that have tracked resources.
+	ListTrackedNamespaces() []string
 }
 
 func NewDatastore(cfg *config.Config) Datastore {
 	store := &datastore{
-		pools:    &sync.Map{},
-		registry: source.NewSourceRegistry(),
-		config:   cfg,
+		pools:      &sync.Map{},
+		registry:   source.NewSourceRegistry(),
+		config:     cfg,
+		namespaces: &sync.Map{},
 	}
 	return store
 }
 
 type datastore struct {
-	pools    *sync.Map
-	registry *source.SourceRegistry
-	config   *config.Config // Unified configuration (injected from main.go)
+	pools      *sync.Map
+	registry   *source.SourceRegistry
+	config     *config.Config // Unified configuration (injected from main.go)
+	namespaces *sync.Map      // namespace -> map[resourceType]map[resourceName]bool
 }
 
 // Datastore operations
@@ -71,8 +87,8 @@ func (ds *datastore) PoolSet(ctx context.Context, client client.Client, pool *po
 	if ds.registry.Get(pool.Name) == nil {
 		// Create pod source
 		var token string
-		if ds.config != nil && ds.config.Static.EPPConfig != nil {
-			token = ds.config.Static.EPPConfig.MetricReaderBearerToken
+		if ds.config != nil {
+			token = ds.config.EPPMetricReaderBearerToken()
 		}
 		podConfig := pod.PodScrapingSourceConfig{
 			ServiceName:      pool.EndpointPicker.ServiceName,
@@ -151,4 +167,94 @@ func (ds *datastore) PoolDelete(name string) {
 
 func (ds *datastore) Clear() {
 	ds.pools.Clear()
+}
+
+// Namespace tracking operations
+
+// NamespaceTrack adds a resource to the namespace tracker.
+// Idempotent: tracking the same resource multiple times (e.g., on retry) has no effect.
+// Thread-safe.
+func (ds *datastore) NamespaceTrack(resourceType, resourceName, namespace string) {
+	if namespace == "" || resourceName == "" || resourceType == "" {
+		return
+	}
+
+	// Get or create namespace map
+	nsMapRaw, _ := ds.namespaces.LoadOrStore(namespace, &sync.Map{})
+	nsMap := nsMapRaw.(*sync.Map)
+
+	// Get or create resource type map
+	typeMapRaw, _ := nsMap.LoadOrStore(resourceType, &sync.Map{})
+	typeMap := typeMapRaw.(*sync.Map)
+
+	// Use namespaced name for clarity and to avoid collisions
+	resourceNamespacedName := fmt.Sprintf("%s/%s", namespace, resourceName)
+	typeMap.Store(resourceNamespacedName, true)
+}
+
+// NamespaceUntrack removes a resource from the namespace tracker.
+// When the namespace has no more tracked resources, it is removed from tracking.
+// Thread-safe.
+func (ds *datastore) NamespaceUntrack(resourceType, resourceName, namespace string) {
+	if namespace == "" || resourceName == "" || resourceType == "" {
+		return
+	}
+
+	nsMapRaw, exists := ds.namespaces.Load(namespace)
+	if !exists {
+		return
+	}
+	nsMap := nsMapRaw.(*sync.Map)
+
+	typeMapRaw, exists := nsMap.Load(resourceType)
+	if !exists {
+		return
+	}
+	typeMap := typeMapRaw.(*sync.Map)
+
+	// Use namespaced name to match what was stored in NamespaceTrack
+	resourceNamespacedName := fmt.Sprintf("%s/%s", namespace, resourceName)
+	typeMap.Delete(resourceNamespacedName)
+
+	// Check if resource type map is empty
+	empty := true
+	typeMap.Range(func(_, _ interface{}) bool {
+		empty = false
+		return false // Stop iteration
+	})
+	if empty {
+		nsMap.Delete(resourceType)
+	}
+
+	// Check if namespace map is empty
+	empty = true
+	nsMap.Range(func(_, _ interface{}) bool {
+		empty = false
+		return false // Stop iteration
+	})
+	if empty {
+		ds.namespaces.Delete(namespace)
+	}
+}
+
+// IsNamespaceTracked returns true if the namespace has any tracked resources.
+// Thread-safe.
+func (ds *datastore) IsNamespaceTracked(namespace string) bool {
+	if namespace == "" {
+		return false
+	}
+
+	_, exists := ds.namespaces.Load(namespace)
+	return exists
+}
+
+// ListTrackedNamespaces returns all namespaces that have tracked resources.
+// Thread-safe.
+func (ds *datastore) ListTrackedNamespaces() []string {
+	var namespaces []string
+	ds.namespaces.Range(func(key, _ interface{}) bool {
+		namespaces = append(namespaces, key.(string))
+		return true
+	})
+	return namespaces
 }

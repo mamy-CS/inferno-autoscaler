@@ -154,7 +154,7 @@ func (e *Engine) optimize(ctx context.Context) error {
 		_ = interval
 	}
 
-	if e.Config.Static.ScaleToZeroEnabled {
+	if e.Config.ScaleToZeroEnabled() {
 		logger.Info("Scaling to zero is enabled")
 	}
 
@@ -170,7 +170,7 @@ func (e *Engine) optimize(ctx context.Context) error {
 	}
 
 	// Collected accelerator inventory (only in limited mode)
-	if e.Config.Static.LimitedModeEnabled {
+	if e.Config.LimitedModeEnabled() {
 		inventory, err := collector.CollectInventoryK8S(ctx, e.client)
 		if err != nil {
 			logger.Error(err, "Failed to collect cluster inventory")

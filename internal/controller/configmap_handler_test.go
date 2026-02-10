@@ -33,7 +33,7 @@ import (
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/config"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/constants"
-	interfaces "github.com/llm-d-incubation/workload-variant-autoscaler/internal/interfaces"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/datastore"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
 	testutils "github.com/llm-d-incubation/workload-variant-autoscaler/test/utils"
 )
@@ -42,6 +42,7 @@ var _ = Describe("ConfigMap Handler", func() {
 	Context("Namespace-Local ConfigMap Watching", func() {
 		ctx := context.Background()
 		var controllerReconciler *VariantAutoscalingReconciler
+		var ds datastore.Datastore
 
 		BeforeEach(func() {
 			logging.NewTestLogger()
@@ -56,11 +57,15 @@ var _ = Describe("ConfigMap Handler", func() {
 			configMap := testutils.CreateVariantAutoscalingConfigMap(config.DefaultConfigMapName, ns.Name)
 			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, configMap))).NotTo(HaveOccurred())
 
+			By("creating the datastore")
+			ds = datastore.NewDatastore(config.NewTestConfig())
+
 			By("creating the reconciler")
 			controllerReconciler = &VariantAutoscalingReconciler{
-				Client:   k8sClient,
-				Recorder: record.NewFakeRecorder(10),
-				Config:   config.NewTestConfig(),
+				Client:    k8sClient,
+				Recorder:  record.NewFakeRecorder(10),
+				Config:    config.NewTestConfig(),
+				Datastore: ds,
 			}
 		})
 
@@ -137,44 +142,44 @@ var _ = Describe("ConfigMap Handler", func() {
 			Expect(k8sClient.Create(ctx, va)).To(Succeed())
 
 			By("Tracking the namespace (simulating VA reconciliation)")
-			controllerReconciler.trackNamespace("test-va", "va-namespace")
+			ds.NamespaceTrack("VariantAutoscaling", "test-va", "va-namespace")
 
 			By("Verifying namespace is considered for watching")
 			result := controllerReconciler.shouldWatchNamespaceLocalConfigMap(ctx, "va-namespace")
 			Expect(result).To(BeTrue(), "Namespace with VAs should be watched")
 
 			// Cleanup
-			controllerReconciler.untrackNamespace("test-va", "va-namespace")
+			ds.NamespaceUntrack("VariantAutoscaling", "test-va", "va-namespace")
 			Expect(k8sClient.Delete(ctx, va)).To(Succeed())
 			Expect(k8sClient.Delete(ctx, vaNS)).To(Succeed())
 		})
 
 		It("should handle idempotent namespace tracking (retry-safe)", func() {
 			By("Tracking the same VA multiple times (simulating retries)")
-			controllerReconciler.trackNamespace("test-va-1", "test-namespace")
-			controllerReconciler.trackNamespace("test-va-1", "test-namespace") // Same VA again (retry)
-			controllerReconciler.trackNamespace("test-va-1", "test-namespace") // Same VA again (retry)
+			ds.NamespaceTrack("VariantAutoscaling", "test-va-1", "test-namespace")
+			ds.NamespaceTrack("VariantAutoscaling", "test-va-1", "test-namespace") // Same VA again (retry)
+			ds.NamespaceTrack("VariantAutoscaling", "test-va-1", "test-namespace") // Same VA again (retry)
 
 			By("Verifying namespace is tracked only once")
 			result := controllerReconciler.shouldWatchNamespaceLocalConfigMap(ctx, "test-namespace")
 			Expect(result).To(BeTrue(), "Namespace should be tracked")
 
 			By("Adding another VA to the same namespace")
-			controllerReconciler.trackNamespace("test-va-2", "test-namespace")
+			ds.NamespaceTrack("VariantAutoscaling", "test-va-2", "test-namespace")
 
 			By("Verifying namespace is still tracked")
 			result = controllerReconciler.shouldWatchNamespaceLocalConfigMap(ctx, "test-namespace")
 			Expect(result).To(BeTrue(), "Namespace should still be tracked with multiple VAs")
 
 			By("Untracking one VA")
-			controllerReconciler.untrackNamespace("test-va-1", "test-namespace")
+			ds.NamespaceUntrack("VariantAutoscaling", "test-va-1", "test-namespace")
 
 			By("Verifying namespace is still tracked (other VA still exists)")
 			result = controllerReconciler.shouldWatchNamespaceLocalConfigMap(ctx, "test-namespace")
 			Expect(result).To(BeTrue(), "Namespace should still be tracked")
 
 			By("Untracking the last VA")
-			controllerReconciler.untrackNamespace("test-va-2", "test-namespace")
+			ds.NamespaceUntrack("VariantAutoscaling", "test-va-2", "test-namespace")
 
 			By("Verifying namespace is no longer tracked")
 			result = controllerReconciler.shouldWatchNamespaceLocalConfigMap(ctx, "test-namespace")
@@ -210,7 +215,7 @@ var _ = Describe("ConfigMap Handler", func() {
 			Expect(k8sClient.Create(ctx, va)).To(Succeed())
 
 			By("Tracking the namespace (simulating VA reconciliation)")
-			controllerReconciler.trackNamespace("test-va", "excluded-namespace")
+			ds.NamespaceTrack("VariantAutoscaling", "test-va", "excluded-namespace")
 
 			By("Verifying excluded namespace is not watched for ConfigMaps (even with VAs)")
 			result := controllerReconciler.shouldWatchNamespaceLocalConfigMap(ctx, "excluded-namespace")
@@ -234,7 +239,7 @@ var _ = Describe("ConfigMap Handler", func() {
 			Expect(result).To(BeFalse(), "Exclusion should take precedence over opt-in label")
 
 			// Cleanup
-			controllerReconciler.untrackNamespace("test-va", "excluded-namespace")
+			ds.NamespaceUntrack("VariantAutoscaling", "test-va", "excluded-namespace")
 			Expect(k8sClient.Delete(ctx, va)).To(Succeed())
 			Expect(k8sClient.Delete(ctx, excludedNS)).To(Succeed())
 			Expect(k8sClient.Delete(ctx, excludedNSWithOptIn)).To(Succeed())
@@ -315,20 +320,37 @@ var _ = Describe("ConfigMap Handler", func() {
 		BeforeEach(func() {
 			logging.NewTestLogger()
 			fakeRecorder = record.NewFakeRecorder(10)
-			cfg := config.NewTestConfig()
-			cfg.Static.Prometheus = &interfaces.PrometheusConfig{
-				BaseURL: "https://prometheus-initial:9090",
+
+			// Create ConfigMap with initial configuration
+			cm := &v1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      config.ConfigMapName(),
+					Namespace: config.Namespace(),
+				},
+				Data: map[string]string{
+					"PROMETHEUS_BASE_URL":               "https://prometheus-initial:9090",
+					"GLOBAL_OPT_INTERVAL":               "60s",
+					"PROMETHEUS_METRICS_CACHE_ENABLED":  "true",
+					"PROMETHEUS_METRICS_CACHE_TTL":      "30s",
+					"PROMETHEUS_METRICS_CACHE_INTERVAL": "1m",
+					"PROMETHEUS_METRICS_CACHE_FETCH":    "30s",
+				},
 			}
-			// Set initial optimization interval
-			cfg.Dynamic.OptimizationInterval = 60 * time.Second
-			// Initialize Prometheus cache config with defaults
-			cfg.Dynamic.PrometheusCache = &config.CacheConfig{
+			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, cm))).To(Succeed())
+
+			// Load config using public API
+			cfg, err := config.NewTestConfigWithPrometheus(ctx, "https://prometheus-initial:9090", k8sClient)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Update optimization interval and cache config using public Update methods
+			cfg.UpdateOptimizationInterval(60 * time.Second)
+			cfg.UpdatePrometheusCacheConfig(&config.CacheConfig{
 				Enabled:             true,
 				TTL:                 30 * time.Second,
 				CleanupInterval:     1 * time.Minute,
 				FetchInterval:       30 * time.Second,
 				FreshnessThresholds: config.DefaultFreshnessThresholds(),
-			}
+			})
 
 			controllerReconciler = &VariantAutoscalingReconciler{
 				Client:   k8sClient,
@@ -368,7 +390,7 @@ var _ = Describe("ConfigMap Handler", func() {
 				"GLOBAL_OPT_INTERVAL should be updated even when immutable changes are detected")
 
 			By("Verifying Prometheus BaseURL was not changed (immutable)")
-			Expect(controllerReconciler.Config.Static.Prometheus.BaseURL).To(Equal("https://prometheus-initial:9090"),
+			Expect(controllerReconciler.Config.PrometheusBaseURL()).To(Equal("https://prometheus-initial:9090"),
 				"PROMETHEUS_BASE_URL should not be changed (immutable)")
 
 			By("Verifying Prometheus cache config was updated")
@@ -419,9 +441,9 @@ var _ = Describe("ConfigMap Handler", func() {
 				"Cache enabled should have changed")
 
 			By("Verifying immutable parameters were not changed")
-			Expect(controllerReconciler.Config.Static.Prometheus.BaseURL).To(Equal("https://prometheus-initial:9090"),
+			Expect(controllerReconciler.Config.PrometheusBaseURL()).To(Equal("https://prometheus-initial:9090"),
 				"PROMETHEUS_BASE_URL should not be changed")
-			Expect(controllerReconciler.Config.Static.MetricsAddr).NotTo(Equal(":9443"),
+			Expect(controllerReconciler.Config.MetricsAddr()).NotTo(Equal(":9443"),
 				"METRICS_BIND_ADDRESS should not be changed")
 		})
 	})

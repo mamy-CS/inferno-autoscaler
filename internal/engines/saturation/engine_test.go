@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -367,23 +366,10 @@ data:
 			promSource := prometheus.NewPrometheusSource(ctx, mockPromAPI, prometheus.DefaultPrometheusSourceConfig())
 			sourceRegistry.Register("prometheus", promSource) // nolint:errcheck
 			// Create minimal test config with saturation config
-			testConfig := &config.Config{
-				Static: config.StaticConfig{
-					ScaleToZeroEnabled:          false,
-					LimitedModeEnabled:          false,
-					ScaleFromZeroMaxConcurrency: 10,
-				},
-				Dynamic: config.DynamicConfig{
-					OptimizationInterval: 60 * time.Second,
-					Global: &config.NamespaceConfig{
-						SaturationConfig: map[string]interfaces.SaturationScalingConfig{
-							"default": {},
-						},
-						ScaleToZeroConfig: make(config.ScaleToZeroConfigData),
-					},
-					NamespaceConfigs: make(map[string]*config.NamespaceConfig),
-				},
-			}
+			testConfig := config.NewTestConfig()
+			testConfig.UpdateSaturationConfig(map[string]interfaces.SaturationScalingConfig{
+				"default": {},
+			})
 			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, sourceRegistry, testConfig)
 
 			By("Performing optimization loop")
@@ -443,21 +429,7 @@ data:
 			sourceRegistry := source.NewSourceRegistry()
 			sourceRegistry.Register("prometheus", source.NewNoOpSource()) // nolint:errcheck
 			// Create minimal test config
-			testConfig := &config.Config{
-				Static: config.StaticConfig{
-					ScaleToZeroEnabled:          false,
-					LimitedModeEnabled:          false,
-					ScaleFromZeroMaxConcurrency: 10,
-				},
-				Dynamic: config.DynamicConfig{
-					OptimizationInterval: 60 * time.Second,
-					Global: &config.NamespaceConfig{
-						SaturationConfig:  make(map[string]interfaces.SaturationScalingConfig),
-						ScaleToZeroConfig: make(config.ScaleToZeroConfigData),
-					},
-					NamespaceConfigs: make(map[string]*config.NamespaceConfig),
-				},
-			}
+			testConfig := config.NewTestConfig()
 			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, sourceRegistry, testConfig)
 			decisions := engine.convertSaturationTargetsToDecisions(context.Background(), saturationTargets, saturationAnalysis, variantStates)
 
@@ -624,23 +596,10 @@ data:
 
 			// Initialize legacy MetricsCollector for non-saturation metrics
 			// Create minimal test config with saturation config
-			testConfig := &config.Config{
-				Static: config.StaticConfig{
-					ScaleToZeroEnabled:          false,
-					LimitedModeEnabled:          false,
-					ScaleFromZeroMaxConcurrency: 10,
-				},
-				Dynamic: config.DynamicConfig{
-					OptimizationInterval: 60 * time.Second,
-					Global: &config.NamespaceConfig{
-						SaturationConfig: map[string]interfaces.SaturationScalingConfig{
-							"default": {},
-						},
-						ScaleToZeroConfig: make(config.ScaleToZeroConfigData),
-					},
-					NamespaceConfigs: make(map[string]*config.NamespaceConfig),
-				},
-			}
+			testConfig := config.NewTestConfig()
+			testConfig.UpdateSaturationConfig(map[string]interfaces.SaturationScalingConfig{
+				"default": {},
+			})
 			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, sourceRegistry, testConfig)
 
 			By("Performing optimization loop with source infrastructure")

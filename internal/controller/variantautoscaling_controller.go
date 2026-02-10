@@ -19,7 +19,6 @@ package controller
 import (
 	"context"
 	"fmt"
-	"sync"
 
 	promoperator "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	appsv1 "k8s.io/api/apps/v1"
@@ -38,7 +37,9 @@ import (
 
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d-incubation/workload-variant-autoscaler/api/v1alpha1"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/config"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/datastore"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/common"
+
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/utils"
 )
@@ -48,14 +49,9 @@ type VariantAutoscalingReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 
-	Recorder record.EventRecorder
-	Config   *config.Config // Unified configuration (injected from main.go)
-
-	// Namespace tracking for namespace-local ConfigMap watching
-	// Tracks namespaces that have VariantAutoscaling resources
-	// Uses a set of VA namespaced names per namespace for idempotent tracking
-	namespaceTracker     map[string]map[string]bool // namespace -> set of VA namespaced names (e.g., "namespace/name")
-	namespaceTrackerLock sync.RWMutex               // Protects namespaceTracker
+	Recorder  record.EventRecorder
+	Config    *config.Config      // Unified configuration (injected from main.go)
+	Datastore datastore.Datastore // Datastore for namespace tracking and InferencePool data
 }
 
 // +kubebuilder:rbac:groups=llmd.ai,resources=variantautoscalings,verbs=get;list;watch;create;update;patch;delete
@@ -122,14 +118,14 @@ func (r *VariantAutoscalingReconciler) Reconcile(ctx context.Context, req ctrl.R
 			"name", va.Name,
 			"namespace", va.Namespace)
 		// Untrack namespace when VA is deleted
-		r.untrackNamespace(va.Name, va.Namespace)
+		r.Datastore.NamespaceUntrack("VariantAutoscaling", va.Name, va.Namespace)
 		return ctrl.Result{}, nil
 	}
 
 	// Track namespace for namespace-local ConfigMap watching
 	// Moved after deletion check to avoid tracking deleted VAs
 	// Idempotent: tracking the same VA multiple times (e.g., on retry) has no effect
-	r.trackNamespace(va.Name, va.Namespace)
+	r.Datastore.NamespaceTrack("VariantAutoscaling", va.Name, va.Namespace)
 	logger.Info("Reconciling VariantAutoscaling",
 		"name", va.Name,
 		"namespace", va.Namespace,
@@ -288,69 +284,8 @@ func (r *VariantAutoscalingReconciler) handleDeploymentEvent(ctx context.Context
 	return requests
 }
 
-// trackNamespace adds a VA to the namespace tracker.
-// Idempotent: tracking the same VA multiple times (e.g., on retry) has no effect.
-// Thread-safe.
-func (r *VariantAutoscalingReconciler) trackNamespace(vaName, namespace string) {
-	if namespace == "" || vaName == "" {
-		return
-	}
-	r.namespaceTrackerLock.Lock()
-	defer r.namespaceTrackerLock.Unlock()
-	if r.namespaceTracker == nil {
-		r.namespaceTracker = make(map[string]map[string]bool)
-	}
-	if r.namespaceTracker[namespace] == nil {
-		r.namespaceTracker[namespace] = make(map[string]bool)
-	}
-	// Use namespaced name for clarity and to avoid collisions
-	vaNamespacedName := fmt.Sprintf("%s/%s", namespace, vaName)
-	r.namespaceTracker[namespace][vaNamespacedName] = true
-}
-
-// untrackNamespace removes a VA from the namespace tracker.
-// When the namespace's VA set becomes empty, the namespace is removed from tracking.
-// Thread-safe.
-func (r *VariantAutoscalingReconciler) untrackNamespace(vaName, namespace string) {
-	if namespace == "" || vaName == "" {
-		return
-	}
-	r.namespaceTrackerLock.Lock()
-	defer r.namespaceTrackerLock.Unlock()
-	if r.namespaceTracker == nil {
-		return
-	}
-	vaSet, exists := r.namespaceTracker[namespace]
-	if !exists {
-		return
-	}
-	// Use namespaced name to match what was stored in trackNamespace
-	vaNamespacedName := fmt.Sprintf("%s/%s", namespace, vaName)
-	delete(vaSet, vaNamespacedName)
-	// If namespace has no more VAs, remove it from tracker
-	if len(vaSet) == 0 {
-		delete(r.namespaceTracker, namespace)
-	}
-}
-
-// isNamespaceTracked returns true if the namespace has VAs.
-// Thread-safe.
-func (r *VariantAutoscalingReconciler) isNamespaceTracked(namespace string) bool {
-	if namespace == "" {
-		return false
-	}
-	r.namespaceTrackerLock.RLock()
-	defer r.namespaceTrackerLock.RUnlock()
-	if r.namespaceTracker == nil {
-		return false
-	}
-	vaSet, exists := r.namespaceTracker[namespace]
-	if !exists {
-		return false
-	}
-	// Return true only if namespace has at least one VA
-	return len(vaSet) > 0
-}
+// Namespace tracking is now handled by the datastore.
+// Use r.Datastore.NamespaceTrack(), r.Datastore.NamespaceUntrack(), and r.Datastore.IsNamespaceTracked().
 
 // ConfigMap-related methods have been moved to configmap_handler.go
 
@@ -366,8 +301,8 @@ func (r *VariantAutoscalingReconciler) SetupWithManager(mgr ctrl.Manager) error 
 			&corev1.ConfigMap{},
 			handler.EnqueueRequestsFromMapFunc(r.handleConfigMapEvent),
 			// Predicate to filter only the target configmap
-			// Pass namespace tracker check function to filter at watch level (prevents cluster-wide watching)
-			builder.WithPredicates(ConfigMapPredicate(r.isNamespaceTracked)),
+			// Pass datastore to filter at watch level (prevents cluster-wide watching)
+			builder.WithPredicates(ConfigMapPredicate(r.Datastore)),
 		).
 		// Watch ServiceMonitor for controller's own metrics
 		Watches(

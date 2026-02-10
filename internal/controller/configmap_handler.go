@@ -311,7 +311,7 @@ func (r *VariantAutoscalingReconciler) shouldWatchNamespaceLocalConfigMap(ctx co
 	}
 
 	// Check VA-based tracking (automatic)
-	if r.isNamespaceTracked(namespace) {
+	if r.Datastore != nil && r.Datastore.IsNamespaceTracked(namespace) {
 		return true
 	}
 

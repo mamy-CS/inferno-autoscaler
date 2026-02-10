@@ -5,6 +5,7 @@ import (
 
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/config"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/constants"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/datastore"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/metrics"
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -20,10 +21,9 @@ import (
 // - Global ConfigMaps: well-known names in controller namespace
 // - Namespace-local ConfigMaps: well-known names in tracked namespaces (namespaces with VAs)
 //
-// namespaceChecker is a function that returns true if a namespace should be watched for ConfigMaps.
-// It should check the namespace tracker (fast, in-memory check). Opt-in labels and exclusion
-// are handled in the handler to avoid expensive API calls in the predicate.
-func ConfigMapPredicate(namespaceChecker func(string) bool) predicate.Predicate {
+// ds is the datastore used to check if a namespace is tracked (fast, in-memory check).
+// Opt-in labels and exclusion are handled in the handler to avoid expensive API calls in the predicate.
+func ConfigMapPredicate(ds datastore.Datastore) predicate.Predicate {
 	return predicate.NewPredicateFuncs(func(obj client.Object) bool {
 		name := obj.GetName()
 		namespace := obj.GetNamespace()
@@ -49,11 +49,11 @@ func ConfigMapPredicate(namespaceChecker func(string) bool) predicate.Predicate 
 		// Namespace-local ConfigMaps: only allow in tracked namespaces (namespaces with VAs)
 		// This prevents cluster-wide watching and cache sync timeouts.
 		// Opt-in labels and exclusion are still checked in the handler for accuracy.
-		if namespaceChecker != nil {
-			return namespaceChecker(namespace)
+		if ds != nil {
+			return ds.IsNamespaceTracked(namespace)
 		}
 
-		// If no namespace checker provided, fall back to allowing all (backwards compatible)
+		// If no datastore provided, fall back to allowing all (backwards compatible)
 		// This should not happen in production, but provides safety during setup.
 		return true
 	})

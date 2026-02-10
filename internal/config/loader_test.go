@@ -31,17 +31,17 @@ func TestLoad_Defaults(t *testing.T) {
 	}
 
 	// Verify defaults
-	if cfg.Static.MetricsAddr != "0" {
-		t.Errorf("Expected MetricsAddr default '0', got %q", cfg.Static.MetricsAddr)
+	if cfg.MetricsAddr() != "0" {
+		t.Errorf("Expected MetricsAddr default '0', got %q", cfg.MetricsAddr())
 	}
-	if cfg.Static.ProbeAddr != ":8081" {
-		t.Errorf("Expected ProbeAddr default ':8081', got %q", cfg.Static.ProbeAddr)
+	if cfg.ProbeAddr() != ":8081" {
+		t.Errorf("Expected ProbeAddr default ':8081', got %q", cfg.ProbeAddr())
 	}
-	if cfg.Static.EnableLeaderElection != false {
-		t.Errorf("Expected EnableLeaderElection default false, got %v", cfg.Static.EnableLeaderElection)
+	if cfg.EnableLeaderElection() != false {
+		t.Errorf("Expected EnableLeaderElection default false, got %v", cfg.EnableLeaderElection())
 	}
-	if cfg.Dynamic.OptimizationInterval != 60*time.Second {
-		t.Errorf("Expected OptimizationInterval default 60s, got %v", cfg.Dynamic.OptimizationInterval)
+	if cfg.OptimizationInterval() != 60*time.Second {
+		t.Errorf("Expected OptimizationInterval default 60s, got %v", cfg.OptimizationInterval())
 	}
 }
 
@@ -77,8 +77,8 @@ func TestLoad_FlagsPrecedence(t *testing.T) {
 	}
 
 	// Flag should take precedence
-	if cfg.Static.MetricsAddr != "flag-value" {
-		t.Errorf("Expected MetricsAddr 'flag-value' (from flag), got %q", cfg.Static.MetricsAddr)
+	if cfg.MetricsAddr() != "flag-value" {
+		t.Errorf("Expected MetricsAddr 'flag-value' (from flag), got %q", cfg.MetricsAddr())
 	}
 }
 
@@ -111,8 +111,8 @@ func TestLoad_EnvPrecedence(t *testing.T) {
 	}
 
 	// Env should take precedence over ConfigMap
-	if cfg.Static.MetricsAddr != "env-value" {
-		t.Errorf("Expected MetricsAddr 'env-value' (from env), got %q", cfg.Static.MetricsAddr)
+	if cfg.MetricsAddr() != "env-value" {
+		t.Errorf("Expected MetricsAddr 'env-value' (from env), got %q", cfg.MetricsAddr())
 	}
 }
 
@@ -141,8 +141,8 @@ func TestLoad_ConfigMapPrecedence(t *testing.T) {
 	}
 
 	// ConfigMap should be used
-	if cfg.Static.MetricsAddr != "cm-value" {
-		t.Errorf("Expected MetricsAddr 'cm-value' (from ConfigMap), got %q", cfg.Static.MetricsAddr)
+	if cfg.MetricsAddr() != "cm-value" {
+		t.Errorf("Expected MetricsAddr 'cm-value' (from ConfigMap), got %q", cfg.MetricsAddr())
 	}
 }
 
@@ -174,11 +174,11 @@ func TestLoad_PrometheusConfigFromEnv(t *testing.T) {
 		t.Fatalf("Load() failed: %v", err)
 	}
 
-	if cfg.Static.Prometheus == nil {
+	if cfg.PrometheusBaseURL() == "" {
 		t.Fatal("Expected Prometheus config to be loaded")
 	}
-	if cfg.Static.Prometheus.BaseURL != "https://prometheus-env:9090" {
-		t.Errorf("Expected Prometheus BaseURL from env, got %q", cfg.Static.Prometheus.BaseURL)
+	if cfg.PrometheusBaseURL() != "https://prometheus-env:9090" {
+		t.Errorf("Expected Prometheus BaseURL from env, got %q", cfg.PrometheusBaseURL())
 	}
 }
 
@@ -203,11 +203,11 @@ func TestLoad_PrometheusConfigFromConfigMap(t *testing.T) {
 		t.Fatalf("Load() failed: %v", err)
 	}
 
-	if cfg.Static.Prometheus == nil {
+	if cfg.PrometheusBaseURL() == "" {
 		t.Fatal("Expected Prometheus config to be loaded")
 	}
-	if cfg.Static.Prometheus.BaseURL != "https://prometheus-cm:9090" {
-		t.Errorf("Expected Prometheus BaseURL from ConfigMap, got %q", cfg.Static.Prometheus.BaseURL)
+	if cfg.PrometheusBaseURL() != "https://prometheus-cm:9090" {
+		t.Errorf("Expected Prometheus BaseURL from ConfigMap, got %q", cfg.PrometheusBaseURL())
 	}
 }
 
@@ -234,8 +234,8 @@ func TestLoad_DynamicConfig_OptimizationInterval(t *testing.T) {
 		t.Fatalf("Load() failed: %v", err)
 	}
 
-	if cfg.Dynamic.OptimizationInterval != 30*time.Second {
-		t.Errorf("Expected OptimizationInterval 30s, got %v", cfg.Dynamic.OptimizationInterval)
+	if cfg.OptimizationInterval() != 30*time.Second {
+		t.Errorf("Expected OptimizationInterval 30s, got %v", cfg.OptimizationInterval())
 	}
 }
 
@@ -263,8 +263,8 @@ func TestLoad_DynamicConfig_InvalidOptimizationInterval(t *testing.T) {
 	}
 
 	// Should fall back to default
-	if cfg.Dynamic.OptimizationInterval != 60*time.Second {
-		t.Errorf("Expected OptimizationInterval to fall back to default 60s, got %v", cfg.Dynamic.OptimizationInterval)
+	if cfg.OptimizationInterval() != 60*time.Second {
+		t.Errorf("Expected OptimizationInterval to fall back to default 60s, got %v", cfg.OptimizationInterval())
 	}
 }
 
@@ -431,14 +431,14 @@ func TestLoad_FeatureFlags(t *testing.T) {
 		t.Fatalf("Load() failed: %v", err)
 	}
 
-	if !cfg.Static.ScaleToZeroEnabled {
+	if !cfg.ScaleToZeroEnabled() {
 		t.Error("Expected ScaleToZeroEnabled to be true")
 	}
-	if cfg.Static.LimitedModeEnabled {
+	if cfg.LimitedModeEnabled() {
 		t.Error("Expected LimitedModeEnabled to be false")
 	}
-	if cfg.Static.ScaleFromZeroMaxConcurrency != 5 {
-		t.Errorf("Expected ScaleFromZeroMaxConcurrency 5, got %d", cfg.Static.ScaleFromZeroMaxConcurrency)
+	if cfg.ScaleFromZeroMaxConcurrency() != 5 {
+		t.Errorf("Expected ScaleFromZeroMaxConcurrency 5, got %d", cfg.ScaleFromZeroMaxConcurrency())
 	}
 }
 
@@ -522,34 +522,28 @@ func TestConfig_UpdateDynamicConfig(t *testing.T) {
 		t.Fatalf("Load() failed: %v", err)
 	}
 
-	// Update dynamic config
-	newDynamic := DynamicConfig{
-		OptimizationInterval: 30 * time.Second,
-		PrometheusCache:      defaultPrometheusCacheConfig(),
-		Global: &NamespaceConfig{
-			SaturationConfig: map[string]interfaces.SaturationScalingConfig{
-				"test": {
-					KvCacheThreshold:     0.9,
-					QueueLengthThreshold: 10,
-					KvSpareTrigger:       0.2,
-					QueueSpareTrigger:    5,
-				},
-			},
-			ScaleToZeroConfig: make(ScaleToZeroConfigData),
-		},
-		NamespaceConfigs: make(map[string]*NamespaceConfig),
-	}
+	// Update optimization interval
+	cfg.UpdateOptimizationInterval(30 * time.Second)
 
-	cfg.UpdateDynamicConfig(newDynamic)
+	// Update saturation config
+	satConfig := map[string]interfaces.SaturationScalingConfig{
+		"test": {
+			KvCacheThreshold:     0.9,
+			QueueLengthThreshold: 10,
+			KvSpareTrigger:       0.2,
+			QueueSpareTrigger:    5,
+		},
+	}
+	cfg.UpdateSaturationConfig(satConfig)
 
 	// Verify update
 	if cfg.OptimizationInterval() != 30*time.Second {
 		t.Errorf("Expected updated OptimizationInterval 30s, got %v", cfg.OptimizationInterval())
 	}
 
-	satConfig := cfg.SaturationConfig()
-	if len(satConfig) != 1 {
-		t.Fatalf("Expected 1 saturation config entry after update, got %d", len(satConfig))
+	updatedSatConfig := cfg.SaturationConfig()
+	if len(updatedSatConfig) != 1 {
+		t.Fatalf("Expected 1 saturation config entry after update, got %d", len(updatedSatConfig))
 	}
 }
 
@@ -570,8 +564,8 @@ func TestLoad_Validation_OptimizationInterval(t *testing.T) {
 	}
 
 	// Default should be valid (> 0)
-	if cfg.Dynamic.OptimizationInterval <= 0 {
-		t.Errorf("Expected positive optimization interval, got %v", cfg.Dynamic.OptimizationInterval)
+	if cfg.OptimizationInterval() <= 0 {
+		t.Errorf("Expected positive optimization interval, got %v", cfg.OptimizationInterval())
 	}
 }
 
@@ -589,8 +583,8 @@ func TestLoad_NoConfigMap(t *testing.T) {
 	}
 
 	// Should use defaults
-	if cfg.Dynamic.OptimizationInterval != 60*time.Second {
-		t.Errorf("Expected default OptimizationInterval 60s, got %v", cfg.Dynamic.OptimizationInterval)
+	if cfg.OptimizationInterval() != 60*time.Second {
+		t.Errorf("Expected default OptimizationInterval 60s, got %v", cfg.OptimizationInterval())
 	}
 }
 
@@ -627,7 +621,7 @@ func TestLoad_BoolPrecedence(t *testing.T) {
 		}
 
 		// Flag should take precedence (false), not ConfigMap (true)
-		if cfg.Static.EnableLeaderElection {
+		if cfg.EnableLeaderElection() {
 			t.Errorf("Expected EnableLeaderElection=false (from flag), got true (ConfigMap was incorrectly used)")
 		}
 	})
@@ -657,7 +651,7 @@ func TestLoad_BoolPrecedence(t *testing.T) {
 		}
 
 		// Flag should take precedence (true), not ConfigMap (false)
-		if !cfg.Static.EnableLeaderElection {
+		if !cfg.EnableLeaderElection() {
 			t.Errorf("Expected EnableLeaderElection=true (from flag), got false (ConfigMap was incorrectly used)")
 		}
 	})
@@ -690,7 +684,7 @@ func TestLoad_BoolPrecedence(t *testing.T) {
 		}
 
 		// Env should take precedence (true), not ConfigMap (false)
-		if !cfg.Static.EnableLeaderElection {
+		if !cfg.EnableLeaderElection() {
 			t.Errorf("Expected EnableLeaderElection=true (from env), got false (ConfigMap was incorrectly used)")
 		}
 	})
@@ -722,7 +716,7 @@ func TestLoad_BoolPrecedence(t *testing.T) {
 		}
 
 		// ConfigMap should be used (true)
-		if !cfg.Static.EnableLeaderElection {
+		if !cfg.EnableLeaderElection() {
 			t.Errorf("Expected EnableLeaderElection=true (from ConfigMap), got false")
 		}
 	})
@@ -761,8 +755,8 @@ func TestLoad_DurationPrecedence(t *testing.T) {
 		}
 
 		// Flag should take precedence (0), not ConfigMap (30s)
-		if cfg.Static.LeaseDuration != 0 {
-			t.Errorf("Expected LeaseDuration=0 (from flag), got %v (ConfigMap was incorrectly used)", cfg.Static.LeaseDuration)
+		if cfg.LeaseDuration() != 0 {
+			t.Errorf("Expected LeaseDuration=0 (from flag), got %v (ConfigMap was incorrectly used)", cfg.LeaseDuration())
 		}
 	})
 
@@ -791,8 +785,8 @@ func TestLoad_DurationPrecedence(t *testing.T) {
 		}
 
 		// Flag should take precedence (45s), not ConfigMap (30s)
-		if cfg.Static.LeaseDuration != 45*time.Second {
-			t.Errorf("Expected LeaseDuration=45s (from flag), got %v (ConfigMap was incorrectly used)", cfg.Static.LeaseDuration)
+		if cfg.LeaseDuration() != 45*time.Second {
+			t.Errorf("Expected LeaseDuration=45s (from flag), got %v (ConfigMap was incorrectly used)", cfg.LeaseDuration())
 		}
 	})
 
@@ -824,8 +818,8 @@ func TestLoad_DurationPrecedence(t *testing.T) {
 		}
 
 		// Env should take precedence (45s), not ConfigMap (30s)
-		if cfg.Static.LeaseDuration != 45*time.Second {
-			t.Errorf("Expected LeaseDuration=45s (from env), got %v (ConfigMap was incorrectly used)", cfg.Static.LeaseDuration)
+		if cfg.LeaseDuration() != 45*time.Second {
+			t.Errorf("Expected LeaseDuration=45s (from env), got %v (ConfigMap was incorrectly used)", cfg.LeaseDuration())
 		}
 	})
 
@@ -856,8 +850,8 @@ func TestLoad_DurationPrecedence(t *testing.T) {
 		}
 
 		// ConfigMap should be used (30s)
-		if cfg.Static.LeaseDuration != 30*time.Second {
-			t.Errorf("Expected LeaseDuration=30s (from ConfigMap), got %v", cfg.Static.LeaseDuration)
+		if cfg.LeaseDuration() != 30*time.Second {
+			t.Errorf("Expected LeaseDuration=30s (from ConfigMap), got %v", cfg.LeaseDuration())
 		}
 	})
 
@@ -888,8 +882,8 @@ func TestLoad_DurationPrecedence(t *testing.T) {
 		}
 
 		// ConfigMap value of 0 should be used (not default)
-		if cfg.Static.LeaseDuration != 0 {
-			t.Errorf("Expected LeaseDuration=0 (from ConfigMap), got %v (default was incorrectly used)", cfg.Static.LeaseDuration)
+		if cfg.LeaseDuration() != 0 {
+			t.Errorf("Expected LeaseDuration=0 (from ConfigMap), got %v (default was incorrectly used)", cfg.LeaseDuration())
 		}
 	})
 
@@ -911,8 +905,8 @@ func TestLoad_DurationPrecedence(t *testing.T) {
 		}
 
 		// Default should be used (60s from loadStaticConfig defaults)
-		if cfg.Static.LeaseDuration != 60*time.Second {
-			t.Errorf("Expected LeaseDuration=60s (from default), got %v", cfg.Static.LeaseDuration)
+		if cfg.LeaseDuration() != 60*time.Second {
+			t.Errorf("Expected LeaseDuration=60s (from default), got %v", cfg.LeaseDuration())
 		}
 	})
 }

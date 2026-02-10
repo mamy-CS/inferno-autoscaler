@@ -10,21 +10,19 @@ import (
 // This implements fail-fast behavior: the controller should not start with invalid configuration.
 func Validate(cfg *Config) error {
 	// Prometheus config is required
-	if cfg.Static.Prometheus == nil {
-		return fmt.Errorf("prometheus configuration is required")
-	}
-	if cfg.Static.Prometheus.BaseURL == "" {
+	if cfg.PrometheusBaseURL() == "" {
 		return fmt.Errorf("prometheus BaseURL is required")
 	}
 
 	// Optimization interval must be positive
-	if cfg.Dynamic.OptimizationInterval <= 0 {
-		return fmt.Errorf("optimization interval must be positive, got %v", cfg.Dynamic.OptimizationInterval)
+	interval := cfg.OptimizationInterval()
+	if interval <= 0 {
+		return fmt.Errorf("optimization interval must be positive, got %v", interval)
 	}
 
 	// Scale-from-zero max concurrency must be positive
-	if cfg.Static.ScaleFromZeroMaxConcurrency <= 0 {
-		return fmt.Errorf("scale-from-zero max concurrency must be positive, got %d", cfg.Static.ScaleFromZeroMaxConcurrency)
+	if cfg.ScaleFromZeroMaxConcurrency() <= 0 {
+		return fmt.Errorf("scale-from-zero max concurrency must be positive, got %d", cfg.ScaleFromZeroMaxConcurrency())
 	}
 
 	return nil
@@ -59,10 +57,7 @@ func DetectImmutableParameterChanges(cfg *Config, configMapData map[string]strin
 
 	// Check PROMETHEUS_BASE_URL
 	if newURL, ok := configMapData["PROMETHEUS_BASE_URL"]; ok {
-		currentURL := ""
-		if cfg.Static.Prometheus != nil {
-			currentURL = cfg.Static.Prometheus.BaseURL
-		}
+		currentURL := cfg.PrometheusBaseURL()
 		if newURL != currentURL {
 			changes = append(changes, ImmutableParameterChange{
 				Key:       "PROMETHEUS_BASE_URL",
@@ -75,7 +70,7 @@ func DetectImmutableParameterChanges(cfg *Config, configMapData map[string]strin
 
 	// Check METRICS_BIND_ADDRESS
 	if newAddr, ok := configMapData["METRICS_BIND_ADDRESS"]; ok {
-		currentAddr := cfg.Static.MetricsAddr
+		currentAddr := cfg.MetricsAddr()
 		if newAddr != currentAddr {
 			changes = append(changes, ImmutableParameterChange{
 				Key:       "METRICS_BIND_ADDRESS",
@@ -88,7 +83,7 @@ func DetectImmutableParameterChanges(cfg *Config, configMapData map[string]strin
 
 	// Check HEALTH_PROBE_BIND_ADDRESS
 	if newAddr, ok := configMapData["HEALTH_PROBE_BIND_ADDRESS"]; ok {
-		currentAddr := cfg.Static.ProbeAddr
+		currentAddr := cfg.ProbeAddr()
 		if newAddr != currentAddr {
 			changes = append(changes, ImmutableParameterChange{
 				Key:       "HEALTH_PROBE_BIND_ADDRESS",
@@ -101,7 +96,7 @@ func DetectImmutableParameterChanges(cfg *Config, configMapData map[string]strin
 
 	// Check LEADER_ELECTION_ID
 	if newID, ok := configMapData["LEADER_ELECTION_ID"]; ok {
-		currentID := cfg.Static.LeaderElectionID
+		currentID := cfg.LeaderElectionID()
 		if newID != currentID {
 			changes = append(changes, ImmutableParameterChange{
 				Key:       "LEADER_ELECTION_ID",
@@ -116,23 +111,24 @@ func DetectImmutableParameterChanges(cfg *Config, configMapData map[string]strin
 	// Note: These are typically set via CLI flags, but we check for completeness
 	tlsKeys := []struct {
 		key       string
-		current   string
+		getter    func() string
 		paramName string
 	}{
-		{"WEBHOOK_CERT_PATH", cfg.Static.WebhookCertPath, "Webhook certificate path"},
-		{"WEBHOOK_CERT_NAME", cfg.Static.WebhookCertName, "Webhook certificate name"},
-		{"WEBHOOK_CERT_KEY", cfg.Static.WebhookCertKey, "Webhook certificate key"},
-		{"METRICS_CERT_PATH", cfg.Static.MetricsCertPath, "Metrics certificate path"},
-		{"METRICS_CERT_NAME", cfg.Static.MetricsCertName, "Metrics certificate name"},
-		{"METRICS_CERT_KEY", cfg.Static.MetricsCertKey, "Metrics certificate key"},
+		{"WEBHOOK_CERT_PATH", cfg.WebhookCertPath, "Webhook certificate path"},
+		{"WEBHOOK_CERT_NAME", cfg.WebhookCertName, "Webhook certificate name"},
+		{"WEBHOOK_CERT_KEY", cfg.WebhookCertKey, "Webhook certificate key"},
+		{"METRICS_CERT_PATH", cfg.MetricsCertPath, "Metrics certificate path"},
+		{"METRICS_CERT_NAME", cfg.MetricsCertName, "Metrics certificate name"},
+		{"METRICS_CERT_KEY", cfg.MetricsCertKey, "Metrics certificate key"},
 	}
 
 	for _, tlsKey := range tlsKeys {
 		if newValue, ok := configMapData[tlsKey.key]; ok {
-			if newValue != tlsKey.current {
+			currentValue := tlsKey.getter()
+			if newValue != currentValue {
 				changes = append(changes, ImmutableParameterChange{
 					Key:       tlsKey.key,
-					OldValue:  tlsKey.current,
+					OldValue:  currentValue,
 					NewValue:  newValue,
 					Parameter: tlsKey.paramName,
 				})
