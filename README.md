@@ -4,7 +4,7 @@
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
 
-The Workload-Variant-Autoscaler (WVA) is a Kubernetes controller and global optimizer that provide  intelligent metrics generation for inference model servers.These metrics are later consumed by external autoscalers (HPA/KEDA) to scale the object supporting scale subresource. The high-level details of the algorithm (optimizer) are [here](https://github.com/llm-d-incubation/workload-variant-autoscaler/blob/main/docs/saturation-scaling-config.md ). It determines optimal replica counts for given request traffic loads for inference servers.
+The Workload Variant Autoscaler (WVA) is a Kubernetes-based global autoscaler for inference model servers serving LLMs. WVA works alongside standard Kubernetes HPA autoscaler and external autoscalers like KEDA to scale the object supporting scale subresource. The high-level details of the algorithm (optimizer) are [here](https://github.com/llm-d-incubation/workload-variant-autoscaler/blob/main/docs/saturation-scaling-config.md ). It determines optimal replica counts for given request traffic loads for inference servers by considering constraints such as GPU count (cluster resources), energy-budget and performance-budget (latency/throughput).
 <!--
 <![Architecture](docs/design/diagrams/inferno-WVA-design.png)>
 -->
