@@ -25,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/config"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
@@ -219,6 +220,22 @@ var _ = BeforeSuite(func() {
 	_, _ = fmt.Fprintf(GinkgoWriter, "Using the following configuration:\n")
 	_, _ = fmt.Fprintf(GinkgoWriter, "-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=\n")
 	_, _ = fmt.Fprintf(GinkgoWriter, "CONTROLLER_NAMESPACE=%s\n", controllerNamespace)
+	
+	// Verify namespace matches controller expectations
+	// Note: Controller uses config.SystemNamespace() which checks POD_NAMESPACE env var
+	// or defaults to "workload-variant-autoscaler-system"
+	// Ensure CONTROLLER_NAMESPACE matches the actual controller deployment namespace
+	expectedSystemNamespace := config.SystemNamespace()
+	if controllerNamespace != expectedSystemNamespace {
+		_, _ = fmt.Fprintf(GinkgoWriter, "WARNING: CONTROLLER_NAMESPACE (%s) does not match controller's expected namespace (%s)\n",
+			controllerNamespace, expectedSystemNamespace)
+		_, _ = fmt.Fprintf(GinkgoWriter, "  Controller uses POD_NAMESPACE env var if set, otherwise defaults to %s\n",
+			config.DefaultNamespace)
+		_, _ = fmt.Fprintf(GinkgoWriter, "  Ensure CONTROLLER_NAMESPACE matches the actual controller deployment namespace\n")
+	} else {
+		_, _ = fmt.Fprintf(GinkgoWriter, "EXPECTED_SYSTEM_NAMESPACE=%s (matches CONTROLLER_NAMESPACE)\n", expectedSystemNamespace)
+	}
+	
 	_, _ = fmt.Fprintf(GinkgoWriter, "MONITORING_NAMESPACE=%s\n", monitoringNamespace)
 	_, _ = fmt.Fprintf(GinkgoWriter, "LLMD_NAMESPACE=%s\n", llmDNamespace)
 	if multiModelMode {

@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/config"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	batchv1 "k8s.io/api/batch/v1"
@@ -41,6 +42,14 @@ const (
 	scaleUpFromZeroTimeout = 5 * time.Minute
 	// Number of requests to send to trigger scale-from-zero
 	scaleFromZeroRequestCount = 10
+	// Scale-to-zero ConfigMap name - required for scale-from-zero tests because:
+	// 1. Scale-from-zero requires the deployment to first scale TO zero (when idle)
+	// 2. Then it tests scaling FROM zero (when requests arrive)
+	// 3. Without scale-to-zero enabled, the deployment never reaches 0 replicas, so
+	//    there's nothing to scale from. The test flow is: enable scale-to-zero →
+	//    wait for scale to zero → test scale from zero when requests arrive.
+	// Use config package constant to ensure consistency with controller expectations
+	scaleToZeroConfigMapName = config.DefaultScaleToZeroConfigMapName
 )
 
 var _ = Describe("Scale-From-Zero Test", Ordered, func() {
@@ -59,6 +68,18 @@ var _ = Describe("Scale-From-Zero Test", Ordered, func() {
 	BeforeAll(func() {
 		ctx = context.Background()
 
+		// Verify controller namespace matches what controller expects
+		// The controller uses config.SystemNamespace() which checks POD_NAMESPACE env var
+		// or defaults to "workload-variant-autoscaler-system"
+		expectedSystemNamespace := config.SystemNamespace()
+		if controllerNamespace != expectedSystemNamespace {
+			_, _ = fmt.Fprintf(GinkgoWriter, "WARNING: CONTROLLER_NAMESPACE (%s) does not match controller's expected namespace (%s)\n",
+				controllerNamespace, expectedSystemNamespace)
+			_, _ = fmt.Fprintf(GinkgoWriter, "  Controller uses POD_NAMESPACE env var if set, otherwise defaults to %s\n",
+				config.DefaultNamespace)
+			_, _ = fmt.Fprintf(GinkgoWriter, "  Ensure CONTROLLER_NAMESPACE matches the actual controller deployment namespace\n")
+		}
+
 		// Use the primary llm-d namespace for testing
 		testNamespace = llmDNamespace
 		testDeploymentName = getDeploymentName()
@@ -75,10 +96,13 @@ var _ = Describe("Scale-From-Zero Test", Ordered, func() {
 		_, _ = fmt.Fprintf(GinkgoWriter, "Starting Scale-From-Zero Tests\n")
 		_, _ = fmt.Fprintf(GinkgoWriter, "  Scale-to-Zero Enabled: %v\n", scaleToZeroEnabled)
 		_, _ = fmt.Fprintf(GinkgoWriter, "  HPA Scale-to-Zero Feature Gate: %v\n", hpaScaleToZeroEnabled)
+		_, _ = fmt.Fprintf(GinkgoWriter, "  Controller Namespace: %s\n", controllerNamespace)
+		_, _ = fmt.Fprintf(GinkgoWriter, "  Expected System Namespace: %s\n", expectedSystemNamespace)
 		_, _ = fmt.Fprintf(GinkgoWriter, "  Test Namespace: %s\n", testNamespace)
 		_, _ = fmt.Fprintf(GinkgoWriter, "  Test Deployment: %s\n", testDeploymentName)
 		_, _ = fmt.Fprintf(GinkgoWriter, "  Test Gateway: %s\n", testGatewayService)
 		_, _ = fmt.Fprintf(GinkgoWriter, "  Test Model ID: %s\n", testModelID)
+		_, _ = fmt.Fprintf(GinkgoWriter, "  Scale-to-Zero ConfigMap: %s\n", scaleToZeroConfigMapName)
 		_, _ = fmt.Fprintf(GinkgoWriter, "========================================\n\n")
 
 		if !hpaScaleToZeroEnabled {

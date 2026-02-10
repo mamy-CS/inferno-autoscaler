@@ -22,6 +22,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/config"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
@@ -33,7 +34,8 @@ import (
 
 // Scale-to-zero test configuration
 const (
-	scaleToZeroConfigMapName = "wva-model-scale-to-zero-config"
+	// Use config package constant to ensure consistency with controller expectations
+	scaleToZeroConfigMapName = config.DefaultScaleToZeroConfigMapName
 	// retentionPeriod for scale-to-zero tests
 	// Using a short period for faster test execution
 	retentionPeriod = "3m"
@@ -51,6 +53,18 @@ var _ = Describe("Scale-to-Zero Test", Ordered, func() {
 	BeforeAll(func() {
 		ctx = context.Background()
 
+		// Verify controller namespace matches what controller expects
+		// The controller uses config.SystemNamespace() which checks POD_NAMESPACE env var
+		// or defaults to "workload-variant-autoscaler-system"
+		expectedSystemNamespace := config.SystemNamespace()
+		if controllerNamespace != expectedSystemNamespace {
+			_, _ = fmt.Fprintf(GinkgoWriter, "WARNING: CONTROLLER_NAMESPACE (%s) does not match controller's expected namespace (%s)\n",
+				controllerNamespace, expectedSystemNamespace)
+			_, _ = fmt.Fprintf(GinkgoWriter, "  Controller uses POD_NAMESPACE env var if set, otherwise defaults to %s\n",
+				config.DefaultNamespace)
+			_, _ = fmt.Fprintf(GinkgoWriter, "  Ensure CONTROLLER_NAMESPACE matches the actual controller deployment namespace\n")
+		}
+
 		// Check if scale-to-zero is enabled via environment variable
 		scaleToZeroEnabled = os.Getenv("WVA_SCALE_TO_ZERO") == "true"
 
@@ -62,8 +76,10 @@ var _ = Describe("Scale-to-Zero Test", Ordered, func() {
 		_, _ = fmt.Fprintf(GinkgoWriter, "  WVA Scale-to-Zero Enabled: %v\n", scaleToZeroEnabled)
 		_, _ = fmt.Fprintf(GinkgoWriter, "  HPA Scale-to-Zero Feature Gate: %v\n", hpaScaleToZeroEnabled)
 		_, _ = fmt.Fprintf(GinkgoWriter, "  Controller Namespace: %s\n", controllerNamespace)
+		_, _ = fmt.Fprintf(GinkgoWriter, "  Expected System Namespace: %s\n", expectedSystemNamespace)
 		_, _ = fmt.Fprintf(GinkgoWriter, "  llm-d Namespace: %s\n", llmDNamespace)
 		_, _ = fmt.Fprintf(GinkgoWriter, "  Deployment: %s\n", deployment)
+		_, _ = fmt.Fprintf(GinkgoWriter, "  Scale-to-Zero ConfigMap: %s\n", scaleToZeroConfigMapName)
 		_, _ = fmt.Fprintf(GinkgoWriter, "========================================\n\n")
 
 		// Backup existing scale-to-zero ConfigMap if it exists
