@@ -111,12 +111,12 @@ func ValidateRetentionPeriod(retentionPeriod string) (time.Duration, error) {
 	return duration, nil
 }
 
-// GetScaleToZeroRetentionPeriod returns the retention period for scale-to-zero for a specific model.
+// ScaleToZeroRetentionPeriod returns the retention period for scale-to-zero for a specific model.
 // Configuration priority (highest to lowest):
 // 1. Per-model retention period in ConfigMap
 // 2. Global defaults retention period in ConfigMap (under "__defaults__" key)
 // 3. System default (10 minutes)
-func GetScaleToZeroRetentionPeriod(configData ScaleToZeroConfigData, modelID string) time.Duration {
+func ScaleToZeroRetentionPeriod(configData ScaleToZeroConfigData, modelID string) time.Duration {
 	// Check per-model retention period first (highest priority)
 	if config, exists := configData[modelID]; exists && config.RetentionPeriod != "" {
 		duration, err := ValidateRetentionPeriod(config.RetentionPeriod)
@@ -147,9 +147,9 @@ func GetScaleToZeroRetentionPeriod(configData ScaleToZeroConfigData, modelID str
 	return DefaultScaleToZeroRetentionPeriod
 }
 
-// GetMinNumReplicas returns the minimum number of replicas for a specific model based on
+// MinNumReplicas returns the minimum number of replicas for a specific model based on
 // scale-to-zero configuration. Returns 0 if scale-to-zero is enabled, otherwise returns 1.
-func GetMinNumReplicas(configData ScaleToZeroConfigData, modelID string) int {
+func MinNumReplicas(configData ScaleToZeroConfigData, modelID string) int {
 	if IsScaleToZeroEnabled(configData, modelID) {
 		return 0
 	}

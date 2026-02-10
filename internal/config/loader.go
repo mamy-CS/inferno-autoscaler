@@ -161,7 +161,7 @@ func loadConfig(ctx context.Context, cfg *Config, flags StaticConfigFlags, k8sCl
 	cfg.tls.metricsCertKey = getStringValue(flags.MetricsCertKey, os.Getenv("METRICS_CERT_KEY"), cmData["METRICS_CERT_KEY"], cfg.tls.metricsCertKey)
 
 	// Load Prometheus config (required) - env > ConfigMap
-	promConfig, err := GetPrometheusConfig(ctx, k8sClient)
+	promConfig, err := PrometheusConfig(ctx, k8sClient)
 	if err != nil {
 		return fmt.Errorf("failed to load Prometheus config: %w", err)
 	}

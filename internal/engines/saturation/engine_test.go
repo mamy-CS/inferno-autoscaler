@@ -146,7 +146,7 @@ data:
 			}
 			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
 
-			prometheusURL, err := config.GetPrometheusConfigFromConfigMap(ctx, k8sClient)
+			prometheusURL, err := config.PrometheusConfigFromConfigMap(ctx, k8sClient)
 			Expect(err).NotTo(HaveOccurred(), "Unexpected error when reading variant autoscaling optimization ConfigMap with missing Prometheus URL")
 			Expect(prometheusURL).To(BeNil(), "Expected empty Prometheus URL")
 		})
@@ -179,7 +179,7 @@ data:
 			}
 			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
 
-			_, err = config.GetPrometheusConfig(ctx, k8sClient)
+			_, err = config.PrometheusConfig(ctx, k8sClient)
 			Expect(err).To(HaveOccurred(), "It should fail when neither env variable nor Prometheus URL are found")
 		})
 
@@ -213,7 +213,7 @@ data:
 			}
 			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
 
-			prometheusConfig, err := config.GetPrometheusConfigFromConfigMap(ctx, k8sClient)
+			prometheusConfig, err := config.PrometheusConfigFromConfigMap(ctx, k8sClient)
 			Expect(err).NotTo(HaveOccurred(), "It should not fail when neither env variable nor Prometheus URL are found")
 
 			Expect(prometheusConfig.BaseURL).To(Equal("https://kube-prometheus-stack-prometheus.workload-variant-autoscaler-monitoring.svc.cluster.local:9090"), "Expected Base URL to be set")

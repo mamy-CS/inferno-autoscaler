@@ -54,10 +54,10 @@ func DefaultFreshnessThresholds() FreshnessThresholds {
 	}
 }
 
-// GetPrometheusConfig retrieves Prometheus configuration from environment variables or ConfigMap
-func GetPrometheusConfig(ctx context.Context, k8sClient client.Client) (*interfaces.PrometheusConfig, error) {
+// PrometheusConfig retrieves Prometheus configuration from environment variables or ConfigMap
+func PrometheusConfig(ctx context.Context, k8sClient client.Client) (*interfaces.PrometheusConfig, error) {
 	// Try environment variables first
-	config, err := GetPrometheusConfigFromEnv()
+	config, err := PrometheusConfigFromEnv()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get config from environment: %w", err)
 	}
@@ -66,7 +66,7 @@ func GetPrometheusConfig(ctx context.Context, k8sClient client.Client) (*interfa
 	}
 
 	// Try ConfigMap second
-	config, err = GetPrometheusConfigFromConfigMap(ctx, k8sClient)
+	config, err = PrometheusConfigFromConfigMap(ctx, k8sClient)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get config from ConfigMap: %w", err)
 	}
@@ -79,8 +79,8 @@ func GetPrometheusConfig(ctx context.Context, k8sClient client.Client) (*interfa
 	return nil, fmt.Errorf("no Prometheus configuration found. Please set PROMETHEUS_BASE_URL environment variable or configure via ConfigMap")
 }
 
-// GetPrometheusConfigFromEnv retrieves Prometheus configuration from environment variables
-func GetPrometheusConfigFromEnv() (*interfaces.PrometheusConfig, error) {
+// PrometheusConfigFromEnv retrieves Prometheus configuration from environment variables
+func PrometheusConfigFromEnv() (*interfaces.PrometheusConfig, error) {
 	promAddr := os.Getenv("PROMETHEUS_BASE_URL")
 	if promAddr == "" {
 		return nil, nil // No config found, but not an error
@@ -90,8 +90,8 @@ func GetPrometheusConfigFromEnv() (*interfaces.PrometheusConfig, error) {
 	return ParsePrometheusConfigFromEnv(), nil
 }
 
-// GetPrometheusConfigFromConfigMap retrieves Prometheus configuration from ConfigMap
-func GetPrometheusConfigFromConfigMap(ctx context.Context, k8sClient client.Client) (*interfaces.PrometheusConfig, error) {
+// PrometheusConfigFromConfigMap retrieves Prometheus configuration from ConfigMap
+func PrometheusConfigFromConfigMap(ctx context.Context, k8sClient client.Client) (*interfaces.PrometheusConfig, error) {
 	cm := corev1.ConfigMap{}
 	err := utils.GetConfigMapWithBackoff(ctx, k8sClient, ConfigMapName(), Namespace(), &cm)
 	if err != nil {

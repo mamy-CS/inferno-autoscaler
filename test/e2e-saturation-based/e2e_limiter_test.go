@@ -73,7 +73,6 @@ func getGPUNodeSelector() (map[string]string, string) {
 	return map[string]string{"gpu-config": "4MI300X"}, "MI300X"
 }
 
-
 // countGPUsOnNodeWithSelector counts available GPUs on nodes matching the selector.
 func countGPUsOnNodeWithSelector(ctx context.Context, selector map[string]string) (int64, error) {
 	nodes, err := k8sClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
@@ -121,7 +120,7 @@ var _ = Describe("Test workload-variant-autoscaler - GPU Limiter Feature", Order
 		initialReplicas int32
 
 		// GPU capacity on target node
-		gpusOnTargetNode int64
+		gpusOnTargetNode  int64
 		maxReplicasOnNode int
 	)
 
@@ -490,4 +489,3 @@ enableLimiter: true`
 		})
 	})
 })
-
