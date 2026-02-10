@@ -211,3 +211,8 @@ func GetDesiredReplicas(deploy *appsv1.Deployment) int32 {
 	}
 	return *deploy.Spec.Replicas
 }
+
+// GetNamespacedKey is a helper for building namespaced resource keys.
+func GetNamespacedKey(namespace, name string) string {
+	return namespace + "/" + name
+}

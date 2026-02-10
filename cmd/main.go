@@ -51,6 +51,7 @@ import (
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/datastore"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/saturation"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/scalefromzero"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/indexers"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/logging"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/metrics"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/utils"
@@ -347,6 +348,14 @@ func main() {
 		setupLog.Error(err, "unable to start manager")
 		os.Exit(1)
 	}
+
+	// Setup custom indexes for lookups on VariantAutoscalings
+	setupLog.Info("Setting up indexes")
+	if err := indexers.SetupIndexes(context.Background(), mgr); err != nil {
+		setupLog.Error(err, "unable to setup indexes")
+		os.Exit(1)
+	}
+	setupLog.Info("Indexes setup completed")
 
 	// Initialize metrics
 	setupLog.Info("Creating metrics emitter instance")

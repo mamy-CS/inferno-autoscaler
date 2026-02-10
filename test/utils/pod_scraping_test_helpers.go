@@ -532,12 +532,14 @@ func TestInClusterScraping(ctx context.Context, config PodScrapingTestConfig, g 
 	}()
 
 	// Wait for job to complete
+	// Timeout must account for image pull time (curlimages/curl may need to be pulled from Docker Hub,
+	// which can be slow in CI due to rate limiting on shared GitHub Actions runner IPs)
 	_, _ = fmt.Fprintf(ginkgo.GinkgoWriter, "Waiting for in-cluster scraping test job to complete...\n")
 	gom.Eventually(func(g gom.Gomega) {
 		currentJob, err := config.K8sClient.BatchV1().Jobs(config.ServiceNamespace).Get(ctx, jobName, metav1.GetOptions{})
 		g.Expect(err).NotTo(gom.HaveOccurred(), "Should be able to get job")
 		g.Expect(currentJob.Status.Succeeded+currentJob.Status.Failed).To(gom.BeNumerically(">", 0), "Job should complete")
-	}, 2*time.Minute, 5*time.Second).Should(gom.Succeed())
+	}, 5*time.Minute, 5*time.Second).Should(gom.Succeed())
 
 	// Verify job succeeded
 	finalJob, err := config.K8sClient.BatchV1().Jobs(config.ServiceNamespace).Get(ctx, jobName, metav1.GetOptions{})
