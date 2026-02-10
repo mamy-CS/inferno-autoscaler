@@ -4,7 +4,7 @@
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
 
-The Workload Variant Autoscaler (WVA) is a Kubernetes-based global autoscaler for inference model servers serving LLMs. WVA works alongside standard Kubernetes HPA autoscaler and external autoscalers like KEDA to scale the object supporting scale subresource. The high-level details of the algorithm (optimizer) are [here](https://github.com/llm-d-incubation/workload-variant-autoscaler/blob/main/docs/saturation-scaling-config.md ). It determines optimal replica counts for given request traffic loads for inference servers by considering constraints such as GPU count (cluster resources), energy-budget and performance-budget (latency/throughput).
+The Workload Variant Autoscaler (WVA) is a Kubernetes-based global autoscaler for inference model servers serving LLMs. WVA works alongside standard Kubernetes HPA autoscaler and external autoscalers like KEDA to scale the object supporting scale subresource. The high-level details of the algorithm are [here](https://github.com/llm-d-incubation/workload-variant-autoscaler/blob/main/docs/saturation-scaling-config.md ). It determines optimal replica counts for given request traffic loads for inference servers by considering constraints such as GPU count (cluster resources), energy-budget and performance-budget (latency/throughput).
 <!--
 <![Architecture](docs/design/diagrams/inferno-WVA-design.png)>
 -->
@@ -92,18 +92,23 @@ See the [Installation Guide](docs/user-guide/installation.md) for detailed instr
 - [OpenShift Deployment](deploy/openshift/README.md)
 - [Local Development (Kind Emulator)](deploy/kind-emulator/README.md)
 
+<!--
+
 ## Architecture
 
 WVA consists of several key components:
 
 - **Reconciler**: Kubernetes controller that manages VariantAutoscaling resources
 - **Collector**: Gathers cluster state and vLLM server metrics
+-->
 <!-- 
 - **Model Analyzer**: Performs per-model analysis using queueing theory
 - **Optimizer**: Makes global scaling decisions across models
 -->
+<!-- 
 - **Optimizer**: Capacity model provides saturation based scaling based on threshold
 - **Actuator**: Emits metrics to Prometheus and updates deployment replicas
+-->
 
 <!-- 
 For detailed architecture information, see the [design documentation](docs/design/modeling-optimization.md).
