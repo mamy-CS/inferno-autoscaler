@@ -117,7 +117,7 @@ var _ = Describe("VariantAutoscalings Controller", func() {
 			configMap = &v1.ConfigMap{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      config.DefaultConfigMapName,
-					Namespace: config.Namespace(),
+					Namespace: config.SystemNamespace(),
 				},
 			}
 			err = k8sClient.Delete(ctx, configMap)
@@ -175,7 +175,7 @@ var _ = Describe("VariantAutoscalings Controller", func() {
 			configMap = &v1.ConfigMap{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      config.DefaultConfigMapName,
-					Namespace: config.Namespace(),
+					Namespace: config.SystemNamespace(),
 				},
 			}
 			err = k8sClient.Delete(ctx, configMap)
@@ -229,7 +229,7 @@ var _ = Describe("VariantAutoscalings Controller", func() {
 				serviceMonitor := &promoperator.ServiceMonitor{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:              defaultServiceMonitorName,
-						Namespace:         config.Namespace(),
+						Namespace:         config.SystemNamespace(),
 						DeletionTimestamp: &now,
 					},
 				}
@@ -255,7 +255,7 @@ var _ = Describe("VariantAutoscalings Controller", func() {
 				serviceMonitor := &promoperator.ServiceMonitor{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      defaultServiceMonitorName,
-						Namespace: config.Namespace(),
+						Namespace: config.SystemNamespace(),
 					},
 				}
 
@@ -274,7 +274,7 @@ var _ = Describe("VariantAutoscalings Controller", func() {
 				configMap := &v1.ConfigMap{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "test-configmap",
-						Namespace: config.Namespace(),
+						Namespace: config.SystemNamespace(),
 					},
 				}
 

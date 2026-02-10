@@ -295,14 +295,7 @@ func (r *VariantAutoscalingReconciler) SetupWithManager(mgr ctrl.Manager) error 
 			// Filter VAs by controller-instance label and namespace exclusion
 			builder.WithPredicates(VariantAutoscalingPredicate(mgr.GetClient())),
 		).
-		// Watch the specific ConfigMap to trigger global reconcile and update shared config
-		Watches(
-			&corev1.ConfigMap{},
-			handler.EnqueueRequestsFromMapFunc(r.handleConfigMapEvent),
-			// Predicate to filter only the target configmap
-			// Pass datastore to filter at watch level (prevents cluster-wide watching)
-			builder.WithPredicates(ConfigMapPredicate(r.Datastore)),
-		).
+		// Note: ConfigMap watching is now handled by ConfigMapReconciler
 		// Watch ServiceMonitor for controller's own metrics
 		Watches(
 			&promoperator.ServiceMonitor{},

@@ -28,7 +28,7 @@ Helm chart for Workload-Variant-Autoscaler (WVA) - GPU-aware autoscaler for LLM 
 | vllmService.interval | string | `"15s"` |  |
 | vllmService.nodePort | int | `30000` |  |
 | vllmService.scheme | string | `"http"` |  |
-| wva.configMap.immutable | bool | `false` | If true, makes the ConfigMap immutable (cannot be updated after creation). Provides security benefits by preventing accidental or malicious configuration changes, but disables runtime config updates. See [Configuration Guide](../../docs/user-guide/configuration.md) |
+| wva.configMap.immutable | bool | `false` | If true, makes the main controller ConfigMap (`{release-name}-variantautoscaling-config`) immutable (cannot be updated after creation). Provides security benefits by preventing accidental or malicious configuration changes, but disables runtime config updates. Note: This only affects the main ConfigMap; other ConfigMaps (saturation scaling, scale-to-zero) are not affected. See [Configuration Guide](../../docs/user-guide/configuration.md) |
 | wva.controllerInstance | string | `""` | Controller instance label for multi-controller isolation. When set, adds `controller_instance` label to all metrics and filters VariantAutoscaling resources by matching label. Use for parallel testing or multi-tenant environments. See [Multi-Controller Isolation](../../docs/user-guide/multi-controller-isolation.md) |
 | wva.enabled | bool | `true` |  |
 | wva.image.repository | string | `"ghcr.io/llm-d-incubation/workload-variant-autoscaler"` |  |

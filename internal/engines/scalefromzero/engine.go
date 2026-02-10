@@ -65,7 +65,7 @@ type Engine struct {
 	Actuator       *actuator.DirectActuator
 	Mapper         meta.RESTMapper
 	maxConcurrency int
-	Config         *config.Config // Unified configuration (injected from main.go)
+	config         *config.Config // Unified configuration (injected from main.go)
 }
 
 // NewEngine creates a new instance of the scale-from-zero engine.
@@ -97,7 +97,7 @@ func NewEngine(client client.Client, mapper meta.RESTMapper, restConfig *rest.Co
 		Actuator:       actuator,
 		Mapper:         mapper,
 		maxConcurrency: maxConcurrency,
-		Config:         cfg,
+		config:         cfg,
 	}
 
 	// TODO: replace by an hybrid, polling and reactive executor when available

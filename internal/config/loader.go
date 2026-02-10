@@ -106,8 +106,8 @@ func loadConfig(ctx context.Context, cfg *Config, flags StaticConfigFlags, k8sCl
 	}
 
 	cfg.saturation = saturationConfig{
-		global:           make(map[string]interfaces.SaturationScalingConfig),
-		namespaceConfigs: make(map[string]map[string]interfaces.SaturationScalingConfig),
+		global:           make(SaturationScalingConfigPerModel),
+		namespaceConfigs: make(map[string]SaturationScalingConfigPerModel),
 	}
 
 	cfg.scaleToZero = scaleToZeroConfig{
@@ -121,7 +121,7 @@ func loadConfig(ctx context.Context, cfg *Config, flags StaticConfigFlags, k8sCl
 	var cmData map[string]string
 	cm := &corev1.ConfigMap{}
 	cmName := ConfigMapName()
-	cmNamespace := Namespace()
+	cmNamespace := SystemNamespace()
 	if err := utils.GetConfigMapWithBackoff(ctx, k8sClient, cmName, cmNamespace, cm); err == nil {
 		cmData = cm.Data
 		ctrl.Log.Info("Loaded ConfigMap for config", "name", cmName, "namespace", cmNamespace)
@@ -195,7 +195,7 @@ func loadDynamicConfigNew(ctx context.Context, cfg *Config, k8sClient client.Cli
 	// Load optimization interval
 	cm := &corev1.ConfigMap{}
 	cmName := ConfigMapName()
-	cmNamespace := Namespace()
+	cmNamespace := SystemNamespace()
 	if err := utils.GetConfigMapWithBackoff(ctx, k8sClient, cmName, cmNamespace, cm); err == nil {
 		if intervalStr, ok := cm.Data["GLOBAL_OPT_INTERVAL"]; ok {
 			if interval, err := time.ParseDuration(intervalStr); err == nil {

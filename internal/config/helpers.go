@@ -60,8 +60,11 @@ func ParseBoolFromConfig(data map[string]string, key string, defaultValue bool) 
 	return defaultValue
 }
 
-// Namespace returns the namespace from environment variable or default.
-func Namespace() string {
+// SystemNamespace returns the controller's system namespace where WVA is deployed.
+// This is the namespace containing global ConfigMaps and the controller deployment.
+//
+// Returns: POD_NAMESPACE environment variable if set, otherwise "workload-variant-autoscaler-system"
+func SystemNamespace() string {
 	if ns := os.Getenv("POD_NAMESPACE"); ns != "" {
 		return ns
 	}

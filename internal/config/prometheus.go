@@ -93,7 +93,7 @@ func PrometheusConfigFromEnv() (*interfaces.PrometheusConfig, error) {
 // PrometheusConfigFromConfigMap retrieves Prometheus configuration from ConfigMap
 func PrometheusConfigFromConfigMap(ctx context.Context, k8sClient client.Client) (*interfaces.PrometheusConfig, error) {
 	cm := corev1.ConfigMap{}
-	err := utils.GetConfigMapWithBackoff(ctx, k8sClient, ConfigMapName(), Namespace(), &cm)
+	err := utils.GetConfigMapWithBackoff(ctx, k8sClient, ConfigMapName(), SystemNamespace(), &cm)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get ConfigMap for Prometheus config: %w", err)
 	}
@@ -187,7 +187,7 @@ func ParsePrometheusCacheConfigFromData(data map[string]string) *CacheConfig {
 // ReadPrometheusCacheConfig reads Prometheus collector cache configuration from the ConfigMap
 func ReadPrometheusCacheConfig(ctx context.Context, k8sClient client.Client) (*CacheConfig, error) {
 	cm := corev1.ConfigMap{}
-	err := utils.GetConfigMapWithBackoff(ctx, k8sClient, ConfigMapName(), Namespace(), &cm)
+	err := utils.GetConfigMapWithBackoff(ctx, k8sClient, ConfigMapName(), SystemNamespace(), &cm)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get configmap for Prometheus cache config: %w", err)
 	}

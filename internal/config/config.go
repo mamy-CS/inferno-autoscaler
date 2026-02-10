@@ -88,13 +88,17 @@ type featureFlagsConfig struct {
 	scaleFromZeroMaxConcurrency int
 }
 
+// SaturationScalingConfigPerModel represents saturation scaling configuration
+// for all models. Maps model ID (or "default" key) to its configuration.
+type SaturationScalingConfigPerModel map[string]interfaces.SaturationScalingConfig
+
 // saturationConfig holds saturation scaling configuration (namespace-aware)
 type saturationConfig struct {
 	// Global default configuration
-	global map[string]interfaces.SaturationScalingConfig
+	global SaturationScalingConfigPerModel
 
 	// Namespace-local configuration overrides (keyed by namespace name)
-	namespaceConfigs map[string]map[string]interfaces.SaturationScalingConfig
+	namespaceConfigs map[string]SaturationScalingConfigPerModel
 }
 
 // scaleToZeroConfig holds scale-to-zero configuration (namespace-aware)
@@ -560,7 +564,7 @@ func (c *Config) UpdateSaturationConfigForNamespace(namespace string, config map
 	} else {
 		// Update namespace-local
 		if c.saturation.namespaceConfigs == nil {
-			c.saturation.namespaceConfigs = make(map[string]map[string]interfaces.SaturationScalingConfig)
+			c.saturation.namespaceConfigs = make(map[string]SaturationScalingConfigPerModel)
 		}
 		oldCount = len(c.saturation.namespaceConfigs[namespace])
 		c.saturation.namespaceConfigs[namespace] = newConfig
@@ -693,8 +697,8 @@ func NewTestConfig() *Config {
 			scaleFromZeroMaxConcurrency: 10,
 		},
 		saturation: saturationConfig{
-			global:           make(map[string]interfaces.SaturationScalingConfig),
-			namespaceConfigs: make(map[string]map[string]interfaces.SaturationScalingConfig),
+			global:           make(SaturationScalingConfigPerModel),
+			namespaceConfigs: make(map[string]SaturationScalingConfigPerModel),
 		},
 		scaleToZero: scaleToZeroConfig{
 			global:           make(ScaleToZeroConfigData),

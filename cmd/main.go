@@ -487,6 +487,20 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Create ConfigMap reconciler for configuration management
+	configMapReconciler := &controller.ConfigMapReconciler{
+		Client:    mgr.GetClient(),
+		Scheme:    mgr.GetScheme(),
+		Config:    cfg,
+		Datastore: ds,
+		Recorder:  mgr.GetEventRecorderFor("workload-variant-autoscaler-configmap-reconciler"),
+	}
+
+	if err = configMapReconciler.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create configmap controller")
+		os.Exit(1)
+	}
+
 	if metricsCertWatcher != nil {
 		setupLog.Info("Adding metrics certificate watcher to manager")
 		if err := mgr.Add(metricsCertWatcher); err != nil {

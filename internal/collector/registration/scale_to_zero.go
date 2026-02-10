@@ -51,10 +51,15 @@ func RegisterScaleToZeroQueries(sourceRegistry *source.SourceRegistry) {
 // CollectModelRequestCount collects the total number of successful requests for a model
 // over the specified retention period. This is used for scale-to-zero decisions.
 //
-// The function returns an error when the query execution fails (network errors, Prometheus unavailable, etc.).
-// If the query succeeds but returns no values (empty result), this is treated as 0 requests,
-// which is safe for scale-to-zero: an empty result from sum(increase(...)) means no requests
-// were made in the retention period. This allows scale-to-zero to proceed when the system is idle.
+// The function distinguishes between:
+//   - Successful query with empty results: Returns 0, nil (no requests in retention period, safe to scale to zero)
+//   - Query failures or errors: Returns error (uncertainty, prevents scale-to-zero)
+//
+// This distinction is important for scale-to-zero safety:
+//   - Empty results from a successful Prometheus query indicate no time series matched,
+//     which means no requests occurred in the retention period (positive confirmation).
+//   - Query failures, nil results, or query errors indicate uncertainty about the request count,
+//     so the enforcer will keep current replicas (preventing premature scale-to-zero).
 //
 // Parameters:
 //   - ctx: Context for the operation
@@ -64,8 +69,8 @@ func RegisterScaleToZeroQueries(sourceRegistry *source.SourceRegistry) {
 //   - retentionPeriod: How far back to look for requests
 //
 // Returns:
-//   - float64: Total request count over the retention period
-//   - error: Error if the request count cannot be determined (query failed, no data, etc.)
+//   - float64: Total request count over the retention period (0 if no requests)
+//   - error: Error if the request count cannot be determined (query failed, nil result, query error)
 func CollectModelRequestCount(
 	ctx context.Context,
 	metricsSource source.MetricsSource,
@@ -118,26 +123,17 @@ func CollectModelRequestCount(
 	}
 
 	// Get the first value (sum query returns a single scalar)
-	// If no values, treat as 0 requests (safe to scale to zero)
-	// This handles the case where the metric exists but has no data in the retention period
+	// If query succeeded but returned empty results, this means no requests in retention period
+	// This is a valid case that allows scale-to-zero, so return 0 without error
 	if len(result.Values) == 0 {
-		logger.V(logging.DEBUG).Info("No values in model request count result, treating as 0 requests",
-			"model", modelID,
-			"namespace", namespace,
-			"retentionPeriod", retentionPeriodStr)
-		return 0, nil // Return 0 with no error - this means no requests in retention period
-	}
-
-	count := result.FirstValue().Value
-
-	// Handle NaN or invalid values - treat as 0 requests
-	if count != count { // NaN check
-		logger.V(logging.DEBUG).Info("NaN value in request count result, treating as 0 requests",
+		logger.V(logging.DEBUG).Info("No values in model request count result - no requests in retention period (allows scale-to-zero)",
 			"model", modelID,
 			"namespace", namespace,
 			"retentionPeriod", retentionPeriodStr)
 		return 0, nil
 	}
+
+	count := result.FirstValue().Value
 
 	logger.V(logging.DEBUG).Info("Collected model request count",
 		"model", modelID,

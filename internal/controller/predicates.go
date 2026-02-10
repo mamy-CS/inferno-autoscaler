@@ -27,7 +27,7 @@ func ConfigMapPredicate(ds datastore.Datastore) predicate.Predicate {
 	return predicate.NewPredicateFuncs(func(obj client.Object) bool {
 		name := obj.GetName()
 		namespace := obj.GetNamespace()
-		expectedNamespace := config.Namespace()
+		systemNamespace := config.SystemNamespace()
 
 		// Well-known ConfigMap names
 		wellKnownNames := map[string]bool{
@@ -42,7 +42,7 @@ func ConfigMapPredicate(ds datastore.Datastore) predicate.Predicate {
 		}
 
 		// Global ConfigMaps: must be in controller namespace
-		if namespace == expectedNamespace {
+		if namespace == systemNamespace {
 			return true
 		}
 
@@ -67,7 +67,7 @@ func ConfigMapPredicate(ds datastore.Datastore) predicate.Predicate {
 func ServiceMonitorPredicate() predicate.Predicate {
 	const defaultServiceMonitorName = "workload-variant-autoscaler-controller-manager-metrics-monitor"
 	return predicate.NewPredicateFuncs(func(obj client.Object) bool {
-		return obj.GetName() == defaultServiceMonitorName && obj.GetNamespace() == config.Namespace()
+		return obj.GetName() == defaultServiceMonitorName && obj.GetNamespace() == config.SystemNamespace()
 	})
 }
 

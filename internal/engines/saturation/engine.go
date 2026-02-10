@@ -185,12 +185,11 @@ func (e *Engine) optimize(ctx context.Context) error {
 	allDecisions := make([]interfaces.VariantDecision, 0)
 
 	// Create VA lookup map for applySaturationDecisions (used to access VA status and update decisions)
-	// Copy slice elements to local variable to ensure stable pointers
 	// Use namespace/vaName as key to avoid collisions when multiple namespaces have same VA name
+	// Use slice index directly to avoid pointer-to-loop-variable bug
 	vaMap := make(map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling, len(activeVAs))
 	for i := range activeVAs {
-		va := activeVAs[i] // Copy to local variable to ensure stable pointer
-		vaMap[utils.GetNamespacedKey(va.Namespace, va.Name)] = &va
+		vaMap[utils.GetNamespacedKey(activeVAs[i].Namespace, activeVAs[i].Name)] = &activeVAs[i]
 	}
 
 	// Create map to store current allocations populated during metrics collection
