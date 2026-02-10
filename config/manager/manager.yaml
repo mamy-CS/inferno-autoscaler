@@ -106,6 +106,9 @@ spec:
             valueFrom:
               fieldRef:
                 fieldPath: metadata.namespace
+          # Saturation scaling ConfigMap name (must match kustomize namePrefix + base name)
+          - name: SATURATION_CONFIG_MAP_NAME
+            value: "workload-variant-autoscaler-saturation-scaling-config"
         name: manager
         ports: []
         securityContext:
