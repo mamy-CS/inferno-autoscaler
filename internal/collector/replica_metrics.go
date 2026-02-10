@@ -97,6 +97,7 @@ func (c *ReplicaMetricsCollector) CollectReplicaMetrics(
 		registration.QueryCacheConfigInfo,
 		registration.QueryAvgOutputTokens,
 		registration.QueryAvgInputTokens,
+		registration.QueryPrefixCacheHitRate,
 	}
 
 	results, err := c.source.Refresh(ctx, source.RefreshSpec{
@@ -116,11 +117,12 @@ func (c *ReplicaMetricsCollector) CollectReplicaMetrics(
 		queueTimestamp time.Time
 		hasQueue       bool
 		// V2 fields for token-based capacity analysis
-		numGpuBlocks    int64
-		blockSize       int64
-		avgOutputTokens float64
-		avgInputTokens  float64
-		hasCacheConfig  bool
+		numGpuBlocks       int64
+		blockSize          int64
+		avgOutputTokens    float64
+		avgInputTokens     float64
+		prefixCacheHitRate float64
+		hasCacheConfig     bool
 	}
 
 	// Extract per-pod metrics from results
@@ -266,6 +268,29 @@ func (c *ReplicaMetricsCollector) CollectReplicaMetrics(
 		}
 	}
 
+	// Process prefix cache hit rate results (V2)
+	if result := results[registration.QueryPrefixCacheHitRate]; result != nil {
+		if !result.HasError() {
+			for _, value := range result.Values {
+				podName := value.Labels["pod"]
+				if podName == "" {
+					podName = value.Labels["pod_name"]
+				}
+				if podName == "" {
+					continue
+				}
+
+				if podData[podName] == nil {
+					podData[podName] = &podMetricData{}
+				}
+				// NaN check: rate division by zero produces NaN when no prefix cache queries
+				if !math.IsNaN(value.Value) && !math.IsInf(value.Value, 0) && value.Value >= 0 && value.Value <= 1 {
+					podData[podName].prefixCacheHitRate = value.Value
+				}
+			}
+		}
+	}
+
 	// Build replica metrics from pod data
 	replicaMetrics := make([]interfaces.ReplicaMetrics, 0, len(podData))
 	collectedAt := time.Now()
@@ -358,6 +383,7 @@ func (c *ReplicaMetricsCollector) CollectReplicaMetrics(
 			TokensInUse:           tokensInUse,
 			AvgOutputTokens:       data.avgOutputTokens,
 			AvgInputTokens:        data.avgInputTokens,
+			PrefixCacheHitRate:    data.prefixCacheHitRate,
 			Metadata: &interfaces.ReplicaMetricsMetadata{
 				CollectedAt:     collectedAt,
 				Age:             0, // Fresh
@@ -374,6 +400,71 @@ func (c *ReplicaMetricsCollector) CollectReplicaMetrics(
 		"replicaCount", len(replicaMetrics))
 
 	return replicaMetrics, nil
+}
+
+// CollectSchedulerQueueMetrics collects model-level queue metrics from the
+// llm-d inference scheduler flow control layer. These metrics are not per-pod
+// but per-model, representing requests queued upstream before reaching vLLM.
+// Returns nil (not an error) when flow control metrics are unavailable.
+func (c *ReplicaMetricsCollector) CollectSchedulerQueueMetrics(
+	ctx context.Context,
+	modelID string,
+) *interfaces.SchedulerQueueMetrics {
+	logger := ctrl.LoggerFrom(ctx)
+
+	params := map[string]string{
+		source.ParamModelID: modelID,
+	}
+
+	queries := []string{
+		registration.QuerySchedulerQueueSize,
+		registration.QuerySchedulerQueueBytes,
+	}
+
+	results, err := c.source.Refresh(ctx, source.RefreshSpec{
+		Queries: queries,
+		Params:  params,
+	})
+	if err != nil {
+		logger.V(logging.DEBUG).Info("Scheduler queue metrics unavailable",
+			"modelID", modelID, "error", err)
+		return nil
+	}
+
+	var queueSize, queueBytes int64
+	hasData := false
+
+	if result := results[registration.QuerySchedulerQueueSize]; result != nil && !result.HasError() {
+		for _, value := range result.Values {
+			if !math.IsNaN(value.Value) && !math.IsInf(value.Value, 0) {
+				queueSize += int64(value.Value)
+				hasData = true
+			}
+		}
+	}
+
+	if result := results[registration.QuerySchedulerQueueBytes]; result != nil && !result.HasError() {
+		for _, value := range result.Values {
+			if !math.IsNaN(value.Value) && !math.IsInf(value.Value, 0) {
+				queueBytes += int64(value.Value)
+				hasData = true
+			}
+		}
+	}
+
+	if !hasData {
+		return nil
+	}
+
+	logger.V(logging.DEBUG).Info("Collected scheduler queue metrics",
+		"modelID", modelID,
+		"queueSize", queueSize,
+		"queueBytes", queueBytes)
+
+	return &interfaces.SchedulerQueueMetrics{
+		QueueSize:  queueSize,
+		QueueBytes: queueBytes,
+	}
 }
 
 // getDeploymentNames extracts deployment names from the deployments map.

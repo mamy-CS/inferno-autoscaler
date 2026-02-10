@@ -35,6 +35,33 @@ type AnalyzerInput struct {
 	ReplicaMetrics []ReplicaMetrics
 	VariantStates  []VariantReplicaState
 	Config         AnalyzerConfig
+
+	// SchedulerQueue holds model-level queue metrics from the llm-d inference
+	// scheduler flow control layer. These represent requests queued upstream
+	// before reaching any vLLM pod and contribute to demand estimation.
+	// Nil when flow control is disabled or metrics are unavailable.
+	SchedulerQueue *SchedulerQueueMetrics
+}
+
+// SchedulerQueueMetrics holds model-level queue metrics from the llm-d
+// inference scheduler flow control layer (inference_extension_flow_control_*).
+// These are model-scoped, not per-pod, since the scheduler queues requests
+// before routing them to a specific backend pod.
+//
+// TODO(#2309): The upstream metrics lack a namespace label. If the same model
+// name exists in different namespaces, these values may include cross-namespace
+// data. Once the upstream adds a namespace label, queries should filter by it.
+type SchedulerQueueMetrics struct {
+	// QueueSize is the number of requests currently queued in the
+	// scheduler's flow control layer for this model.
+	// Sourced from inference_extension_flow_control_queue_size.
+	QueueSize int64
+
+	// QueueBytes is the total bytes of request bodies currently queued
+	// in the scheduler's flow control layer for this model.
+	// Sourced from inference_extension_flow_control_queue_bytes.
+	// Approximate token count: QueueBytes / BytesPerToken.
+	QueueBytes int64
 }
 
 // AnalyzerResult is the common output produced by all analyzers.

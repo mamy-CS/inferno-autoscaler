@@ -11,9 +11,14 @@ const (
 	QueryQueueLength  = "queue_length"
 
 	// V2 queries (token-based capacity analysis)
-	QueryCacheConfigInfo = "cache_config_info"
-	QueryAvgOutputTokens = "avg_output_tokens"
-	QueryAvgInputTokens  = "avg_input_tokens"
+	QueryCacheConfigInfo   = "cache_config_info"
+	QueryAvgOutputTokens   = "avg_output_tokens"
+	QueryAvgInputTokens    = "avg_input_tokens"
+	QueryPrefixCacheHitRate = "prefix_cache_hit_rate"
+
+	// Scheduler flow control queries (model-level, from inference scheduler)
+	QuerySchedulerQueueSize  = "scheduler_queue_size"
+	QuerySchedulerQueueBytes = "scheduler_queue_bytes"
 )
 
 // RegisterSaturationQueries registers queries used by the saturation analyzer.
@@ -71,6 +76,47 @@ func RegisterSaturationQueries(sourceRegistry *source.SourceRegistry) {
 		Template:    `max by (pod) (rate(vllm:request_prompt_tokens_sum{namespace="{{.namespace}}",model_name="{{.modelID}}"}[5m]) / rate(vllm:request_prompt_tokens_count{namespace="{{.namespace}}",model_name="{{.modelID}}"}[5m]))`,
 		Params:      []string{source.ParamNamespace, source.ParamModelID},
 		Description: "Average input tokens per completed request (5m rate)",
+	})
+
+	// Prefix cache hit rate per pod (5m rate)
+	// Used to reduce estimated input token demand for scheduler-queued requests.
+	// Returns 0..1 where 1 means all prefix lookups were cache hits.
+	registry.MustRegister(source.QueryTemplate{
+		Name:        QueryPrefixCacheHitRate,
+		Type:        source.QueryTypePromQL,
+		Template:    `max by (pod) (rate(vllm:prefix_cache_hits{namespace="{{.namespace}}",model_name="{{.modelID}}"}[5m]) / rate(vllm:prefix_cache_queries{namespace="{{.namespace}}",model_name="{{.modelID}}"}[5m]))`,
+		Params:      []string{source.ParamNamespace, source.ParamModelID},
+		Description: "Prefix cache hit rate per pod (0.0-1.0, 5m rate)",
+	})
+
+	// --- Scheduler flow control queries (model-level) ---
+	// These come from the llm-d inference scheduler, not vLLM pods.
+	// They use target_model_name when available, falling back to model_name.
+	// The "or" clause handles cases where target_model_name is not set.
+	//
+	// TODO(#2309): These metrics currently lack a namespace label in the upstream
+	// gateway-api-inference-extension EPP. If the same model name exists in
+	// different namespaces, these queries will aggregate across all of them.
+	// Once the upstream adds a namespace label, these queries should filter by it.
+
+	// Number of requests queued in the scheduler's flow control layer
+	registry.MustRegister(source.QueryTemplate{
+		Name: QuerySchedulerQueueSize,
+		Type: source.QueryTypePromQL,
+		Template: `sum(inference_extension_flow_control_queue_size{target_model_name="{{.modelID}}"})` +
+			` or sum(inference_extension_flow_control_queue_size{model_name="{{.modelID}}",target_model_name=""})`,
+		Params:      []string{source.ParamModelID},
+		Description: "Total requests queued in scheduler flow control for this model",
+	})
+
+	// Total bytes of request bodies queued in the scheduler's flow control layer
+	registry.MustRegister(source.QueryTemplate{
+		Name: QuerySchedulerQueueBytes,
+		Type: source.QueryTypePromQL,
+		Template: `sum(inference_extension_flow_control_queue_bytes{target_model_name="{{.modelID}}"})` +
+			` or sum(inference_extension_flow_control_queue_bytes{model_name="{{.modelID}}",target_model_name=""})`,
+		Params:      []string{source.ParamModelID},
+		Description: "Total bytes queued in scheduler flow control for this model",
 	})
 
 }
