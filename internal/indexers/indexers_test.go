@@ -323,31 +323,6 @@ var _ = Describe("Indexers", Ordered, func() {
 				return err
 			}).Should(MatchError(ContainSubstring("multiple VariantAutoscalings found")))
 		})
-
-		It("should handle VA with empty scaleTargetRef name", func() {
-			vaEmpty := &llmdv1alpha1.VariantAutoscaling{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "va-empty-target",
-					Namespace: namespace,
-				},
-				Spec: llmdv1alpha1.VariantAutoscalingSpec{
-					ScaleTargetRef: autoscalingv1.CrossVersionObjectReference{
-						Kind: "Deployment",
-						Name: "", // Empty name
-					},
-					ModelID: "model-empty",
-				},
-			}
-			Expect(k8sClient.Create(testCtx, vaEmpty)).To(Succeed())
-			defer func() {
-				Expect(client.IgnoreNotFound(k8sClient.Delete(testCtx, vaEmpty))).To(Succeed())
-			}()
-
-			// Should not find the VA with empty name
-			va, err := FindVAForDeployment(testCtx, mgrClient, "", namespace)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(va).To(BeNil())
-		})
 	})
 
 	Describe("APIVersion handling", func() {

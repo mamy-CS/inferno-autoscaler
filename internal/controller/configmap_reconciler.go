@@ -102,7 +102,7 @@ func (r *ConfigMapReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 func (r *ConfigMapReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&corev1.ConfigMap{}).
-		WithEventFilter(ConfigMapPredicate(r.Datastore)).
+		WithEventFilter(ConfigMapPredicate(r.Datastore, r.Config)).
 		Complete(r)
 }
 

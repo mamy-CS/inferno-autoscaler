@@ -19,11 +19,16 @@ import (
 //
 // For namespace-local ConfigMap support:
 // - Global ConfigMaps: well-known names in controller namespace
-// - Namespace-local ConfigMaps: well-known names in tracked namespaces (namespaces with VAs)
+// - Namespace-local ConfigMaps: well-known names in watched or tracked namespaces
+//
+// Filtering behavior:
+//   - Single-namespace mode (--watch-namespace set): Always allow ConfigMaps from the watched namespace
+//   - Multi-namespace mode: Only allow ConfigMaps from tracked namespaces (namespaces with VAs)
 //
 // ds is the datastore used to check if a namespace is tracked (fast, in-memory check).
+// cfg is the configuration used to check if single-namespace mode is enabled.
 // Opt-in labels and exclusion are handled in the handler to avoid expensive API calls in the predicate.
-func ConfigMapPredicate(ds datastore.Datastore) predicate.Predicate {
+func ConfigMapPredicate(ds datastore.Datastore, cfg *config.Config) predicate.Predicate {
 	return predicate.NewPredicateFuncs(func(obj client.Object) bool {
 		name := obj.GetName()
 		namespace := obj.GetNamespace()
@@ -46,7 +51,16 @@ func ConfigMapPredicate(ds datastore.Datastore) predicate.Predicate {
 			return true
 		}
 
-		// Namespace-local ConfigMaps: only allow in tracked namespaces (namespaces with VAs)
+		// Single-namespace mode: watch all ConfigMaps in the watched namespace
+		// Explicit CLI flag overrides tracking-based filtering
+		if cfg != nil {
+			watchNamespace := cfg.WatchNamespace()
+			if watchNamespace != "" && namespace == watchNamespace {
+				return true
+			}
+		}
+
+		// Multi-namespace mode: only allow in tracked namespaces (namespaces with VAs)
 		// This prevents cluster-wide watching and cache sync timeouts.
 		// Opt-in labels and exclusion are still checked in the handler for accuracy.
 		if ds != nil {

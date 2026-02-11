@@ -137,27 +137,6 @@ func (r *VariantAutoscalingReconciler) Reconcile(ctx context.Context, req ctrl.R
 	// Fetch scale target Deployment
 	scaleTargetName := va.GetScaleTargetName()
 
-	// Handle empty scale target name (invalid configuration)
-	if scaleTargetName == "" {
-		logger.Info("Scale target Deployment name is empty (invalid configuration)",
-			"namespace", va.Namespace)
-
-		// Update status to reflect target not found (empty name is treated as not found)
-		llmdVariantAutoscalingV1alpha1.SetCondition(&va,
-			llmdVariantAutoscalingV1alpha1.TypeTargetResolved,
-			metav1.ConditionFalse,
-			llmdVariantAutoscalingV1alpha1.ReasonTargetNotFound,
-			"Scale target Deployment name is empty")
-
-		if err := r.Status().Patch(ctx, &va, client.MergeFrom(originalVA)); err != nil {
-			logger.Error(err, "Failed to update VariantAutoscaling status")
-			return ctrl.Result{}, err
-		}
-
-		// Don't requeue - no deployment name to watch for
-		return ctrl.Result{}, nil
-	}
-
 	var deployment appsv1.Deployment
 	if err := utils.GetDeploymentWithBackoff(ctx, r.Client, scaleTargetName, va.Namespace, &deployment); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -287,11 +266,6 @@ func (r *VariantAutoscalingReconciler) handleDeploymentEvent(ctx context.Context
 		},
 	}}
 }
-
-// Namespace tracking is now handled by the datastore.
-// Use r.Datastore.NamespaceTrack(), r.Datastore.NamespaceUntrack(), and r.Datastore.IsNamespaceTracked().
-
-// ConfigMap-related methods have been moved to configmap_handler.go
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *VariantAutoscalingReconciler) SetupWithManager(mgr ctrl.Manager) error {
