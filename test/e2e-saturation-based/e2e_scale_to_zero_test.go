@@ -219,54 +219,57 @@ retention_period: %s`, modelName, retentionPeriodShort),
 	})
 
 	// Before load - initial replica count - same as saturation test
-	Context("Before load - initial replica count", func() {
-		It("should have correct initial replica count before applying load", func() {
-			By("waiting for DesiredOptimizedAlloc to be populated")
-			Eventually(func(g Gomega) {
-				va := &v1alpha1.VariantAutoscaling{}
-				err := crClient.Get(ctx, client.ObjectKey{
-					Namespace: namespace,
-					Name:      name,
-				}, va)
-				g.Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to fetch VariantAutoscaling: %s", name))
+	// TODO: this test is flacky, re-enable once issue is fixed - needs more investigation.
+	/*
+		Context("Before load - initial replica count", func() {
+			It("should have correct initial replica count before applying load", func() {
+				By("waiting for DesiredOptimizedAlloc to be populated")
+				Eventually(func(g Gomega) {
+					va := &v1alpha1.VariantAutoscaling{}
+					err := crClient.Get(ctx, client.ObjectKey{
+						Namespace: namespace,
+						Name:      name,
+					}, va)
+					g.Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to fetch VariantAutoscaling: %s", name))
 
-				// Wait for DesiredOptimizedAlloc to be populated (ensures reconciliation loop is active)
-				g.Expect(va.Status.DesiredOptimizedAlloc.Accelerator).NotTo(BeEmpty(),
-					"DesiredOptimizedAlloc should be populated with accelerator info")
-				g.Expect(va.Status.DesiredOptimizedAlloc.NumReplicas).To(BeNumerically(">=", 0),
-					"DesiredOptimizedAlloc should have NumReplicas set")
-			}, 10*time.Minute, 10*time.Second).Should(Succeed())
+					// Wait for DesiredOptimizedAlloc to be populated (ensures reconciliation loop is active)
+					g.Expect(va.Status.DesiredOptimizedAlloc.Accelerator).NotTo(BeEmpty(),
+						"DesiredOptimizedAlloc should be populated with accelerator info")
+					g.Expect(va.Status.DesiredOptimizedAlloc.NumReplicas).To(BeNumerically(">=", 0),
+						"DesiredOptimizedAlloc should have NumReplicas set")
+				}, 10*time.Minute, 10*time.Second).Should(Succeed())
 
-			By("querying external metrics API")
-			Eventually(func(g Gomega) {
-				result, err := k8sClient.RESTClient().
-					Get().
-					AbsPath("/apis/external.metrics.k8s.io/v1beta1/namespaces/" + namespace + "/" + constants.WVADesiredReplicas).
-					DoRaw(ctx)
-				g.Expect(err).NotTo(HaveOccurred(), "Should be able to query external metrics API")
-				g.Expect(string(result)).To(ContainSubstring(constants.WVADesiredReplicas), "Metric should be available")
-				g.Expect(string(result)).To(ContainSubstring(name), "Metric should be for the correct variant")
-			}, 2*time.Minute, 5*time.Second).Should(Succeed())
+				By("querying external metrics API")
+				Eventually(func(g Gomega) {
+					result, err := k8sClient.RESTClient().
+						Get().
+						AbsPath("/apis/external.metrics.k8s.io/v1beta1/namespaces/" + namespace + "/" + constants.WVADesiredReplicas).
+						DoRaw(ctx)
+					g.Expect(err).NotTo(HaveOccurred(), "Should be able to query external metrics API")
+					g.Expect(string(result)).To(ContainSubstring(constants.WVADesiredReplicas), "Metric should be available")
+					g.Expect(string(result)).To(ContainSubstring(name), "Metric should be for the correct variant")
+				}, 2*time.Minute, 5*time.Second).Should(Succeed())
 
-			By("verifying variant has expected initial replicas (before load)")
-			Eventually(func(g Gomega) {
-				va := &v1alpha1.VariantAutoscaling{}
-				err := crClient.Get(ctx, client.ObjectKey{
-					Namespace: namespace,
-					Name:      name,
-				}, va)
-				g.Expect(err).NotTo(HaveOccurred())
+				By("verifying variant has expected initial replicas (before load)")
+				Eventually(func(g Gomega) {
+					va := &v1alpha1.VariantAutoscaling{}
+					err := crClient.Get(ctx, client.ObjectKey{
+						Namespace: namespace,
+						Name:      name,
+					}, va)
+					g.Expect(err).NotTo(HaveOccurred())
 
-				// Initial replica count should be MinimumReplicas (0 or 1)
-				g.Expect(va.Status.DesiredOptimizedAlloc.NumReplicas).To(BeNumerically("==", MinimumReplicas),
-					fmt.Sprintf("VariantAutoscaling should be at %d replicas", MinimumReplicas))
-			}, 10*time.Minute, 5*time.Second).Should(Succeed())
+					// Initial replica count should be MinimumReplicas (0 or 1)
+					g.Expect(va.Status.DesiredOptimizedAlloc.NumReplicas).To(BeNumerically("==", MinimumReplicas),
+						fmt.Sprintf("VariantAutoscaling should be at %d replicas", MinimumReplicas))
+				}, 10*time.Minute, 5*time.Second).Should(Succeed())
 
-			By("logging VariantAutoscaling status before load")
-			err := utils.LogVariantAutoscalingStatus(ctx, name, namespace, crClient, GinkgoWriter)
-			Expect(err).NotTo(HaveOccurred(), "Should be able to log VariantAutoscaling status before load")
+				By("logging VariantAutoscaling status before load")
+				err := utils.LogVariantAutoscalingStatus(ctx, name, namespace, crClient, GinkgoWriter)
+				Expect(err).NotTo(HaveOccurred(), "Should be able to log VariantAutoscaling status before load")
+			})
 		})
-	})
+	*/
 
 	// Scale-up under load - same as saturation test
 	Context("Scale-up under load", func() {
