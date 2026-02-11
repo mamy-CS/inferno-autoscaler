@@ -229,7 +229,7 @@ var _ = BeforeSuite(func() {
 	_, _ = fmt.Fprintf(GinkgoWriter, "Using the following configuration:\n")
 	_, _ = fmt.Fprintf(GinkgoWriter, "-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=\n")
 	_, _ = fmt.Fprintf(GinkgoWriter, "CONTROLLER_NAMESPACE=%s\n", controllerNamespace)
-	
+
 	// Verify namespace matches controller expectations
 	// Note: Controller uses config.SystemNamespace() which checks POD_NAMESPACE env var
 	// or defaults to "workload-variant-autoscaler-system"
@@ -244,7 +244,7 @@ var _ = BeforeSuite(func() {
 	} else {
 		_, _ = fmt.Fprintf(GinkgoWriter, "EXPECTED_SYSTEM_NAMESPACE=%s (matches CONTROLLER_NAMESPACE)\n", expectedSystemNamespace)
 	}
-	
+
 	_, _ = fmt.Fprintf(GinkgoWriter, "MONITORING_NAMESPACE=%s\n", monitoringNamespace)
 	_, _ = fmt.Fprintf(GinkgoWriter, "LLMD_NAMESPACE=%s\n", llmDNamespace)
 	if multiModelMode {

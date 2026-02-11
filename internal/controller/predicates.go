@@ -157,7 +157,8 @@ func DeploymentPredicate() predicate.Predicate {
 // This enables multi-controller isolation and namespace exclusion.
 //
 // Filtering behavior:
-//   - Excluded namespaces: VAs in namespaces with wva.llmd.ai/exclude: "true" annotation are filtered out
+//   - Single-namespace mode (--watch-namespace set): Exclusion annotation is ignored for the watched namespace
+//   - Multi-namespace mode: VAs in namespaces with wva.llmd.ai/exclude: "true" annotation are filtered out
 //   - Controller instance: If CONTROLLER_INSTANCE env var is set, only allow VAs with matching wva.llmd.ai/controller-instance label
 //   - If CONTROLLER_INSTANCE env var is not set: allow all VAs (backwards compatible)
 //
@@ -165,10 +166,34 @@ func DeploymentPredicate() predicate.Predicate {
 // their assigned VAs, preventing conflicts when multiple controllers run simultaneously.
 //
 // The client parameter is used to fetch namespace objects to check for exclusion annotations.
-func VariantAutoscalingPredicate(k8sClient client.Client) predicate.Predicate {
+// The cfg parameter is used to check if the controller is in single-namespace mode.
+func VariantAutoscalingPredicate(k8sClient client.Client, cfg *config.Config) predicate.Predicate {
 	return predicate.NewPredicateFuncs(func(obj client.Object) bool {
-		// Check namespace exclusion first (highest priority)
 		namespace := obj.GetNamespace()
+
+		// In single-namespace mode, skip exclusion check for the watched namespace
+		// Explicit CLI flag overrides annotation-based filtering
+		if cfg != nil {
+			watchNamespace := cfg.WatchNamespace()
+			if watchNamespace != "" && namespace == watchNamespace {
+				// Still apply controller instance filtering, but skip exclusion check
+				// This allows multiple controllers to share a namespace via controller-instance labels
+				controllerInstance := metrics.GetControllerInstance()
+				if controllerInstance == "" {
+					return true
+				}
+
+				labels := obj.GetLabels()
+				if labels == nil {
+					return false
+				}
+
+				vaInstance, hasLabel := labels[constants.ControllerInstanceLabelKey]
+				return hasLabel && vaInstance == controllerInstance
+			}
+		}
+
+		// Multi-namespace mode: Check namespace exclusion first (highest priority)
 		if namespace != "" {
 			var ns corev1.Namespace
 			// Use background context for predicate (no cancellation needed)

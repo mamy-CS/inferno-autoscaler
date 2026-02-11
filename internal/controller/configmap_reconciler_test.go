@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"os"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -389,6 +390,122 @@ var _ = Describe("ConfigMapReconciler", func() {
 			By("Checking if plain namespace is NOT watched")
 			result := reconciler.shouldWatchNamespaceLocalConfigMap(ctx, "plain-ns")
 			Expect(result).To(BeFalse())
+		})
+	})
+
+	Context("Single-Namespace Mode", func() {
+		var watchedNamespace string
+
+		BeforeEach(func() {
+			watchedNamespace = "watched-namespace"
+
+			// Create watched namespace
+			ns := &corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: watchedNamespace,
+				},
+			}
+			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, ns))).NotTo(HaveOccurred())
+
+			// Create config with watch namespace
+			Expect(os.Setenv("WATCH_NAMESPACE", watchedNamespace)).To(Succeed())
+			var err error
+			cfg, err = config.NewTestConfigWithPrometheus(ctx, "https://prometheus:9090", k8sClient)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Update reconciler with new config
+			reconciler.Config = cfg
+		})
+
+		AfterEach(func() {
+			_ = os.Unsetenv("WATCH_NAMESPACE")
+		})
+
+		It("should watch ConfigMaps in watched namespace even with exclusion annotation", func() {
+			By("Adding exclusion annotation to watched namespace")
+			ns := &corev1.Namespace{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: watchedNamespace}, ns)).To(Succeed())
+			if ns.Annotations == nil {
+				ns.Annotations = make(map[string]string)
+			}
+			ns.Annotations[constants.NamespaceExcludeAnnotationKey] = "true"
+			Expect(k8sClient.Update(ctx, ns)).To(Succeed())
+
+			By("Checking if watched namespace is still watched despite exclusion")
+			result := reconciler.shouldWatchNamespaceLocalConfigMap(ctx, watchedNamespace)
+			Expect(result).To(BeTrue(), "Should watch ConfigMaps in watched namespace even with exclusion annotation")
+		})
+
+		It("should watch ConfigMaps in watched namespace without opt-in label", func() {
+			By("Ensuring watched namespace has no opt-in label")
+			ns := &corev1.Namespace{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: watchedNamespace}, ns)).To(Succeed())
+			if ns.Labels != nil {
+				delete(ns.Labels, constants.NamespaceConfigEnabledLabelKey)
+				Expect(k8sClient.Update(ctx, ns)).To(Succeed())
+			}
+
+			By("Checking if watched namespace is watched without opt-in label")
+			result := reconciler.shouldWatchNamespaceLocalConfigMap(ctx, watchedNamespace)
+			Expect(result).To(BeTrue(), "Should watch ConfigMaps in watched namespace without opt-in label")
+		})
+
+		It("should not watch ConfigMaps in non-watched namespace with exclusion annotation", func() {
+			By("Creating non-watched namespace with exclusion annotation")
+			nonWatchedNS := &corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "non-watched-excluded",
+					Annotations: map[string]string{
+						constants.NamespaceExcludeAnnotationKey: "true",
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, nonWatchedNS)).To(Succeed())
+
+			By("Checking if non-watched excluded namespace is NOT watched")
+			result := reconciler.shouldWatchNamespaceLocalConfigMap(ctx, "non-watched-excluded")
+			Expect(result).To(BeFalse(), "Should not watch ConfigMaps in non-watched excluded namespace")
+		})
+
+		It("should reconcile ConfigMap in watched namespace with exclusion annotation", func() {
+			By("Adding exclusion annotation to watched namespace")
+			ns := &corev1.Namespace{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: watchedNamespace}, ns)).To(Succeed())
+			if ns.Annotations == nil {
+				ns.Annotations = make(map[string]string)
+			}
+			ns.Annotations[constants.NamespaceExcludeAnnotationKey] = "true"
+			Expect(k8sClient.Update(ctx, ns)).To(Succeed())
+
+			By("Creating namespace-local saturation ConfigMap in watched namespace")
+			cm := &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      config.SaturationConfigMapName(),
+					Namespace: watchedNamespace,
+				},
+				Data: map[string]string{
+					"default": "kvCacheThreshold: 0.85\nqueueLengthThreshold: 15",
+				},
+			}
+			Expect(k8sClient.Create(ctx, cm)).To(Succeed())
+
+			By("Reconciling the ConfigMap")
+			req := ctrl.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      cm.Name,
+					Namespace: cm.Namespace,
+				},
+			}
+			result, err := reconciler.Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(Equal(ctrl.Result{}))
+
+			By("Verifying the config was updated despite exclusion annotation")
+			satConfigMap := cfg.SaturationConfigForNamespace(watchedNamespace)
+			Expect(satConfigMap).NotTo(BeNil())
+			satConfig, exists := satConfigMap["default"]
+			Expect(exists).To(BeTrue())
+			Expect(satConfig.KvCacheThreshold).To(BeNumerically("~", 0.85, 0.01))
 		})
 	})
 

@@ -293,7 +293,7 @@ func (r *VariantAutoscalingReconciler) SetupWithManager(mgr ctrl.Manager) error 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&llmdVariantAutoscalingV1alpha1.VariantAutoscaling{},
 			// Filter VAs by controller-instance label and namespace exclusion
-			builder.WithPredicates(VariantAutoscalingPredicate(mgr.GetClient())),
+			builder.WithPredicates(VariantAutoscalingPredicate(mgr.GetClient(), r.Config)),
 		).
 		// Note: ConfigMap watching is now handled by ConfigMapReconciler
 		// Watch ServiceMonitor for controller's own metrics
