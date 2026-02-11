@@ -179,13 +179,13 @@ var _ = Describe("CollectModelRequestCount", func() {
 			RegisterScaleToZeroQueries(registry)
 		})
 
-		It("should return 0 requests when query succeeds but returns empty result (allows scale-to-zero)", func() {
+		It("should return an error to prevent premature scale-to-zero", func() {
 			count, err := CollectModelRequestCount(ctx, metricsSource, "my-model", "default", 10*time.Minute)
 
-			// No error returned - empty results from a successful query mean no requests in retention period,
-			// which allows the enforcer to scale to zero. This is different from query failures or nil results,
-			// which would indicate metrics system issues and should return errors.
-			Expect(err).NotTo(HaveOccurred())
+			// Error returned to signal we can't confirm request count,
+			// which prevents the enforcer from scaling to zero
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("no values"))
 			Expect(count).To(Equal(0.0))
 		})
 	})
