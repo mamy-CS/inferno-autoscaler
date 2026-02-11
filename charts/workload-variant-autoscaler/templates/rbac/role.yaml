@@ -16,6 +16,19 @@ rules:
   - list
   - update
   - watch
+  # Note: This broad permission is required for namespace-local ConfigMap overrides.
+  # The controller filters by well-known names (wva-saturation-scaling-config, wva-model-scale-to-zero-config)
+  # in its predicate logic, providing effective access control.
+- apiGroups:
+  - ""
+  resources:
+  - namespaces
+  - pods
+  - services
+  verbs:
+  - get
+  - list
+  - watch
 - apiGroups:
   - ""
   resources:

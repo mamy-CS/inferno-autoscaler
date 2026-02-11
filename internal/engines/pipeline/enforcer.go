@@ -94,7 +94,7 @@ func (e *Enforcer) applyScaleToZero(
 	logger := ctrl.LoggerFrom(ctx)
 
 	// Get retention period for this model
-	retentionPeriod := config.GetScaleToZeroRetentionPeriod(scaleToZeroConfig, modelID)
+	retentionPeriod := config.ScaleToZeroRetentionPeriod(scaleToZeroConfig, modelID)
 
 	// Query request count
 	requestCount, err := e.requestCountFunc(ctx, modelID, namespace, retentionPeriod)

@@ -124,33 +124,7 @@ See [Saturation Analyzer Documentation](../../docs/saturation-analyzer.md) for c
 
 ## ConfigMaps
 
-WVA uses two ConfigMaps for cluster-wide configuration.
-
-### Accelerator Unit Cost ConfigMap
-
-Defines GPU pricing for cost optimization:
-
-```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: accelerator-unitcost
-  namespace: workload-variant-autoscaler-system
-data:
-  accelerators: |
-    - name: A100
-      type: NVIDIA-A100-PCIE-80GB
-      cost: 40
-      memSize: 81920
-    - name: MI300X
-      type: AMD-MI300X-192GB
-      cost: 65
-      memSize: 196608
-    - name: H100
-      type: NVIDIA-H100-80GB-HBM3
-      cost: 80
-      memSize: 81920
-```
+WVA uses ConfigMaps for cluster-wide configuration.
 
 ### Service Class ConfigMap
 
@@ -181,6 +155,400 @@ data:
       priority: 10
       slo-itl: 100
       slo-ttw: 2000
+```
+
+## Unified Configuration System
+
+WVA uses a unified configuration system that consolidates all settings into a single `Config` structure. This provides clear precedence rules, type safety, and separation between static (immutable) and dynamic (runtime-updatable) configuration.
+
+### Configuration Structure
+
+The unified `Config` consists of two parts:
+
+1. **StaticConfig**: Immutable settings loaded at startup (require controller restart to change)
+   - Infrastructure settings (metrics/probe addresses, leader election)
+   - Connection settings (Prometheus URL, TLS certificates)
+   - Feature flags
+
+2. **DynamicConfig**: Runtime-updatable settings (can be changed via ConfigMap updates)
+   - Optimization interval
+   - Saturation scaling thresholds
+   - Scale-to-zero configuration
+   - Prometheus cache settings
+
+### Configuration Precedence
+
+Configuration values are loaded with the following precedence (highest to lowest):
+
+1. **CLI Flags** (highest priority)
+2. **Environment Variables**
+3. **ConfigMap** (in `workload-variant-autoscaler-system` namespace)
+4. **Defaults** (lowest priority)
+
+**Example:**
+```bash
+# CLI flag (highest priority)
+--metrics-addr=":8443"
+
+# Environment variable (overridden by flags)
+export METRICS_BIND_ADDRESS=":8080"
+
+# ConfigMap (overridden by env/flags)
+# wva-variantautoscaling-config
+data:
+  METRICS_BIND_ADDRESS: ":9090"
+
+# Default (used if none of above are set)
+# Default: "0" (disabled)
+```
+
+### Immutable vs Mutable Parameters
+
+#### Immutable Parameters (Require Restart)
+
+These settings **cannot** be changed at runtime via ConfigMap updates. Attempts to change them will:
+- Be rejected by the controller
+- Emit a Warning Kubernetes event
+- Require a controller restart to take effect
+
+**Immutable Parameters:**
+- `PROMETHEUS_BASE_URL` - Prometheus connection endpoint
+- `METRICS_BIND_ADDRESS` - Metrics bind address
+- `HEALTH_PROBE_BIND_ADDRESS` - Health probe bind address
+- `LEADER_ELECTION_ID` - Leader election coordination ID
+- TLS certificate paths (webhook and metrics certificates)
+
+**Example - Attempting to Change Immutable Parameter:**
+```yaml
+# This will be rejected and emit a Warning event
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wva-variantautoscaling-config
+  namespace: workload-variant-autoscaler-system
+data:
+  PROMETHEUS_BASE_URL: "https://new-prometheus:9090"  # Requires restart
+```
+
+**Check for Rejected Changes:**
+```bash
+# View Warning events
+kubectl get events -n workload-variant-autoscaler-system \
+  --field-selector reason=ImmutableConfigChangeRejected
+
+# Controller logs
+kubectl logs -n workload-variant-autoscaler-system \
+  deployment/workload-variant-autoscaler-controller-manager | \
+  grep "Attempted to change immutable parameters"
+```
+
+#### Mutable Parameters (Runtime Updates)
+
+These settings **can** be changed at runtime via ConfigMap updates without restarting the controller:
+
+**Mutable Parameters:**
+- `GLOBAL_OPT_INTERVAL` - Optimization interval (default: `60s`)
+- Saturation scaling configuration (via `wva-saturation-scaling-config` ConfigMap)
+- Scale-to-zero configuration (via `wva-model-scale-to-zero-config` ConfigMap)
+- Prometheus cache settings
+
+**Example - Runtime Configuration Update:**
+```yaml
+# This will be applied immediately without restart
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wva-variantautoscaling-config
+  namespace: workload-variant-autoscaler-system
+data:
+  GLOBAL_OPT_INTERVAL: "120s"  # Applied immediately
+```
+
+### Immutable ConfigMap (Security Hardening)
+
+For enhanced security, you can make the entire ConfigMap immutable using the Helm chart option `wva.configMap.immutable: true`. This provides additional protection beyond the controller's runtime validation.
+
+**Security Benefits:**
+- **Prevents accidental changes**: Kubernetes will reject any update attempts
+- **Protects against malicious modifications**: Even with RBAC access, the ConfigMap cannot be modified
+- **Ensures configuration integrity**: Configuration can only be changed through controlled Helm upgrades
+- **Reduces attack surface**: Eliminates runtime configuration as a potential attack vector
+
+**Trade-offs:**
+- **Runtime updates disabled**: All configuration changes (including mutable parameters) require ConfigMap recreation
+- **Change process**: To update configuration:
+  1. Delete the ConfigMap: `kubectl delete configmap <name> -n <namespace>`
+  2. Update Helm values and upgrade: `helm upgrade ... --set wva.configMap.immutable=false ...`
+  3. Restart the controller pod
+
+**Enable Immutable ConfigMap:**
+```bash
+# Via Helm values
+helm install workload-variant-autoscaler ./charts/workload-variant-autoscaler \
+  -n workload-variant-autoscaler-system \
+  --set wva.configMap.immutable=true
+```
+
+**When to Use:**
+- **Production environments** with strict security requirements
+- **Multi-tenant clusters** where configuration tampering is a concern
+- **Compliance requirements** that mandate immutable infrastructure
+- **High-security deployments** where configuration changes should be audited and controlled
+
+**When NOT to Use:**
+- **Development environments** where rapid iteration is needed
+- **Scenarios requiring frequent runtime config updates** (e.g., A/B testing, dynamic tuning)
+- **Environments where ConfigMap updates are part of normal operations**
+
+### Namespace-Local ConfigMap Overrides
+
+WVA supports namespace-local ConfigMap overrides that allow different namespaces to have different configuration settings without requiring separate controller instances. This provides a middle ground between global configuration and full multi-controller isolation.
+
+**Use Cases:**
+- **Different teams sharing a cluster** with different SLO requirements
+- **Staging vs production namespaces** with different scaling thresholds
+- **Gradual rollout** of new thresholds in one namespace before applying cluster-wide
+- **Environment-specific tuning** without operational overhead
+
+**How It Works:**
+
+1. **Global ConfigMap** (in controller namespace): Provides default configuration for all namespaces
+2. **Namespace-Local ConfigMap** (in target namespace): Overrides global settings for that namespace only
+3. **Resolution Order**: Namespace-local > Global (automatic fallback if namespace-local doesn't exist)
+
+**Well-Known ConfigMap Names:**
+
+The following ConfigMap names are recognized for namespace-local overrides:
+- `wva-saturation-scaling-config` - Saturation scaling thresholds
+- `wva-model-scale-to-zero-config` - Scale-to-zero configuration
+
+**Example: Namespace-Local Saturation Config**
+
+```yaml
+# Global ConfigMap (in workload-variant-autoscaler-system namespace)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wva-saturation-scaling-config
+  namespace: workload-variant-autoscaler-system
+data:
+  default: |
+    kvCacheThreshold: 0.80
+    queueLengthThreshold: 5
+    kvSpareTrigger: 0.10
+    queueSpareTrigger: 3
+```
+
+```yaml
+# Namespace-Local Override (in production namespace)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wva-saturation-scaling-config  # Same well-known name
+  namespace: production  # Different namespace
+data:
+  default: |
+    kvCacheThreshold: 0.70  # More aggressive for production
+    queueLengthThreshold: 3
+    kvSpareTrigger: 0.20
+    queueSpareTrigger: 5
+```
+
+**Result**: VAs in the `production` namespace use production thresholds (0.70), while VAs in other namespaces use global defaults (0.80).
+
+**Example: Namespace-Local Scale-to-Zero Config**
+
+```yaml
+# Global ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wva-model-scale-to-zero-config
+  namespace: workload-variant-autoscaler-system
+data:
+  model1: |
+    model_id: model1
+    enable_scale_to_zero: true
+    retention_period: 10m
+```
+
+```yaml
+# Namespace-Local Override
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wva-model-scale-to-zero-config
+  namespace: staging
+data:
+  model1: |
+    model_id: model1
+    enable_scale_to_zero: false  # Disable scale-to-zero in staging
+    retention_period: 5m
+```
+
+**ConfigMap Deletion:**
+
+When a namespace-local ConfigMap is deleted, WVA automatically falls back to the global configuration. No restart required - the fallback happens immediately.
+
+```bash
+# Delete namespace-local ConfigMap
+kubectl delete configmap wva-saturation-scaling-config -n production
+
+# VAs in production namespace now use global config
+```
+
+**Namespace Discovery:**
+
+WVA uses a hybrid approach to discover namespaces for namespace-local ConfigMap watching:
+
+1. **Automatic (VA-based)**: WVA automatically tracks namespaces that have VariantAutoscaling resources. This is the default behavior - no configuration needed.
+
+2. **Explicit Opt-in (Label-based)**: You can opt-in namespaces by adding the label `wva.llmd.ai/config-enabled=true` to a namespace. This enables namespace-local ConfigMap watching even before VariantAutoscaling resources are created, avoiding race conditions.
+
+**Example: Opt-in a namespace for namespace-local ConfigMaps:**
+
+```bash
+# Label a namespace to enable namespace-local ConfigMap watching
+kubectl label namespace production wva.llmd.ai/config-enabled=true
+
+# Now you can create namespace-local ConfigMaps before VAs exist
+kubectl apply -f - <<EOF
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wva-saturation-scaling-config
+  namespace: production
+data:
+  default: |
+    kvCacheThreshold: 0.70
+    queueLengthThreshold: 3
+EOF
+```
+
+**When to use label-based opt-in:**
+- Creating namespace-local ConfigMaps before VariantAutoscaling resources exist
+- Explicitly controlling which namespaces can have overrides (security/audit)
+- Multi-controller isolation (each controller can watch different label values)
+
+**Limitations:**
+
+- **Main ConfigMap** (`wva-variantautoscaling-config`) is only supported globally, not as namespace-local override
+- **Optimization interval** (`GLOBAL_OPT_INTERVAL`) is global only
+- **Prometheus cache settings** are global only
+
+**Relationship with Multi-Controller Isolation:**
+
+Namespace-local ConfigMaps are **complementary** to multi-controller isolation:
+- **Namespace-local ConfigMaps**: Single controller, configuration isolation only
+- **Multi-controller isolation**: Multiple controllers, complete operational isolation
+
+They can be used together - you can have multiple controller instances, each using namespace-local configs within their scope.
+
+### Main Configuration ConfigMap
+
+The main configuration ConfigMap (`wva-variantautoscaling-config`) supports both static and dynamic settings:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wva-variantautoscaling-config
+  namespace: workload-variant-autoscaler-system
+data:
+  # Mutable: Optimization interval (can be changed at runtime)
+  GLOBAL_OPT_INTERVAL: "60s"
+  
+  # Immutable: Prometheus connection (requires restart if changed)
+  PROMETHEUS_BASE_URL: "https://prometheus:9090"
+  
+  # Immutable: Feature flags (require restart if changed)
+  WVA_SCALE_TO_ZERO: "true"
+  WVA_LIMITED_MODE: "false"
+```
+
+**Note:** The ConfigMap name is auto-generated by Helm based on the release name. For Kustomize deployments, set the `CONFIG_MAP_NAME` environment variable in the deployment manifest.
+
+### Configuration via Environment Variables
+
+Many settings can be configured via environment variables (useful for containerized deployments):
+
+```yaml
+# Deployment manifest
+env:
+  # Prometheus connection (immutable - requires restart to change)
+  - name: PROMETHEUS_BASE_URL
+    value: "https://prometheus:9090"
+  
+  # Optional: Override ConfigMap name
+  - name: CONFIG_MAP_NAME
+    value: "my-custom-config"
+  
+  # Optional: Override namespace
+  - name: POD_NAMESPACE
+    value: "workload-variant-autoscaler-system"
+```
+
+**See:** [Prometheus Integration](../integrations/prometheus.md) for complete Prometheus configuration options.
+
+### Configuration via CLI Flags
+
+Infrastructure settings can be configured via CLI flags (highest precedence):
+
+```bash
+# Start controller with custom settings
+./manager \
+  --metrics-addr=":8443" \
+  --probe-addr=":8081" \
+  --enable-leader-election \
+  --leader-election-id="my-election-id"
+```
+
+**Note:** CLI flags are typically set in the Helm chart or deployment manifest, not directly.
+
+### Fail-Fast Validation
+
+WVA implements **fail-fast** validation: if required configuration is missing or invalid, the controller will:
+- **Not start** (exits with error code 1)
+- Log clear error messages indicating what's missing
+- Prevent running with invalid configuration
+
+**Required Configuration:**
+- `PROMETHEUS_BASE_URL` - Must be set via environment variable or ConfigMap
+
+**Check Startup Errors:**
+```bash
+# View controller logs for validation errors
+kubectl logs -n workload-variant-autoscaler-system \
+  deployment/workload-variant-autoscaler-controller-manager | \
+  grep -i "config\|validation\|error"
+
+# Check pod status
+kubectl get pods -n workload-variant-autoscaler-system
+# If CrashLoopBackOff, check logs for config errors
+```
+
+### Configuration Update Behavior
+
+**Static Config Updates:**
+- Changes to immutable parameters are **rejected** at runtime
+- Controller emits Warning events and logs errors
+- **Action Required:** Restart the controller to apply changes
+
+**Dynamic Config Updates:**
+- Changes to mutable parameters are **applied immediately**
+- Controller logs the changes (old → new values)
+- No restart required
+
+**Monitor Configuration Changes:**
+```bash
+# Watch for config update logs
+kubectl logs -n workload-variant-autoscaler-system \
+  deployment/workload-variant-autoscaler-controller-manager -f | \
+  grep "Updated.*config"
+
+# Example output:
+# "Updated optimization interval" old=60s new=120s
+# "Updated saturation config" oldEntries=2 newEntries=3
 ```
 
 ## Configuration Options
@@ -236,6 +604,7 @@ spec:
 **Behavior:**
 - Saturation analyzer uses `variantCost` when deciding which variant to scale
 - If costs are equal, chooses variant with most available capacity
+- Does not affect model-based optimization
 
 ### Advanced Options
 

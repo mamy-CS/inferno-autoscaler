@@ -35,6 +35,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/certwatcher"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	ctrlzap "sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
@@ -157,6 +158,49 @@ func main() {
 	setupLog := ctrl.Log.WithName("setup")
 	setupLog.Info("Logger initialized")
 
+	// Get REST config early (needed for config loading)
+	restConfig := ctrl.GetConfigOrDie()
+
+	// Create a temporary client for config loading (before manager creation)
+	// This allows us to load ConfigMaps during startup
+	tempClient, err := client.New(restConfig, client.Options{Scheme: scheme})
+	if err != nil {
+		setupLog.Error(err, "unable to create temporary client for config loading")
+		os.Exit(1)
+	}
+
+	// Create StaticConfigFlags from parsed flags
+	// For boolean and duration flags, pass pointers to distinguish "unset" from "explicitly set"
+	flags := config.StaticConfigFlags{
+		MetricsAddr:          metricsAddr,
+		ProbeAddr:            probeAddr,
+		EnableLeaderElection: &enableLeaderElection,
+		LeaderElectionID:     "72dd1cf1.llm-d.ai", // Default, can be overridden via env/ConfigMap
+		LeaseDuration:        &leaseDuration,
+		RenewDeadline:        &renewDeadline,
+		RetryPeriod:          &retryPeriod,
+		RestTimeout:          &restTimeout,
+		SecureMetrics:        &secureMetrics,
+		EnableHTTP2:          &enableHTTP2,
+		WatchNamespace:       watchNamespace,
+		LoggerVerbosity:      loggerVerbosity,
+		WebhookCertPath:      webhookCertPath,
+		WebhookCertName:      webhookCertName,
+		WebhookCertKey:       webhookCertKey,
+		MetricsCertPath:      metricsCertPath,
+		MetricsCertName:      metricsCertName,
+		MetricsCertKey:       metricsCertKey,
+	}
+
+	// Load unified configuration (fail-fast if invalid)
+	ctx := context.Background()
+	cfg, err := config.Load(ctx, flags, tempClient)
+	if err != nil {
+		setupLog.Error(err, "failed to load configuration - this is a fatal error")
+		os.Exit(1)
+	}
+	setupLog.Info("Configuration loaded successfully")
+
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
 	// due to its vulnerabilities. More specifically, disabling http/2 will
 	// prevent from being vulnerable to the HTTP/2 Stream Cancellation and
@@ -168,7 +212,7 @@ func main() {
 		c.NextProtos = []string{"http/1.1"}
 	}
 
-	if !enableHTTP2 {
+	if !cfg.EnableHTTP2() {
 		tlsOpts = append(tlsOpts, disableHTTP2)
 	}
 
@@ -178,16 +222,16 @@ func main() {
 	// Initial webhook TLS options
 	webhookTLSOpts := tlsOpts
 
-	if len(webhookCertPath) > 0 {
+	if len(cfg.WebhookCertPath()) > 0 {
 		setupLog.Info("Initializing webhook certificate watcher using provided certificates",
-			"webhookCertPath", webhookCertPath,
-			"webhookCertName", webhookCertName,
-			"webhookCertKey", webhookCertKey)
+			"webhookCertPath", cfg.WebhookCertPath(),
+			"webhookCertName", cfg.WebhookCertName(),
+			"webhookCertKey", cfg.WebhookCertKey())
 
 		var err error
 		webhookCertWatcher, err = certwatcher.New(
-			filepath.Join(webhookCertPath, webhookCertName),
-			filepath.Join(webhookCertPath, webhookCertKey),
+			filepath.Join(cfg.WebhookCertPath(), cfg.WebhookCertName()),
+			filepath.Join(cfg.WebhookCertPath(), cfg.WebhookCertKey()),
 		)
 		if err != nil {
 			setupLog.Error(err, "Failed to initialize webhook certificate watcher")
@@ -208,12 +252,12 @@ func main() {
 	// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.20.4/pkg/metrics/server
 	// - https://book.kubebuilder.io/reference/metrics.html
 	metricsServerOptions := metricsserver.Options{
-		BindAddress:   metricsAddr,
-		SecureServing: secureMetrics,
+		BindAddress:   cfg.MetricsAddr(),
+		SecureServing: cfg.SecureMetrics(),
 		TLSOpts:       tlsOpts,
 	}
 
-	if secureMetrics {
+	if cfg.SecureMetrics() {
 		// FilterProvider is used to protect the metrics endpoint with authn/authz.
 		// These configurations ensure that only authorized users and service accounts
 		// can access the metrics endpoint. The RBAC are configured in 'config/rbac/kustomization.yaml'. More info:
@@ -229,17 +273,17 @@ func main() {
 	// - [METRICS-WITH-CERTS] at config/default/kustomization.yaml to generate and use certificates
 	// managed by cert-manager for the metrics server.
 	// - [PROMETHEUS-WITH-CERTS] at config/prometheus/kustomization.yaml for TLS certification.
-	if len(metricsCertPath) > 0 {
+	if len(cfg.MetricsCertPath()) > 0 {
 		setupLog.Info("Initializing metrics certificate watcher using provided certificates",
-			"metricsCertPath", metricsCertPath,
-			"metricsCertName", metricsCertName,
-			"metricsCertKey", metricsCertKey,
+			"metricsCertPath", cfg.MetricsCertPath(),
+			"metricsCertName", cfg.MetricsCertName(),
+			"metricsCertKey", cfg.MetricsCertKey(),
 		)
 
 		var err error
 		metricsCertWatcher, err = certwatcher.New(
-			filepath.Join(metricsCertPath, metricsCertName),
-			filepath.Join(metricsCertPath, metricsCertKey),
+			filepath.Join(cfg.MetricsCertPath(), cfg.MetricsCertName()),
+			filepath.Join(cfg.MetricsCertPath(), cfg.MetricsCertKey()),
 		)
 		if err != nil {
 			setupLog.Error(err, "Failed to initialize metrics certificate watcher")
@@ -252,14 +296,10 @@ func main() {
 	}
 
 	// --- Setup Datastore ---
-	ds := datastore.NewDatastore()
+	ds := datastore.NewDatastore(cfg)
 
-	// Get REST config and configure timeouts to handle network latency
-	// This addresses issues with leader election lease renewal failures in environments
-	// with higher network latency or API server slowness.
-	restConfig := ctrl.GetConfigOrDie()
-	// Use configurable REST client timeout (default 60s, can be overridden via --rest-client-timeout flag)
-	restConfig.Timeout = restTimeout
+	// Use configurable REST client timeout from Config (default 60s, can be overridden via --rest-client-timeout flag)
+	restConfig.Timeout = cfg.RestTimeout()
 
 	// Configure leader election with configurable timeouts to prevent lease renewal failures
 	// Default values are: LeaseDuration=60s, RenewDeadline=50s, RetryPeriod=10s
@@ -267,17 +307,20 @@ func main() {
 	// Increased from controller-runtime defaults (15s, 10s, 2s) to provide more tolerance
 	// for network latency and API server delays
 
+	leaseDurationVal := cfg.LeaseDuration()
+	renewDeadlineVal := cfg.RenewDeadline()
+	retryPeriodVal := cfg.RetryPeriod()
 	mgrOptions := ctrl.Options{
 		Scheme:                 scheme,
 		Metrics:                metricsServerOptions,
 		WebhookServer:          webhookServer,
-		HealthProbeBindAddress: probeAddr,
-		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "72dd1cf1.llm-d.ai",
-		// Leader election timeout configuration (configurable via flags)
-		LeaseDuration: &leaseDuration,
-		RenewDeadline: &renewDeadline,
-		RetryPeriod:   &retryPeriod,
+		HealthProbeBindAddress: cfg.ProbeAddr(),
+		LeaderElection:         cfg.EnableLeaderElection(),
+		LeaderElectionID:       cfg.LeaderElectionID(),
+		// Leader election timeout configuration (from Config, can be overridden via flags/env/ConfigMap)
+		LeaseDuration: &leaseDurationVal,
+		RenewDeadline: &renewDeadlineVal,
+		RetryPeriod:   &retryPeriodVal,
 		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
 		// when the Manager ends. This requires the binary to immediately end when the
 		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly
@@ -290,11 +333,12 @@ func main() {
 		LeaderElectionReleaseOnCancel: true,
 	}
 
-	if watchNamespace != "" {
-		setupLog.Info("Watching single namespace", "namespace", watchNamespace)
+	watchNS := cfg.WatchNamespace()
+	if watchNS != "" {
+		setupLog.Info("Watching single namespace", "namespace", watchNS)
 		mgrOptions.Cache = cache.Options{
 			DefaultNamespaces: map[string]cache.Config{
-				watchNamespace: {},
+				watchNS: {},
 			},
 		}
 	}
@@ -319,16 +363,10 @@ func main() {
 	_ = metrics.NewMetricsEmitter()
 	setupLog.Info("Metrics emitter created successfully")
 
-	// Configure Prometheus client using flexible configuration with TLS support
-	promConfig, err := config.GetPrometheusConfig(context.Background(), mgr.GetClient())
-	if err != nil {
-		setupLog.Error(err, "failed to get Prometheus configuration")
-		os.Exit(1)
-	}
-
-	// ensure we have a valid configuration
-	if promConfig == nil {
-		setupLog.Error(nil, "no Prometheus configuration found - this should not happen")
+	// Use Prometheus configuration from unified Config (already validated during Load())
+	promConfig := cfg.Prometheus()
+	if promConfig == nil || promConfig.BaseURL == "" {
+		setupLog.Error(nil, "no Prometheus configuration found - this should not happen after validation")
 		os.Exit(1)
 	}
 
@@ -370,13 +408,10 @@ func main() {
 		sourceRegistry := source.NewSourceRegistry()
 		setupLog.Info("Initializing metrics source registry")
 
-		// Read Prometheus cache configuration from ConfigMap
-		// TODO(LV): Uncomment and implement cache configuration reading
-		// cacheConfig, err := config.ReadPrometheusCacheConfig(context.Background(), mgr.GetClient())
-		// if err != nil {
-		// 	setupLog.Error(err, "Failed to read Prometheus cache config from ConfigMap, using defaults")
-		// 	cacheConfig = nil // Use defaults
-		// }
+		// Prometheus cache configuration is loaded via unified Config during startup.
+		// The cache config is available in cfg.Dynamic.PrometheusCache and is updated
+		// automatically when the ConfigMap changes. We use the default config here
+		// as the unified Config system handles cache configuration loading.
 
 		// Register PrometheusSource with default config
 		promSource := prometheus.NewPrometheusSource(ctx, promAPI, prometheus.DefaultPrometheusSourceConfig())
@@ -392,6 +427,7 @@ func main() {
 			mgr.GetScheme(),
 			mgr.GetEventRecorderFor("workload-variant-autoscaler-saturation-engine"),
 			sourceRegistry,
+			cfg, // Pass unified Config to engine
 		)
 		go engine.StartOptimizeLoop(ctx)
 		return nil
@@ -404,7 +440,7 @@ func main() {
 
 	// Register scale from zero engine loop with the manager. Only start when leader.
 	err = mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
-		engine, err := scalefromzero.NewEngine(mgr.GetClient(), mgr.GetRESTMapper(), restConfig, ds)
+		engine, err := scalefromzero.NewEngine(mgr.GetClient(), mgr.GetRESTMapper(), restConfig, ds, cfg)
 		if err != nil {
 			return err
 		}
@@ -417,11 +453,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Create the reconciler
+	// Create the reconciler with unified Config and datastore
 	reconciler := &controller.VariantAutoscalingReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("workload-variant-autoscaler-controller-manager"),
+		Client:    mgr.GetClient(),
+		Scheme:    mgr.GetScheme(),
+		Recorder:  mgr.GetEventRecorderFor("workload-variant-autoscaler-controller-manager"),
+		Config:    cfg, // Pass unified Config to reconciler
+		Datastore: ds,  // Pass datastore for namespace tracking
 	}
 
 	// Setup the controller with the manager
@@ -446,6 +484,20 @@ func main() {
 
 	if err = inferencePoolReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create inferencePool controller")
+		os.Exit(1)
+	}
+
+	// Create ConfigMap reconciler for configuration management
+	configMapReconciler := &controller.ConfigMapReconciler{
+		Client:    mgr.GetClient(),
+		Scheme:    mgr.GetScheme(),
+		Config:    cfg,
+		Datastore: ds,
+		Recorder:  mgr.GetEventRecorderFor("workload-variant-autoscaler-configmap-reconciler"),
+	}
+
+	if err = configMapReconciler.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create configmap controller")
 		os.Exit(1)
 	}
 

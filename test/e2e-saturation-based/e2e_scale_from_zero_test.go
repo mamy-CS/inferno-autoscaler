@@ -40,9 +40,10 @@ import (
 
 // Scale-from-zero test constants
 const (
-	scaleFromZeroTestTimeout   = 15 * time.Minute
-	scaleUpFromZeroTimeout     = 5 * time.Minute
-	scaleFromZeroRequestCount  = 10
+	scaleFromZeroTestTimeout  = 15 * time.Minute
+	scaleUpFromZeroTimeout    = 5 * time.Minute
+	scaleFromZeroRequestCount = 10
+	// Uses Helm-generated name based on default release name
 	scaleFromZeroConfigMapName = "workload-variant-autoscaler-variantautoscaling-config"
 )
 

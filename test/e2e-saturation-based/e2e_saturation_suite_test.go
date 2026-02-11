@@ -157,7 +157,7 @@ queueSpareTrigger: %.2f`, KvCacheThreshold, QueueLengthThreshold, kvSpareTrigger
 	_, err = k8sClient.CoreV1().ConfigMaps(controllerNamespace).Update(context.Background(), saturationCM, metav1.UpdateOptions{})
 	Expect(err).NotTo(HaveOccurred(), "Should be able to update ConfigMap: "+saturationConfigMapName)
 
-	_, _ = fmt.Fprintf(GinkgoWriter, "Updated saturation-scaling-config with relaxed thresholds: kvCache=%.2f, queue=%.2f, kvSpare=%.2f, queueSpare=%.2f\n", KvCacheThreshold, QueueLengthThreshold, kvSpareTrigger, queueSpareTrigger)
+	_, _ = fmt.Fprintf(GinkgoWriter, "Updated wva-saturation-scaling-config with relaxed thresholds: kvCache=%.2f, queue=%.2f, kvSpare=%.2f, queueSpare=%.2f\n", KvCacheThreshold, QueueLengthThreshold, kvSpareTrigger, queueSpareTrigger)
 
 	// Restart controller pods to pick up new saturation-scaling configuration or new image
 	restartReason := "to load new saturation configuration"

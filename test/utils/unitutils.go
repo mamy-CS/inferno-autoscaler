@@ -63,30 +63,6 @@ func CreateITLQuery(modelID, namespace string) string {
 		constants.LabelNamespace, namespace)
 }
 
-// createAcceleratorUnitCostConfigMap creates the accelerator unitcost ConfigMap
-func CreateAcceleratorUnitCostConfigMap(controllerNamespace string) *corev1.ConfigMap {
-	return &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "accelerator-unit-costs",
-			Namespace: controllerNamespace,
-		},
-		Data: map[string]string{
-			"A100": `{
-"device": "NVIDIA-A100-PCIE-80GB",
-"cost": "40.00"
-}`,
-			"MI300X": `{
-"device": "AMD-MI300X-192GB",
-"cost": "65.00"
-}`,
-			"G2": `{
-"device": "Intel-Gaudi-2-96GB",
-"cost": "23.00"
-}`,
-		},
-	}
-}
-
 // createServiceClassConfigMap creates the serviceclass ConfigMap
 func CreateServiceClassConfigMap(controllerNamespace string) *corev1.ConfigMap {
 	return &corev1.ConfigMap{

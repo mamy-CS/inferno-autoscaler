@@ -164,10 +164,12 @@ var _ = Describe("CollectModelRequestCount", func() {
 		})
 	})
 
-	Context("when no metrics are available (empty vector)", func() {
+	Context("when query succeeds but returns empty result (no requests in retention period)", func() {
 		BeforeEach(func() {
 			mockAPI = &mockPrometheusAPI{
 				queryFunc: func(ctx context.Context, query string, ts time.Time, opts ...v1.Option) (model.Value, v1.Warnings, error) {
+					// Prometheus returns empty vector when query succeeds but no time series match
+					// This is the normal case when there are genuinely no requests in the retention period
 					return model.Vector{}, nil, nil
 				},
 			}

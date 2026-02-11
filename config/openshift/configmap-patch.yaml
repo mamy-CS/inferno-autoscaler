@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: workload-variant-autoscaler-variantautoscaling-config
+  name: wva-variantautoscaling-config
   namespace: workload-variant-autoscaler-system
 data:
   # OpenShift Prometheus configuration

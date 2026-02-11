@@ -37,6 +37,9 @@ const (
 	limiterModel1 = "unsloth/Meta-Llama-3.1-8B"
 )
 
+// Note: controllerNamespace, controllerMonitoringNamespace, and saturationConfigMapName
+// are defined in e2e_saturation_test.go and are accessible in this package.
+
 // getGPUResourceName returns the GPU resource name based on E2E_GPU_TYPE env var.
 func getGPUResourceName() corev1.ResourceName {
 	gpuType := os.Getenv("E2E_GPU_TYPE")
@@ -69,7 +72,6 @@ func getGPUNodeSelector() (map[string]string, string) {
 	}
 	return map[string]string{"gpu-config": "4MI300X"}, "MI300X"
 }
-
 
 // countGPUsOnNodeWithSelector counts available GPUs on nodes matching the selector.
 func countGPUsOnNodeWithSelector(ctx context.Context, selector map[string]string) (int64, error) {
@@ -118,7 +120,7 @@ var _ = Describe("Test workload-variant-autoscaler - GPU Limiter Feature", Order
 		initialReplicas int32
 
 		// GPU capacity on target node
-		gpusOnTargetNode int64
+		gpusOnTargetNode  int64
 		maxReplicasOnNode int
 	)
 
@@ -487,4 +489,3 @@ enableLimiter: true`
 		})
 	})
 })
-

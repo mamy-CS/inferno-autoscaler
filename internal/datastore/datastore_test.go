@@ -85,7 +85,7 @@ func TestDatastore(t *testing.T) {
 				WithObjects(eppSvc).
 				Build()
 
-			ds := NewDatastore()
+			ds := NewDatastore(nil)
 			ctx := context.Background()
 
 			ep, err := poolutil.InferencePoolToEndpointPool(ctx, fakeClient, tt.inferencePool)

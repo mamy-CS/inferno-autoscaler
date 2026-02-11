@@ -11,9 +11,9 @@ const (
 	QueryQueueLength  = "queue_length"
 
 	// V2 queries (token-based capacity analysis)
-	QueryCacheConfigInfo   = "cache_config_info"
-	QueryAvgOutputTokens   = "avg_output_tokens"
-	QueryAvgInputTokens    = "avg_input_tokens"
+	QueryCacheConfigInfo    = "cache_config_info"
+	QueryAvgOutputTokens    = "avg_output_tokens"
+	QueryAvgInputTokens     = "avg_input_tokens"
 	QueryPrefixCacheHitRate = "prefix_cache_hit_rate"
 
 	// Scheduler flow control queries (model-level, from inference scheduler)

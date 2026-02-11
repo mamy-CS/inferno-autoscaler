@@ -19,9 +19,7 @@ package saturation
 import (
 	"context"
 	"fmt"
-	"os"
 	"strconv"
-	"strings"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -38,6 +36,7 @@ import (
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/registration"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/collector/source"
+	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/config"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/discovery"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/common"
 	"github.com/llm-d-incubation/workload-variant-autoscaler/internal/engines/executor"
@@ -62,6 +61,7 @@ type Engine struct {
 	executor executor.Executor
 
 	Recorder record.EventRecorder
+	Config   *config.Config // Unified configuration (injected from main.go)
 
 	// ReplicaMetricsCollector is the collector for replica metrics using the source infrastructure
 	ReplicaMetricsCollector *collector.ReplicaMetricsCollector
@@ -72,10 +72,18 @@ type Engine struct {
 	// GPULimiter constrains scaling decisions based on available GPU resources.
 	// Only applied when EnableLimiter is true in the saturation config.
 	GPULimiter pipeline.Limiter
+
+	// metricsRegistry is used to access metrics sources for request count queries
+	metricsRegistry *source.SourceRegistry
 }
 
 // NewEngine creates a new instance of the saturation engine.
-func NewEngine(client client.Client, scheme *runtime.Scheme, recorder record.EventRecorder, metricsRegistry *source.SourceRegistry) *Engine {
+// Config must be non-nil (validated in main.go before engine creation).
+// Panics if cfg is nil to fail fast on programming errors.
+func NewEngine(client client.Client, scheme *runtime.Scheme, recorder record.EventRecorder, metricsRegistry *source.SourceRegistry, cfg *config.Config) *Engine {
+	if cfg == nil {
+		panic("config is nil in NewEngine - this should not happen (validated in main.go before engine creation)")
+	}
 	promSource := metricsRegistry.Get("prometheus") // assume prometheus source is registered
 
 	// Create request count function wrapper for scale-to-zero enforcer
@@ -93,9 +101,11 @@ func NewEngine(client client.Client, scheme *runtime.Scheme, recorder record.Eve
 		client:                  client,
 		scheme:                  scheme,
 		Recorder:                recorder,
+		Config:                  cfg,
 		ReplicaMetricsCollector: collector.NewReplicaMetricsCollector(promSource, client),
 		ScaleToZeroEnforcer:     pipeline.NewEnforcer(requestCountFunc),
 		GPULimiter:              gpuLimiter,
+		metricsRegistry:         metricsRegistry,
 	}
 
 	engine.executor = executor.NewPollingExecutor(executor.PollingConfig{
@@ -125,22 +135,20 @@ func (e *Engine) StartOptimizeLoop(ctx context.Context) {
 func (e *Engine) optimize(ctx context.Context) error {
 	logger := ctrl.LoggerFrom(ctx)
 
-	//TODO: move interval to manager.yaml
-	interval := common.Config.GetOptimizationInterval()
+	// Get optimization interval from Config (already a time.Duration)
+	interval := e.Config.OptimizationInterval()
 
 	// Update the executor interval if changed
 	// Note: simple polling executor might not support dynamic interval update easily without restart,
 	// but here we just check it. The original code used RequeueAfter.
 	// The PollingExecutor uses fixed interval.
 	// TODO: Support dynamic interval in Executor if needed. For now, we log and proceed.
-	if interval != "" {
-		if dur, err := time.ParseDuration(interval); err == nil {
-			// e.executor.SetInterval(dur) // If supported
-			_ = dur
-		}
+	if interval > 0 {
+		// e.executor.SetInterval(interval) // If supported
+		_ = interval
 	}
 
-	if strings.EqualFold(os.Getenv("WVA_SCALE_TO_ZERO"), "true") {
+	if e.Config.ScaleToZeroEnabled() {
 		logger.Info("Scaling to zero is enabled")
 	}
 
@@ -156,7 +164,7 @@ func (e *Engine) optimize(ctx context.Context) error {
 	}
 
 	// Collected accelerator inventory (only in limited mode)
-	if strings.EqualFold(os.Getenv("WVA_LIMITED_MODE"), "true") {
+	if e.Config.LimitedModeEnabled() {
 		inventory, err := collector.CollectInventoryK8S(ctx, e.client)
 		if err != nil {
 			logger.Error(err, "Failed to collect cluster inventory")
@@ -165,18 +173,6 @@ func (e *Engine) optimize(ctx context.Context) error {
 		}
 		// always print inventory until optimizer consumes it
 		logger.Info("Collected cluster accelerator inventory (Limited Mode)", "inventory", inventory)
-	}
-
-	saturationConfigMap := common.Config.GetSaturationConfig()
-	if len(saturationConfigMap) == 0 {
-		logger.Info("Saturation scaling config not loaded yet, skipping optimization")
-		return nil
-	}
-
-	saturationConfig, ok := saturationConfigMap["default"]
-	if !ok {
-		logger.Info("Default saturation scaling config not found, skipping optimization")
-		return nil
 	}
 
 	// Group VAs by model for per-model capacity analysis
@@ -189,12 +185,11 @@ func (e *Engine) optimize(ctx context.Context) error {
 	allDecisions := make([]interfaces.VariantDecision, 0)
 
 	// Create VA lookup map for applySaturationDecisions (used to access VA status and update decisions)
-	// Copy slice elements to local variable to ensure stable pointers
 	// Use namespace/vaName as key to avoid collisions when multiple namespaces have same VA name
+	// Use slice index directly to avoid pointer-to-loop-variable bug
 	vaMap := make(map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling, len(activeVAs))
 	for i := range activeVAs {
-		va := activeVAs[i] // Copy to local variable to ensure stable pointer
-		vaMap[utils.GetNamespacedKey(va.Namespace, va.Name)] = &va
+		vaMap[utils.GetNamespacedKey(activeVAs[i].Namespace, activeVAs[i].Name)] = &activeVAs[i]
 	}
 
 	// Create map to store current allocations populated during metrics collection
@@ -205,11 +200,29 @@ func (e *Engine) optimize(ctx context.Context) error {
 		// The groupKey is "modelID|namespace" - extract actual modelID from VAs
 		// All VAs in the group have the same modelID and namespace
 		modelID := modelVAs[0].Spec.ModelID
+		namespace := modelVAs[0].Namespace
 		logger.Info("Processing model",
 			"modelID", modelID,
-			"namespace", modelVAs[0].Namespace,
+			"namespace", namespace,
 			"variantCount", len(modelVAs),
 			"groupKey", groupKey)
+
+		// Get namespace-aware saturation config (namespace-local > global)
+		saturationConfigMap := e.Config.SaturationConfigForNamespace(namespace)
+		if len(saturationConfigMap) == 0 {
+			logger.Info("Saturation scaling config not loaded yet for namespace, skipping model",
+				"namespace", namespace,
+				"modelID", modelID)
+			continue
+		}
+
+		saturationConfig, ok := saturationConfigMap["default"]
+		if !ok {
+			logger.Info("Default saturation scaling config not found for namespace, skipping model",
+				"namespace", namespace,
+				"modelID", modelID)
+			continue
+		}
 
 		saturationTargets, saturationAnalysis, variantStates, err := e.RunSaturationAnalysis(ctx, modelID, modelVAs, saturationConfig, e.client)
 		if err != nil {
@@ -225,7 +238,8 @@ func (e *Engine) optimize(ctx context.Context) error {
 		if saturationAnalysis != nil {
 			// Apply scale-to-zero enforcement after saturation analysis
 			// This either scales to zero if enabled and no requests, or ensures minimum replicas
-			scaleToZeroConfig := common.Config.GetScaleToZeroConfig()
+			// Get namespace-aware scale-to-zero config (namespace-local > global)
+			scaleToZeroConfig := e.Config.ScaleToZeroConfigForNamespace(namespace)
 
 			// Copy original targets for logging (enforcer modifies map in place)
 			originalTargets := make(map[string]int, len(saturationTargets))
@@ -263,7 +277,16 @@ func (e *Engine) optimize(ctx context.Context) error {
 
 	// STEP 2.5: Apply GPU limiter if enabled
 	// This constrains scaling decisions based on available GPU resources
-	if saturationConfig.EnableLimiter && len(allDecisions) > 0 {
+	// Note: Limiter uses global saturation config since it's applied globally to all decisions
+	// TODO: Consider per-namespace limiter configuration in the future
+	globalSaturationConfigMap := e.Config.SaturationConfig()
+	var globalSaturationConfig interfaces.SaturationScalingConfig
+	if len(globalSaturationConfigMap) > 0 {
+		if cfg, ok := globalSaturationConfigMap["default"]; ok {
+			globalSaturationConfig = cfg
+		}
+	}
+	if globalSaturationConfig.EnableLimiter && len(allDecisions) > 0 {
 		logger.Info("Applying GPU limiter to scaling decisions",
 			"decisionCount", len(allDecisions))
 

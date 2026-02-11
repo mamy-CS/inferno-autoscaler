@@ -100,7 +100,7 @@ func TestInferencePoolReconcile(t *testing.T) {
 			req := ctrl.Request{NamespacedName: namespacedName}
 			ctx := context.Background()
 
-			ds := datastore.NewDatastore()
+			ds := datastore.NewDatastore(nil)
 			inferencePoolReconciler := &InferencePoolReconciler{Client: fakeClient, Datastore: ds, PoolGKNN: gknn}
 
 			if _, err := inferencePoolReconciler.Reconcile(ctx, req); err != nil {
@@ -221,7 +221,7 @@ func TestAlphaInferencePoolReconcile(t *testing.T) {
 			req := ctrl.Request{NamespacedName: namespacedName}
 			ctx := context.Background()
 
-			ds := datastore.NewDatastore()
+			ds := datastore.NewDatastore(nil)
 			inferencePoolReconciler := &InferencePoolReconciler{Client: fakeClient, Datastore: ds, PoolGKNN: gknn}
 
 			if _, err := inferencePoolReconciler.Reconcile(ctx, req); err != nil {
