@@ -215,6 +215,11 @@ func (r *VariantAutoscalingReconciler) Reconcile(ctx context.Context, req ctrl.R
 				Accelerator: accelerator,
 				LastRunTime: lastRunTime,
 			}
+		} else {
+			// When we have a partial decision (no accelerator yet), explicitly preserve
+			// the existing DesiredOptimizedAlloc from the fetched object to avoid
+			// sending zero-valued struct in the patch which would fail CRD validation.
+			va.Status.DesiredOptimizedAlloc = originalVA.Status.DesiredOptimizedAlloc
 		}
 
 		// Always apply MetricsAvailable condition from cache
