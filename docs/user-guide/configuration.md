@@ -461,58 +461,36 @@ Infrastructure settings can be configured via CLI flags. Only flags explicitly p
   --rest-client-timeout=60s
 ```
 
-**Available CLI Flags:**
+### Configuration Parameter Reference
 
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--metrics-bind-address` | string | `0` | Metrics endpoint bind address (`:8443` for HTTPS, `:8080` for HTTP, `0` to disable) |
-| `--health-probe-bind-address` | string | `:8081` | Health probe endpoint bind address |
-| `--leader-elect` | bool | `false` | Enable leader election for HA |
-| `--leader-election-lease-duration` | duration | `60s` | Duration non-leaders wait before force-acquiring leadership |
-| `--leader-election-renew-deadline` | duration | `50s` | Duration the leader retries refreshing before giving up |
-| `--leader-election-retry-period` | duration | `10s` | Duration between retry attempts |
-| `--rest-client-timeout` | duration | `60s` | Timeout for Kubernetes API server REST calls |
-| `--metrics-secure` | bool | `true` | Serve metrics endpoint via HTTPS |
-| `--enable-http2` | bool | `false` | Enable HTTP/2 for metrics and webhook servers |
-| `--watch-namespace` | string | `""` | Namespace to watch (empty = all namespaces) |
-| `-v` | int | `2` | Log level verbosity |
-| `--webhook-cert-path` | string | `""` | Directory containing the webhook certificate |
-| `--webhook-cert-name` | string | `tls.crt` | Webhook certificate file name |
-| `--webhook-cert-key` | string | `tls.key` | Webhook key file name |
-| `--metrics-cert-path` | string | `""` | Directory containing the metrics server certificate |
-| `--metrics-cert-name` | string | `tls.crt` | Metrics server certificate file name |
-| `--metrics-cert-key` | string | `tls.key` | Metrics key file name |
+The following table lists all static configuration parameters with their CLI flag, environment variable, ConfigMap key, type, and default value. All three sources share the same key name (except CLI flags which use kebab-case).
 
 **Note:** CLI flags are typically set in the Helm chart or deployment manifest, not directly.
 
-### Static Configuration Parameter Reference
-
-The following table lists all static configuration parameters with their CLI flag, environment variable, ConfigMap key, and default value. All three sources share the same key name (except CLI flags which use kebab-case).
-
-| Parameter | CLI Flag | Env Var / ConfigMap Key | Default | Description |
-|-----------|----------|------------------------|---------|-------------|
-| Metrics bind address | `--metrics-bind-address` | `METRICS_BIND_ADDRESS` | `0` | Metrics endpoint address |
-| Health probe address | `--health-probe-bind-address` | `HEALTH_PROBE_BIND_ADDRESS` | `:8081` | Health probe address |
-| Leader election | `--leader-elect` | `LEADER_ELECT` | `false` | Enable leader election |
-| Leader election ID | — | `LEADER_ELECTION_ID` | `72dd1cf1.llm-d.ai` | Leader election coordination ID |
-| Lease duration | `--leader-election-lease-duration` | `LEADER_ELECTION_LEASE_DURATION` | `60s` | Leader election lease duration |
-| Renew deadline | `--leader-election-renew-deadline` | `LEADER_ELECTION_RENEW_DEADLINE` | `50s` | Leader election renew deadline |
-| Retry period | `--leader-election-retry-period` | `LEADER_ELECTION_RETRY_PERIOD` | `10s` | Leader election retry period |
-| REST timeout | `--rest-client-timeout` | `REST_CLIENT_TIMEOUT` | `60s` | Kubernetes API call timeout |
-| Secure metrics | `--metrics-secure` | `METRICS_SECURE` | `true` | Serve metrics via HTTPS |
-| Enable HTTP/2 | `--enable-http2` | `ENABLE_HTTP2` | `false` | Enable HTTP/2 |
-| Watch namespace | `--watch-namespace` | `WATCH_NAMESPACE` | `""` | Namespace to watch |
-| Log verbosity | `-v` | `V` | `0` | Log level verbosity |
-| Webhook cert path | `--webhook-cert-path` | `WEBHOOK_CERT_PATH` | `""` | Webhook cert directory |
-| Webhook cert name | `--webhook-cert-name` | `WEBHOOK_CERT_NAME` | `tls.crt` | Webhook cert file name |
-| Webhook cert key | `--webhook-cert-key` | `WEBHOOK_CERT_KEY` | `tls.key` | Webhook key file name |
-| Metrics cert path | `--metrics-cert-path` | `METRICS_CERT_PATH` | `""` | Metrics cert directory |
-| Metrics cert name | `--metrics-cert-name` | `METRICS_CERT_NAME` | `tls.crt` | Metrics cert file name |
-| Metrics cert key | `--metrics-cert-key` | `METRICS_CERT_KEY` | `tls.key` | Metrics key file name |
-| Scale to zero | — | `WVA_SCALE_TO_ZERO` | `false` | Enable scale-to-zero feature |
-| Limited mode | — | `WVA_LIMITED_MODE` | `false` | Enable limited mode |
-| Scale-from-zero concurrency | — | `SCALE_FROM_ZERO_ENGINE_MAX_CONCURRENCY` | `10` | Max concurrent scale-from-zero operations |
-| EPP bearer token | — | `EPP_METRIC_READER_BEARER_TOKEN` | `""` | EPP metric reader bearer token |
+| Parameter | CLI Flag | Env Var / ConfigMap Key | Type | Default | Description |
+|-----------|----------|------------------------|------|---------|-------------|
+| Metrics bind address | `--metrics-bind-address` | `METRICS_BIND_ADDRESS` | string | `0` | Metrics endpoint bind address (`:8443` for HTTPS, `:8080` for HTTP, `0` to disable) |
+| Health probe address | `--health-probe-bind-address` | `HEALTH_PROBE_BIND_ADDRESS` | string | `:8081` | Health probe endpoint bind address |
+| Leader election | `--leader-elect` | `LEADER_ELECT` | bool | `false` | Enable leader election for HA |
+| Leader election ID | — | `LEADER_ELECTION_ID` | string | `72dd1cf1.llm-d.ai` | Leader election coordination ID |
+| Lease duration | `--leader-election-lease-duration` | `LEADER_ELECTION_LEASE_DURATION` | duration | `60s` | Duration non-leaders wait before force-acquiring leadership |
+| Renew deadline | `--leader-election-renew-deadline` | `LEADER_ELECTION_RENEW_DEADLINE` | duration | `50s` | Duration the leader retries refreshing before giving up |
+| Retry period | `--leader-election-retry-period` | `LEADER_ELECTION_RETRY_PERIOD` | duration | `10s` | Duration between retry attempts |
+| REST timeout | `--rest-client-timeout` | `REST_CLIENT_TIMEOUT` | duration | `60s` | Timeout for Kubernetes API server REST calls |
+| Secure metrics | `--metrics-secure` | `METRICS_SECURE` | bool | `true` | Serve metrics endpoint via HTTPS |
+| Enable HTTP/2 | `--enable-http2` | `ENABLE_HTTP2` | bool | `false` | Enable HTTP/2 for metrics and webhook servers |
+| Watch namespace | `--watch-namespace` | `WATCH_NAMESPACE` | string | `""` | Namespace to watch (empty = all namespaces) |
+| Log verbosity | `-v` | `V` | int | `2` | Log level verbosity |
+| Webhook cert path | `--webhook-cert-path` | `WEBHOOK_CERT_PATH` | string | `""` | Directory containing the webhook certificate |
+| Webhook cert name | `--webhook-cert-name` | `WEBHOOK_CERT_NAME` | string | `tls.crt` | Webhook certificate file name |
+| Webhook cert key | `--webhook-cert-key` | `WEBHOOK_CERT_KEY` | string | `tls.key` | Webhook key file name |
+| Metrics cert path | `--metrics-cert-path` | `METRICS_CERT_PATH` | string | `""` | Directory containing the metrics server certificate |
+| Metrics cert name | `--metrics-cert-name` | `METRICS_CERT_NAME` | string | `tls.crt` | Metrics server certificate file name |
+| Metrics cert key | `--metrics-cert-key` | `METRICS_CERT_KEY` | string | `tls.key` | Metrics key file name |
+| Scale to zero | — | `WVA_SCALE_TO_ZERO` | bool | `false` | Enable scale-to-zero feature |
+| Limited mode | — | `WVA_LIMITED_MODE` | bool | `false` | Enable limited mode |
+| Scale-from-zero concurrency | — | `SCALE_FROM_ZERO_ENGINE_MAX_CONCURRENCY` | int | `10` | Max concurrent scale-from-zero operations |
+| EPP bearer token | — | `EPP_METRIC_READER_BEARER_TOKEN` | string | `""` | EPP metric reader bearer token |
 
 ### Fail-Fast Validation
 
