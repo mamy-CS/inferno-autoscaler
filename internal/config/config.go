@@ -716,8 +716,7 @@ func NewTestConfigWithPrometheus(ctx context.Context, prometheusURL string, k8sC
 	_ = os.Setenv("PROMETHEUS_BASE_URL", prometheusURL)
 	defer func() { _ = os.Unsetenv("PROMETHEUS_BASE_URL") }()
 
-	flags := StaticConfigFlags{}
-	cfg, err := Load(ctx, flags, k8sClient)
+	cfg, err := Load(ctx, nil, k8sClient)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create test config: %w", err)
 	}

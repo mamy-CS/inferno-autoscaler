@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	flag "github.com/spf13/pflag"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -18,14 +19,13 @@ import (
 func TestLoad_Defaults(t *testing.T) {
 	// Setup: No flags, no env, no ConfigMap
 	ctx := context.Background()
-	flags := StaticConfigFlags{}
 	k8sClient := fake.NewClientBuilder().Build()
 
 	// Set required Prometheus env var
 	_ = os.Setenv("PROMETHEUS_BASE_URL", "https://prometheus:9090")
 	defer func() { _ = os.Unsetenv("PROMETHEUS_BASE_URL") }()
 
-	cfg, err := Load(ctx, flags, k8sClient)
+	cfg, err := Load(ctx, nil, k8sClient)
 	if err != nil {
 		t.Fatalf("Load() failed with defaults: %v", err)
 	}
@@ -67,11 +67,12 @@ func TestLoad_FlagsPrecedence(t *testing.T) {
 	}
 	k8sClient := fake.NewClientBuilder().WithObjects(cm).Build()
 
-	flags := StaticConfigFlags{
-		MetricsAddr: "flag-value",
-	}
+	// Create a flagset with metrics-bind-address explicitly set
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.String("metrics-bind-address", "0", "")
+	_ = fs.Set("metrics-bind-address", "flag-value")
 
-	cfg, err := Load(ctx, flags, k8sClient)
+	cfg, err := Load(ctx, fs, k8sClient)
 	if err != nil {
 		t.Fatalf("Load() failed: %v", err)
 	}
@@ -103,9 +104,7 @@ func TestLoad_EnvPrecedence(t *testing.T) {
 	}
 	k8sClient := fake.NewClientBuilder().WithObjects(cm).Build()
 
-	flags := StaticConfigFlags{} // No flag set
-
-	cfg, err := Load(ctx, flags, k8sClient)
+	cfg, err := Load(ctx, nil, k8sClient)
 	if err != nil {
 		t.Fatalf("Load() failed: %v", err)
 	}
@@ -133,9 +132,7 @@ func TestLoad_ConfigMapPrecedence(t *testing.T) {
 	}
 	k8sClient := fake.NewClientBuilder().WithObjects(cm).Build()
 
-	flags := StaticConfigFlags{} // No flag, no env
-
-	cfg, err := Load(ctx, flags, k8sClient)
+	cfg, err := Load(ctx, nil, k8sClient)
 	if err != nil {
 		t.Fatalf("Load() failed: %v", err)
 	}
@@ -148,11 +145,10 @@ func TestLoad_ConfigMapPrecedence(t *testing.T) {
 
 func TestLoad_PrometheusConfigRequired(t *testing.T) {
 	ctx := context.Background()
-	flags := StaticConfigFlags{}
 	k8sClient := fake.NewClientBuilder().Build()
 
 	// No Prometheus config set
-	cfg, err := Load(ctx, flags, k8sClient)
+	cfg, err := Load(ctx, nil, k8sClient)
 	if err == nil {
 		t.Fatal("Expected Load() to fail when Prometheus config is missing, but it succeeded")
 	}
@@ -166,10 +162,9 @@ func TestLoad_PrometheusConfigFromEnv(t *testing.T) {
 	_ = os.Setenv("PROMETHEUS_BASE_URL", "https://prometheus-env:9090")
 	defer func() { _ = os.Unsetenv("PROMETHEUS_BASE_URL") }()
 
-	flags := StaticConfigFlags{}
 	k8sClient := fake.NewClientBuilder().Build()
 
-	cfg, err := Load(ctx, flags, k8sClient)
+	cfg, err := Load(ctx, nil, k8sClient)
 	if err != nil {
 		t.Fatalf("Load() failed: %v", err)
 	}
@@ -196,9 +191,7 @@ func TestLoad_PrometheusConfigFromConfigMap(t *testing.T) {
 	}
 	k8sClient := fake.NewClientBuilder().WithObjects(cm).Build()
 
-	flags := StaticConfigFlags{}
-
-	cfg, err := Load(ctx, flags, k8sClient)
+	cfg, err := Load(ctx, nil, k8sClient)
 	if err != nil {
 		t.Fatalf("Load() failed: %v", err)
 	}
@@ -227,9 +220,7 @@ func TestLoad_DynamicConfig_OptimizationInterval(t *testing.T) {
 	}
 	k8sClient := fake.NewClientBuilder().WithObjects(cm).Build()
 
-	flags := StaticConfigFlags{}
-
-	cfg, err := Load(ctx, flags, k8sClient)
+	cfg, err := Load(ctx, nil, k8sClient)
 	if err != nil {
 		t.Fatalf("Load() failed: %v", err)
 	}
@@ -255,9 +246,7 @@ func TestLoad_DynamicConfig_InvalidOptimizationInterval(t *testing.T) {
 	}
 	k8sClient := fake.NewClientBuilder().WithObjects(cm).Build()
 
-	flags := StaticConfigFlags{}
-
-	cfg, err := Load(ctx, flags, k8sClient)
+	cfg, err := Load(ctx, nil, k8sClient)
 	if err != nil {
 		t.Fatalf("Load() should not fail on invalid duration, should use default: %v", err)
 	}
@@ -311,9 +300,7 @@ queueSpareTrigger: 3`,
 		t.Logf("GetConfigMapWithBackoff succeeded, found %d keys", len(testCM2.Data))
 	}
 
-	flags := StaticConfigFlags{}
-
-	cfg, err := Load(ctx, flags, k8sClient)
+	cfg, err := Load(ctx, nil, k8sClient)
 	if err != nil {
 		t.Fatalf("Load() failed: %v", err)
 	}
@@ -356,9 +343,7 @@ queueSpareTrigger: 3`,
 	}
 	k8sClient := fake.NewClientBuilder().WithObjects(saturationCM).Build()
 
-	flags := StaticConfigFlags{}
-
-	cfg, err := Load(ctx, flags, k8sClient)
+	cfg, err := Load(ctx, nil, k8sClient)
 	if err != nil {
 		t.Fatalf("Load() should not fail on invalid saturation config, should skip it: %v", err)
 	}
@@ -393,9 +378,7 @@ retention_period: 5m`,
 	}
 	k8sClient := fake.NewClientBuilder().WithObjects(scaleToZeroCM).Build()
 
-	flags := StaticConfigFlags{}
-
-	cfg, err := Load(ctx, flags, k8sClient)
+	cfg, err := Load(ctx, nil, k8sClient)
 	if err != nil {
 		t.Fatalf("Load() failed: %v", err)
 	}
@@ -424,9 +407,7 @@ func TestLoad_FeatureFlags(t *testing.T) {
 	}
 	k8sClient := fake.NewClientBuilder().WithObjects(cm).Build()
 
-	flags := StaticConfigFlags{}
-
-	cfg, err := Load(ctx, flags, k8sClient)
+	cfg, err := Load(ctx, nil, k8sClient)
 	if err != nil {
 		t.Fatalf("Load() failed: %v", err)
 	}
@@ -459,9 +440,7 @@ func TestLoad_PrometheusCacheConfig(t *testing.T) {
 	}
 	k8sClient := fake.NewClientBuilder().WithObjects(cm).Build()
 
-	flags := StaticConfigFlags{}
-
-	cfg, err := Load(ctx, flags, k8sClient)
+	cfg, err := Load(ctx, nil, k8sClient)
 	if err != nil {
 		t.Fatalf("Load() failed: %v", err)
 	}
@@ -483,10 +462,9 @@ func TestConfig_ThreadSafety(t *testing.T) {
 	_ = os.Setenv("PROMETHEUS_BASE_URL", "https://prometheus:9090")
 	defer func() { _ = os.Unsetenv("PROMETHEUS_BASE_URL") }()
 
-	flags := StaticConfigFlags{}
 	k8sClient := fake.NewClientBuilder().Build()
 
-	cfg, err := Load(ctx, flags, k8sClient)
+	cfg, err := Load(ctx, nil, k8sClient)
 	if err != nil {
 		t.Fatalf("Load() failed: %v", err)
 	}
@@ -514,10 +492,9 @@ func TestConfig_UpdateDynamicConfig(t *testing.T) {
 	_ = os.Setenv("PROMETHEUS_BASE_URL", "https://prometheus:9090")
 	defer func() { _ = os.Unsetenv("PROMETHEUS_BASE_URL") }()
 
-	flags := StaticConfigFlags{}
 	k8sClient := fake.NewClientBuilder().Build()
 
-	cfg, err := Load(ctx, flags, k8sClient)
+	cfg, err := Load(ctx, nil, k8sClient)
 	if err != nil {
 		t.Fatalf("Load() failed: %v", err)
 	}
@@ -555,10 +532,9 @@ func TestLoad_Validation_OptimizationInterval(t *testing.T) {
 	_ = os.Setenv("PROMETHEUS_BASE_URL", "https://prometheus:9090")
 	defer func() { _ = os.Unsetenv("PROMETHEUS_BASE_URL") }()
 
-	flags := StaticConfigFlags{}
 	k8sClient := fake.NewClientBuilder().Build()
 
-	cfg, err := Load(ctx, flags, k8sClient)
+	cfg, err := Load(ctx, nil, k8sClient)
 	if err != nil {
 		t.Fatalf("Load() failed: %v", err)
 	}
@@ -574,10 +550,9 @@ func TestLoad_NoConfigMap(t *testing.T) {
 	_ = os.Setenv("PROMETHEUS_BASE_URL", "https://prometheus:9090")
 	defer func() { _ = os.Unsetenv("PROMETHEUS_BASE_URL") }()
 
-	flags := StaticConfigFlags{}
 	k8sClient := fake.NewClientBuilder().Build() // No ConfigMaps
 
-	cfg, err := Load(ctx, flags, k8sClient)
+	cfg, err := Load(ctx, nil, k8sClient)
 	if err != nil {
 		t.Fatalf("Load() should succeed with defaults when ConfigMap is missing: %v", err)
 	}
@@ -610,12 +585,11 @@ func TestLoad_BoolPrecedence(t *testing.T) {
 		k8sClient := fake.NewClientBuilder().WithObjects(cm).Build()
 
 		// Flag explicitly set to false
-		flagValue := false
-		flags := StaticConfigFlags{
-			EnableLeaderElection: &flagValue,
-		}
+		fs := flag.NewFlagSet("test", flag.ContinueOnError)
+		fs.Bool("leader-elect", false, "")
+		_ = fs.Set("leader-elect", "false")
 
-		cfg, err := Load(ctx, flags, k8sClient)
+		cfg, err := Load(ctx, fs, k8sClient)
 		if err != nil {
 			t.Fatalf("Load() failed: %v", err)
 		}
@@ -640,12 +614,11 @@ func TestLoad_BoolPrecedence(t *testing.T) {
 		k8sClient := fake.NewClientBuilder().WithObjects(cm).Build()
 
 		// Flag explicitly set to true
-		flagValue := true
-		flags := StaticConfigFlags{
-			EnableLeaderElection: &flagValue,
-		}
+		fs := flag.NewFlagSet("test", flag.ContinueOnError)
+		fs.Bool("leader-elect", false, "")
+		_ = fs.Set("leader-elect", "true")
 
-		cfg, err := Load(ctx, flags, k8sClient)
+		cfg, err := Load(ctx, fs, k8sClient)
 		if err != nil {
 			t.Fatalf("Load() failed: %v", err)
 		}
@@ -673,12 +646,7 @@ func TestLoad_BoolPrecedence(t *testing.T) {
 		_ = os.Setenv("LEADER_ELECT", "true")
 		defer func() { _ = os.Unsetenv("LEADER_ELECT") }()
 
-		// Flag not set (nil)
-		flags := StaticConfigFlags{
-			EnableLeaderElection: nil,
-		}
-
-		cfg, err := Load(ctx, flags, k8sClient)
+		cfg, err := Load(ctx, nil, k8sClient)
 		if err != nil {
 			t.Fatalf("Load() failed: %v", err)
 		}
@@ -705,12 +673,7 @@ func TestLoad_BoolPrecedence(t *testing.T) {
 		// Ensure env is not set
 		_ = os.Unsetenv("LEADER_ELECT")
 
-		// Flag not set (nil)
-		flags := StaticConfigFlags{
-			EnableLeaderElection: nil,
-		}
-
-		cfg, err := Load(ctx, flags, k8sClient)
+		cfg, err := Load(ctx, nil, k8sClient)
 		if err != nil {
 			t.Fatalf("Load() failed: %v", err)
 		}
@@ -744,12 +707,11 @@ func TestLoad_DurationPrecedence(t *testing.T) {
 		k8sClient := fake.NewClientBuilder().WithObjects(cm).Build()
 
 		// Flag explicitly set to 0
-		flagValue := time.Duration(0)
-		flags := StaticConfigFlags{
-			LeaseDuration: &flagValue,
-		}
+		fs := flag.NewFlagSet("test", flag.ContinueOnError)
+		fs.Duration("leader-election-lease-duration", 60*time.Second, "")
+		_ = fs.Set("leader-election-lease-duration", "0s")
 
-		cfg, err := Load(ctx, flags, k8sClient)
+		cfg, err := Load(ctx, fs, k8sClient)
 		if err != nil {
 			t.Fatalf("Load() failed: %v", err)
 		}
@@ -774,12 +736,11 @@ func TestLoad_DurationPrecedence(t *testing.T) {
 		k8sClient := fake.NewClientBuilder().WithObjects(cm).Build()
 
 		// Flag explicitly set to 45s
-		flagValue := 45 * time.Second
-		flags := StaticConfigFlags{
-			LeaseDuration: &flagValue,
-		}
+		fs := flag.NewFlagSet("test", flag.ContinueOnError)
+		fs.Duration("leader-election-lease-duration", 60*time.Second, "")
+		_ = fs.Set("leader-election-lease-duration", "45s")
 
-		cfg, err := Load(ctx, flags, k8sClient)
+		cfg, err := Load(ctx, fs, k8sClient)
 		if err != nil {
 			t.Fatalf("Load() failed: %v", err)
 		}
@@ -807,12 +768,7 @@ func TestLoad_DurationPrecedence(t *testing.T) {
 		_ = os.Setenv("LEADER_ELECTION_LEASE_DURATION", "45s")
 		defer func() { _ = os.Unsetenv("LEADER_ELECTION_LEASE_DURATION") }()
 
-		// Flag not set (nil)
-		flags := StaticConfigFlags{
-			LeaseDuration: nil,
-		}
-
-		cfg, err := Load(ctx, flags, k8sClient)
+		cfg, err := Load(ctx, nil, k8sClient)
 		if err != nil {
 			t.Fatalf("Load() failed: %v", err)
 		}
@@ -839,12 +795,7 @@ func TestLoad_DurationPrecedence(t *testing.T) {
 		// Ensure env is not set
 		_ = os.Unsetenv("LEADER_ELECTION_LEASE_DURATION")
 
-		// Flag not set (nil)
-		flags := StaticConfigFlags{
-			LeaseDuration: nil,
-		}
-
-		cfg, err := Load(ctx, flags, k8sClient)
+		cfg, err := Load(ctx, nil, k8sClient)
 		if err != nil {
 			t.Fatalf("Load() failed: %v", err)
 		}
@@ -871,12 +822,7 @@ func TestLoad_DurationPrecedence(t *testing.T) {
 		// Ensure env is not set
 		_ = os.Unsetenv("LEADER_ELECTION_LEASE_DURATION")
 
-		// Flag not set (nil)
-		flags := StaticConfigFlags{
-			LeaseDuration: nil,
-		}
-
-		cfg, err := Load(ctx, flags, k8sClient)
+		cfg, err := Load(ctx, nil, k8sClient)
 		if err != nil {
 			t.Fatalf("Load() failed: %v", err)
 		}
@@ -894,12 +840,7 @@ func TestLoad_DurationPrecedence(t *testing.T) {
 		// Ensure env is not set
 		_ = os.Unsetenv("LEADER_ELECTION_LEASE_DURATION")
 
-		// Flag not set (nil)
-		flags := StaticConfigFlags{
-			LeaseDuration: nil,
-		}
-
-		cfg, err := Load(ctx, flags, k8sClient)
+		cfg, err := Load(ctx, nil, k8sClient)
 		if err != nil {
 			t.Fatalf("Load() failed: %v", err)
 		}
