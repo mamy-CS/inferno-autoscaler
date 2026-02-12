@@ -169,32 +169,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Create StaticConfigFlags from parsed flags
-	// For boolean and duration flags, pass pointers to distinguish "unset" from "explicitly set"
-	flags := config.StaticConfigFlags{
-		MetricsAddr:          metricsAddr,
-		ProbeAddr:            probeAddr,
-		EnableLeaderElection: &enableLeaderElection,
-		LeaderElectionID:     "72dd1cf1.llm-d.ai", // Default, can be overridden via env/ConfigMap
-		LeaseDuration:        &leaseDuration,
-		RenewDeadline:        &renewDeadline,
-		RetryPeriod:          &retryPeriod,
-		RestTimeout:          &restTimeout,
-		SecureMetrics:        &secureMetrics,
-		EnableHTTP2:          &enableHTTP2,
-		WatchNamespace:       watchNamespace,
-		LoggerVerbosity:      loggerVerbosity,
-		WebhookCertPath:      webhookCertPath,
-		WebhookCertName:      webhookCertName,
-		WebhookCertKey:       webhookCertKey,
-		MetricsCertPath:      metricsCertPath,
-		MetricsCertName:      metricsCertName,
-		MetricsCertKey:       metricsCertKey,
-	}
-
 	// Load unified configuration (fail-fast if invalid)
+	// Viper resolves precedence: flags > env > ConfigMap > defaults
 	ctx := context.Background()
-	cfg, err := config.Load(ctx, flags, tempClient)
+	cfg, err := config.Load(ctx, flag.CommandLine, tempClient)
 	if err != nil {
 		setupLog.Error(err, "failed to load configuration - this is a fatal error")
 		os.Exit(1)
