@@ -23,7 +23,7 @@ make test
 go test -cover ./...
 
 # Run specific package
-go test ./internal/optimizer/...
+go test ./pkg/solver/...
 go test ./pkg/analyzer/...
 
 # Run with verbose output
@@ -43,12 +43,19 @@ internal/
 ├── controller/
 │   ├── variantautoscaling_controller.go
 │   └── variantautoscaling_controller_test.go
-├── optimizer/
-│   ├── optimizer.go
-│   └── optimizer_test.go
+├── saturation/
+│   ├── analyzer.go
+│   └── analyzer_test.go
 └── collector/
     ├── collector.go
     └── collector_test.go
+
+pkg/
+└── solver/
+    ├── optimizer.go
+    ├── optimizer_test.go
+    ├── solver.go
+    └── solver_test.go
 ```
 
 ### Writing Unit Tests
@@ -56,7 +63,7 @@ internal/
 Example unit test structure:
 
 ```go
-package optimizer_test
+package solver_test
 
 import (
     "testing"
@@ -64,12 +71,12 @@ import (
     . "github.com/onsi/gomega"
 )
 
-func TestOptimizer(t *testing.T) {
+func TestSolver(t *testing.T) {
     RegisterFailHandler(Fail)
-    RunSpecs(t, "Optimizer Suite")
+    RunSpecs(t, "Solver Suite")
 }
 
-var _ = Describe("Optimizer", func() {
+var _ = Describe("Solver", func() {
     Context("when optimizing single variant", func() {
         It("should calculate optimal replicas", func() {
             // Test implementation
@@ -113,10 +120,10 @@ var _ = BeforeSuite(func() {
             filepath.Join("..", "..", "config", "crd", "bases"),
         },
     }
-    
+
     cfg, err := testEnv.Start()
     Expect(err).NotTo(HaveOccurred())
-    
+
     k8sClient, err = client.New(cfg, client.Options{Scheme: scheme})
     Expect(err).NotTo(HaveOccurred())
 })
@@ -132,10 +139,10 @@ WVA provides two E2E test suites for different testing scenarios.
 
 ### Saturation-Based E2E Tests (Kind)
 
-**Purpose**: Fast, isolated testing with emulated infrastructure  
-**Location**: `test/e2e-saturation-based/`  
-**Environment**: Local Kind cluster with GPU emulation  
-**Duration**: ~15-25 minutes
+- **Purpose**: Fast, isolated testing with emulated infrastructure
+- **Location**: `test/e2e-saturation-based/`
+- **Environment**: Local Kind cluster with GPU emulation
+- **Duration**: ~15-25 minutes
 
 #### Quick Start
 
@@ -220,10 +227,10 @@ See [Multi-Controller Isolation](../user-guide/multi-controller-isolation.md) fo
 
 ### OpenShift E2E Tests
 
-**Purpose**: Real-world validation with actual vLLM deployments  
-**Location**: `test/e2e-openshift/`  
-**Environment**: OpenShift cluster with GPU hardware  
-**Duration**: ~30-45 minutes (depending on cluster and load)
+- **Purpose**: Real-world validation with actual vLLM deployments
+- **Location**: `test/e2e-openshift/`
+- **Environment**: OpenShift cluster with GPU hardware
+- **Duration**: ~30-45 minutes (depending on cluster and load)
 
 #### Quick Start
 
@@ -436,7 +443,7 @@ var _ = Describe("Optimizer", func() {
         It("should optimize for cost", func() { /* ... */ })
         It("should meet SLO requirements", func() { /* ... */ })
     })
-    
+
     Context("with multiple variants", func() {
         It("should prefer cheaper variant", func() { /* ... */ })
         It("should distribute load evenly", func() { /* ... */ })
@@ -452,19 +459,19 @@ var _ = Describe("Controller", func() {
         namespace string
         cleanup   func()
     )
-    
+
     BeforeEach(func() {
         namespace = "test-" + randomString()
         // Setup test resources
     })
-    
+
     AfterEach(func() {
         // Clean up test resources
         if cleanup != nil {
             cleanup()
         }
     })
-    
+
     It("should reconcile resources", func() {
         // Test implementation
     })
@@ -477,10 +484,10 @@ var _ = Describe("Controller", func() {
 
 ```bash
 # Run with verbose output
-go test -v ./internal/optimizer/...
+go test -v ./pkg/solver/...
 
 # Run specific test
-go test -v ./internal/optimizer/... -run TestOptimizer/should_optimize
+go test -v ./pkg/solver/... -run TestSolver/should_optimize
 
 # Enable Ginkgo trace
 go test -v ./pkg/analyzer/... -ginkgo.trace
