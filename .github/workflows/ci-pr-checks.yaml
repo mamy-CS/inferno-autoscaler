@@ -1,9 +1,26 @@
 name: CI - PR Checks
 
 # Cancel previous runs on the same PR when new commits are pushed
-# This prevents multiple CI runs from running simultaneously for the same PR
+# Only group by PR number for legitimate triggers (pull_request, workflow_dispatch, /trigger-e2e-full comments)
+# Regular comments get a unique group (run_id) so they don't cancel in-progress test runs
+#
+# Logic:
+# - Regular comments (not /trigger-e2e-full): unique group prevents cancellation of real tests
+# - Valid triggers: group 'ci-pr-checks-{pr_number}' (can cancel previous runs for same PR)
+# - Fallback chain for ID: pull_request.number -> issue.number -> run_id
+#
+# NOTE: Valid command list (/trigger-e2e-full) must stay in sync with check-full-tests job validation
 concurrency:
-  group: ci-pr-checks-${{ github.event.pull_request.number || github.run_id }}
+  group: >-
+    ${{
+      github.event_name == 'issue_comment' &&
+      !contains(github.event.comment.body, '/trigger-e2e-full')
+      && format('comment-isolated-{0}', github.run_id)
+      || format('ci-pr-checks-{0}',
+           github.event.pull_request.number
+           || github.event.issue.number
+           || github.run_id)
+    }}
   cancel-in-progress: true
 
 on:
@@ -230,11 +247,7 @@ jobs:
   e2e-tests:
     runs-on: ubuntu-latest
     needs: [lint-and-test, check-code-changes, check-full-tests]
-    if: |
-      # Always run if explicitly triggered via /trigger-e2e-full or workflow_dispatch
-      needs.check-full-tests.outputs.run_full == 'true' ||
-      # Otherwise, only run if PR has code changes
-      needs.check-code-changes.outputs.has_code_changes == 'true'
+    if: always() && (needs.check-full-tests.outputs.run_full == 'true' || (needs.check-code-changes.result == 'success' && needs.check-code-changes.outputs.has_code_changes == 'true'))
     timeout-minutes: 60
     permissions:
       contents: read
