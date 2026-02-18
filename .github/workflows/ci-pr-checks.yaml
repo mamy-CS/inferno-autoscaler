@@ -88,6 +88,9 @@ jobs:
   # Check if full e2e tests should run (via workflow_dispatch or comment trigger)
   check-full-tests:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write  # For posting comments and reactions on PRs
     outputs:
       run_full: ${{ steps.check.outputs.run_full }}
     steps:
@@ -96,6 +99,22 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
+            // Helper to check if user has write access
+            async function hasWriteAccess(username) {
+              try {
+                const { data: permission } = await github.rest.repos.getCollaboratorPermissionLevel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  username: username
+                });
+                const privilegedRoles = ['admin', 'maintain', 'write'];
+                return privilegedRoles.includes(permission.permission);
+              } catch (e) {
+                console.log(`Could not get permissions for ${username}: ${e.message}`);
+                return false;
+              }
+            }
+
             // Check workflow_dispatch input
             const workflowInput = '${{ github.event.inputs.run_full_tests }}';
             // Handle both boolean and string inputs
@@ -104,27 +123,64 @@ jobs:
               return;
             }
             
-            // Check for /test-full comment trigger
+            // Check for /trigger-e2e-full comment trigger
             if (context.eventName === 'issue_comment') {
-              const comment = context.payload.comment.body.trim().toLowerCase();
-              if (comment === '/test-full' || comment === '/test-full-kind') {
-                // Verify user has write access
-                const username = context.payload.comment.user.login;
-                try {
-                  const { data: permission } = await github.rest.repos.getCollaboratorPermissionLevel({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    username: username
-                  });
-                  const privilegedRoles = ['admin', 'maintain', 'write'];
-                  if (privilegedRoles.includes(permission.permission)) {
-                    core.setOutput('run_full', 'true');
-                    return;
-                  }
-                } catch (e) {
-                  console.log('Could not verify permissions:', e);
-                }
+              const comment = context.payload.comment.body.trim();
+              const issue = context.payload.issue;
+
+              // Only process /trigger-e2e-full comments on PRs
+              if (!issue.pull_request) {
+                console.log('Comment is not on a PR, skipping');
+                core.setOutput('run_full', 'false');
+                return;
               }
+
+              // Strict command matching (case-sensitive, exact match)
+              const validCommands = ['/trigger-e2e-full'];
+              if (!validCommands.includes(comment)) {
+                console.log(`Comment "${comment}" is not a valid trigger command, skipping`);
+                core.setOutput('run_full', 'false');
+                return;
+              }
+
+              // Check if commenter has write access
+              const commenter = context.payload.comment.user.login;
+              const hasAccess = await hasWriteAccess(commenter);
+              if (!hasAccess) {
+                console.log(`User ${commenter} does not have write access, ignoring ${comment}`);
+                core.setOutput('run_full', 'false');
+                return;
+              }
+
+              // Get PR details
+              const { data: pr } = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: issue.number
+              });
+
+              console.log(`${comment} approved by ${commenter} for PR #${issue.number}`);
+              console.log(`PR head SHA: ${pr.head.sha}`);
+
+              // Add reaction to acknowledge
+              await github.rest.reactions.createForIssueComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: context.payload.comment.id,
+                content: 'rocket'
+              });
+
+              // Post comment with link to the workflow run
+              const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body: `🚀 **Full E2E tests triggered by ${comment}**\n\n[View the Kind E2E workflow run](${runUrl})`
+              });
+
+              core.setOutput('run_full', 'true');
+              return;
             }
             
             core.setOutput('run_full', 'false');
