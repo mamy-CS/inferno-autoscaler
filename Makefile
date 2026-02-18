@@ -18,6 +18,13 @@ DEPLOYMENT           ?= # discovered automatically in e2es
 REQUEST_RATE         ?= 20
 NUM_PROMPTS          ?= 3000
 
+# E2E test configuration (for test/e2e/ suite)
+ENVIRONMENT                 ?= kind-emulator
+USE_SIMULATOR               ?= true
+SCALE_TO_ZERO_ENABLED       ?= false
+E2E_MONITORING_NAMESPACE    ?= workload-variant-autoscaler-monitoring
+E2E_EMULATED_LLMD_NAMESPACE ?= llm-d-sim
+
 # Flags for deploy/install.sh installation script
 CREATE_CLUSTER ?= false
 DEPLOY_LLM_D ?= true
@@ -174,6 +181,98 @@ test-e2e-openshift: ## Run the e2e tests on OpenShift. Supports KUBECONFIG or in
 	REQUEST_RATE=$(REQUEST_RATE) \
 	NUM_PROMPTS=$(NUM_PROMPTS) \
 	go test ./test/e2e-openshift/ -timeout 50m -v -ginkgo.v $(FOCUS_ARGS) $(SKIP_ARGS)
+
+# Consolidated e2e test targets (environment-agnostic)
+# These targets use the test/e2e/ suite that works on any Kubernetes cluster
+# Supports FOCUS and SKIP variables for ginkgo test filtering.
+
+# Deploys only the infrastructure (WVA controller + llm-d) without VA/HPA resources.
+# If IMG is set, builds the image locally first.
+.PHONY: deploy-e2e-infra
+deploy-e2e-infra: ## Deploy e2e test infrastructure (infra-only mode: WVA controller + llm-d, no VA/HPA). If IMG is set, builds the image locally first
+	@echo "Deploying e2e test infrastructure (infra-only mode)..."
+	@if [ -n "$(IMG)" ]; then \
+		echo "IMG is set to '$(IMG)' - building local image..."; \
+		$(MAKE) docker-build IMG=$(IMG); \
+		echo "Extracting image repo and tag from IMG..."; \
+		if echo "$(IMG)" | grep -q ":"; then \
+			IMAGE_REPO=$$(echo $(IMG) | cut -d: -f1); \
+			IMAGE_TAG=$$(echo $(IMG) | cut -d: -f2); \
+		else \
+			IMAGE_REPO="$(IMG)"; \
+			IMAGE_TAG="latest"; \
+		fi; \
+		echo "Using local image: $$IMAGE_REPO:$$IMAGE_TAG"; \
+		ENVIRONMENT=$(ENVIRONMENT) \
+		INFRA_ONLY=true \
+		USE_SIMULATOR=$(USE_SIMULATOR) \
+		SCALE_TO_ZERO_ENABLED=$(SCALE_TO_ZERO_ENABLED) \
+		INSTALL_GATEWAY_CTRLPLANE=true \
+		NAMESPACE_SCOPED=false \
+		WVA_IMAGE_REPO=$$IMAGE_REPO \
+		WVA_IMAGE_TAG=$$IMAGE_TAG \
+		WVA_IMAGE_PULL_POLICY=IfNotPresent \
+		./deploy/install.sh; \
+	else \
+		echo "IMG not set - using default image from registry (latest)"; \
+		ENVIRONMENT=$(ENVIRONMENT) \
+		INFRA_ONLY=true \
+		USE_SIMULATOR=$(USE_SIMULATOR) \
+		SCALE_TO_ZERO_ENABLED=$(SCALE_TO_ZERO_ENABLED) \
+		INSTALL_GATEWAY_CTRLPLANE=true \
+		NAMESPACE_SCOPED=false \
+		./deploy/install.sh; \
+	fi
+
+# Runs a subset of smoke tests from the e2e suite.
+.PHONY: test-e2e-smoke
+test-e2e-smoke: manifests generate fmt vet ## Run smoke e2e tests
+	@echo "Running smoke e2e tests..."
+	$(eval FOCUS_ARGS := $(if $(FOCUS),-ginkgo.focus="$(FOCUS)",))
+	$(eval SKIP_ARGS := $(if $(SKIP),-ginkgo.skip="$(SKIP)",))
+	KUBECONFIG=$(KUBECONFIG) \
+	ENVIRONMENT=$(ENVIRONMENT) \
+	WVA_NAMESPACE=$(CONTROLLER_NAMESPACE) \
+	LLMD_NAMESPACE=$(E2E_EMULATED_LLMD_NAMESPACE) \
+	MONITORING_NAMESPACE=$(E2E_MONITORING_NAMESPACE) \
+	USE_SIMULATOR=$(USE_SIMULATOR) \
+	SCALE_TO_ZERO_ENABLED=$(SCALE_TO_ZERO_ENABLED) \
+	MODEL_ID=$(MODEL_ID) \
+	REQUEST_RATE=$(REQUEST_RATE) \
+	NUM_PROMPTS=$(NUM_PROMPTS) \
+	go test ./test/e2e/ -timeout 20m -v -ginkgo.v \
+		-ginkgo.label-filter="smoke" $(FOCUS_ARGS) $(SKIP_ARGS)
+
+# Runs the complete e2e test suite (excluding flaky tests).
+.PHONY: test-e2e-full
+test-e2e-full: manifests generate fmt vet ## Run full e2e test suite
+	@echo "Running full e2e test suite..."
+	$(eval FOCUS_ARGS := $(if $(FOCUS),-ginkgo.focus="$(FOCUS)",))
+	$(eval SKIP_ARGS := $(if $(SKIP),-ginkgo.skip="$(SKIP)",))
+	KUBECONFIG=$(KUBECONFIG) \
+	ENVIRONMENT=$(ENVIRONMENT) \
+	WVA_NAMESPACE=$(CONTROLLER_NAMESPACE) \
+	LLMD_NAMESPACE=$(E2E_EMULATED_LLMD_NAMESPACE) \
+	MONITORING_NAMESPACE=$(E2E_MONITORING_NAMESPACE) \
+	USE_SIMULATOR=$(USE_SIMULATOR) \
+	SCALE_TO_ZERO_ENABLED=$(SCALE_TO_ZERO_ENABLED) \
+	MODEL_ID=$(MODEL_ID) \
+	REQUEST_RATE=$(REQUEST_RATE) \
+	NUM_PROMPTS=$(NUM_PROMPTS) \
+	go test ./test/e2e/ -timeout 35m -v -ginkgo.v \
+		-ginkgo.label-filter="full && !flaky" $(FOCUS_ARGS) $(SKIP_ARGS)
+
+# Convenience targets for local e2e testing
+
+# Convenience target that deploys infra + runs smoke tests.
+# Set DELETE_CLUSTER=true to delete Kind cluster after tests (default: keep cluster for debugging).
+.PHONY: test-e2e-smoke-with-setup
+test-e2e-smoke-with-setup: deploy-e2e-infra test-e2e-smoke
+
+# Convenience target that deploys infra + runs full test suite.
+# Set DELETE_CLUSTER=true to delete Kind cluster after tests (default: keep cluster for debugging).
+.PHONY: test-e2e-full-with-setup
+test-e2e-full-with-setup: deploy-e2e-infra test-e2e-full 
 
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter

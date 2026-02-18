@@ -101,6 +101,10 @@ VLLM_MAX_NUM_SEQS=${VLLM_MAX_NUM_SEQS:-""}
 # Decode replicas override (useful for e2e testing with limited GPUs)
 DECODE_REPLICAS=${DECODE_REPLICAS:-""}
 
+# Infra-only mode: Deploy only llm-d infrastructure and WVA controller (skip VA/HPA)
+# Useful for e2e testing where tests create their own VA/HPA resources
+INFRA_ONLY=${INFRA_ONLY:-false}
+
 # Environment-related variables
 SCRIPT_DIR=$(cd $(dirname "${BASH_SOURCE[0]}") && pwd)
 ENVIRONMENT=${ENVIRONMENT:-"kubernetes"}
@@ -144,6 +148,7 @@ Options:
   -m, --model MODEL            Model ID to use (default: $MODEL_ID)
   -a, --accelerator TYPE       Accelerator type: A100, H100, L40S, etc. (default: $ACCELERATOR_TYPE)
   -r, --release-name NAME      Helm release name for WVA (default: $WVA_RELEASE_NAME)
+  --infra-only                 Deploy only llm-d infrastructure and WVA controller (skip VA/HPA, for e2e testing)
   -u, --undeploy               Undeploy all components
   -e, --environment            Specify deployment environment: kubernetes, openshift, kind-emulated (default: kubernetes)
   -h, --help                   Show this help and exit
@@ -161,6 +166,7 @@ Environment Variables:
   DEPLOY_HPA                   Deploy HPA (default: true)
   HPA_STABILIZATION_SECONDS    HPA stabilization window in seconds (default: 240)
   HPA_MIN_REPLICAS             HPA minReplicas (default: 1, set to 0 for scale-to-zero)
+  INFRA_ONLY                   Deploy only infrastructure (default: false, same as --infra-only flag)
   UNDEPLOY                     Undeploy mode (default: false)
   DELETE_NAMESPACES            Delete namespaces after undeploy (default: false)
   CONTROLLER_INSTANCE          Controller instance label for multi-controller isolation (optional)
@@ -177,6 +183,11 @@ Examples:
 
   # Deploy with custom release name (for multi-install support)
   $(basename "$0") -r my-wva-release
+
+  # Deploy infra-only mode (for e2e testing)
+  $(basename "$0") --infra-only
+  # Or with environment variable
+  INFRA_ONLY=true $(basename "$0")
 EOF
 }
 
@@ -215,6 +226,7 @@ parse_args() {
       -m|--model)             MODEL_ID="$2"; shift 2 ;;
       -a|--accelerator)       ACCELERATOR_TYPE="$2"; shift 2 ;;
       -r|--release-name)      WVA_RELEASE_NAME="$2"; shift 2 ;;
+      --infra-only)           INFRA_ONLY=true; shift ;;
       -u|--undeploy)          UNDEPLOY=true; shift ;;
       -e|--environment)
         ENVIRONMENT="$2" ; shift 2
@@ -1163,6 +1175,13 @@ cleanup() {
 main() {
     # Parse command line arguments first
     parse_args "$@"
+
+    # Handle infra-only mode: skip VA and HPA deployment
+    if [ "$INFRA_ONLY" = "true" ]; then
+        log_info "Infra-only mode enabled: Skipping VA and HPA deployment"
+        DEPLOY_VA=false
+        DEPLOY_HPA=false
+    fi
 
     # Undeploy mode
     if [ "$UNDEPLOY" = "true" ]; then
