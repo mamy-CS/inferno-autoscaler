@@ -1,5 +1,11 @@
 name: CI - PR Checks
 
+# Cancel previous runs on the same PR when new commits are pushed
+# This prevents multiple CI runs from running simultaneously for the same PR
+concurrency:
+  group: ci-pr-checks-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 on:
   pull_request:
     branches:

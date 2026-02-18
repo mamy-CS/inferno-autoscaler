@@ -252,7 +252,13 @@ test-e2e-smoke: manifests generate fmt vet ## Run smoke e2e tests
 	REQUEST_RATE=$(REQUEST_RATE) \
 	NUM_PROMPTS=$(NUM_PROMPTS) \
 	go test ./test/e2e/ -timeout 20m -v -ginkgo.v \
-		-ginkgo.label-filter="smoke" $(FOCUS_ARGS) $(SKIP_ARGS)
+		-ginkgo.label-filter="smoke" $(FOCUS_ARGS) $(SKIP_ARGS); \
+	TEST_EXIT_CODE=$$?; \
+	echo ""; \
+	echo "=========================================="; \
+	echo "Test execution completed. Exit code: $$TEST_EXIT_CODE"; \
+	echo "=========================================="; \
+	exit $$TEST_EXIT_CODE
 
 # Runs the complete e2e test suite (excluding flaky tests).
 .PHONY: test-e2e-full
@@ -271,7 +277,13 @@ test-e2e-full: manifests generate fmt vet ## Run full e2e test suite
 	REQUEST_RATE=$(REQUEST_RATE) \
 	NUM_PROMPTS=$(NUM_PROMPTS) \
 	go test ./test/e2e/ -timeout 35m -v -ginkgo.v \
-		-ginkgo.label-filter="full && !flaky" $(FOCUS_ARGS) $(SKIP_ARGS)
+		-ginkgo.label-filter="full && !flaky" $(FOCUS_ARGS) $(SKIP_ARGS); \
+	TEST_EXIT_CODE=$$?; \
+	echo ""; \
+	echo "=========================================="; \
+	echo "Test execution completed. Exit code: $$TEST_EXIT_CODE"; \
+	echo "=========================================="; \
+	exit $$TEST_EXIT_CODE
 
 # Convenience targets for local e2e testing
 
