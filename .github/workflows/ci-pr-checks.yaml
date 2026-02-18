@@ -29,15 +29,41 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      pull-requests: read  # For reading PR details when triggered via issue_comment
     outputs:
-      has_code_changes: ${{ steps.filter.outputs.code }}
+      has_code_changes: ${{ steps.set-output.outputs.has_code_changes }}
     steps:
+      - name: Get PR number for issue_comment events
+        id: pr-info
+        if: github.event_name == 'issue_comment'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issue = context.payload.issue;
+            if (!issue.pull_request) {
+              core.setOutput('pr_number', '');
+              return;
+            }
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: issue.number
+            });
+            core.setOutput('pr_number', issue.number.toString());
+            core.setOutput('pr_head_sha', pr.head.sha);
+
       - name: Checkout source
         uses: actions/checkout@v4
+        with:
+          # For issue_comment events, checkout the PR head SHA
+          ref: ${{ github.event_name == 'issue_comment' && steps.pr-info.outputs.pr_head_sha || github.event.pull_request.head.sha || github.sha }}
+          # For pull_request events, fetch the PR head
+          fetch-depth: 0
       
       - name: Check for code changes
         uses: dorny/paths-filter@v3
         id: filter
+        continue-on-error: true  # Don't fail if paths-filter can't determine changes (e.g., issue_comment without PR context)
         with:
           filters: |
             code:
@@ -47,6 +73,20 @@ jobs:
               - '!LICENSE'
               - '!OWNERS'
               - '!PROJECT'
+      
+      - name: Set output with default
+        id: set-output
+        run: |
+          # Use filter output if available, otherwise default to 'true' for issue_comment events
+          # This ensures /trigger-e2e-full works even if PR context is unclear
+          FILTER_OUTPUT="${{ steps.filter.outputs.code }}"
+          if [ "${{ github.event_name }}" == "issue_comment" ] && [ -z "$FILTER_OUTPUT" ]; then
+            echo "has_code_changes=true" >> $GITHUB_OUTPUT
+          elif [ -n "$FILTER_OUTPUT" ]; then
+            echo "has_code_changes=$FILTER_OUTPUT" >> $GITHUB_OUTPUT
+          else
+            echo "has_code_changes=true" >> $GITHUB_OUTPUT
+          fi
 
   lint-and-test:
     runs-on: ubuntu-latest
@@ -186,13 +226,15 @@ jobs:
             core.setOutput('run_full', 'false');
 
   # E2E tests - smoke tests run automatically, full tests on approval
-  # Skip e2e tests if PR only contains docs/metadata changes
+  # Skip e2e tests if PR only contains docs/metadata changes (unless explicitly triggered via /trigger-e2e-full)
   e2e-tests:
     runs-on: ubuntu-latest
     needs: [lint-and-test, check-code-changes, check-full-tests]
     if: |
-      needs.check-code-changes.outputs.has_code_changes == 'true' ||
-      needs.check-full-tests.outputs.run_full == 'true'
+      # Always run if explicitly triggered via /trigger-e2e-full or workflow_dispatch
+      needs.check-full-tests.outputs.run_full == 'true' ||
+      # Otherwise, only run if PR has code changes
+      needs.check-code-changes.outputs.has_code_changes == 'true'
     timeout-minutes: 60
     permissions:
       contents: read
