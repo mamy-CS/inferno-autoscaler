@@ -193,13 +193,18 @@ test-e2e-openshift: ## [DEPRECATED] Run the e2e tests on OpenShift. Supports KUB
 # Supports FOCUS and SKIP variables for ginkgo test filtering.
 
 # Deploys only the infrastructure (WVA controller + llm-d) without VA/HPA resources.
-# If IMG is set, builds the image locally first.
+# If IMG is set, builds the image locally first (unless SKIP_BUILD=true).
 .PHONY: deploy-e2e-infra
-deploy-e2e-infra: ## Deploy e2e test infrastructure (infra-only mode: WVA controller + llm-d, no VA/HPA). If IMG is set, builds the image locally first
+deploy-e2e-infra: ## Deploy e2e test infrastructure (infra-only mode: WVA controller + llm-d, no VA/HPA). If IMG is set, builds the image locally first (unless SKIP_BUILD=true)
 	@echo "Deploying e2e test infrastructure (infra-only mode)..."
 	@if [ -n "$(IMG)" ]; then \
-		echo "IMG is set to '$(IMG)' - building local image..."; \
-		$(MAKE) docker-build IMG=$(IMG); \
+		echo "IMG is set to '$(IMG)'"; \
+		if [ "$(SKIP_BUILD)" != "true" ]; then \
+			echo "Building local image (SKIP_BUILD not set)..."; \
+			$(MAKE) docker-build IMG=$(IMG); \
+		else \
+			echo "Skipping image build (SKIP_BUILD=true) - assuming image already exists"; \
+		fi; \
 		echo "Extracting image repo and tag from IMG..."; \
 		if echo "$(IMG)" | grep -q ":"; then \
 			IMAGE_REPO=$$(echo $(IMG) | cut -d: -f1); \
