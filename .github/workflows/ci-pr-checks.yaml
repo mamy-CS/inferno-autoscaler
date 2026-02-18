@@ -77,19 +77,9 @@ jobs:
     needs: [lint-and-test, check-code-changes]
     if: needs.check-code-changes.outputs.has_code_changes == 'true'
     timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # NVIDIA-focused: H100, A100, AMD MI300X heterogeneous for limiter tests
-          - gpu_type: nvidia-mix
-            scale_to_zero: true
-            e2e_gpu_type: nvidia
-          # AMD-focused: MI300X, MI250, NVIDIA A100 heterogeneous for limiter tests
-          # - gpu_type: amd-mix
-          #   scale_to_zero: false
-          #   e2e_gpu_type: amd
-    name: e2e-tests (gpu=${{ matrix.gpu_type }}, scale-to-zero=${{ matrix.scale_to_zero }})
+    permissions:
+      contents: read
+      packages: write
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -119,12 +109,48 @@ jobs:
           sudo mv ./kind /usr/local/bin/kind
           kind version
 
-      - name: Run e2e tests
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push WVA image
+        id: build-image
+        run: |
+          # Generate unique image tag for this PR run
+          IMAGE_NAME="llm-d-workload-variant-autoscaler"
+          REGISTRY="ghcr.io/llm-d"
+          GIT_REF="${GITHUB_REF#refs/heads/}"
+          GIT_REF_SANITIZED=$(echo "$GIT_REF" | sed 's/[^a-zA-Z0-9]/-/g' | tr '[:upper:]' '[:lower:]')
+          IMAGE_TAG="pr-${GITHUB_RUN_ID}-${GITHUB_SHA:0:7}"
+          FULL_IMAGE="${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"
+          
+          echo "Building image: $FULL_IMAGE"
+          echo "Git ref: $GIT_REF"
+          
+          # Build and push using make targets
+          make docker-build IMG="$FULL_IMAGE"
+          make docker-push IMG="$FULL_IMAGE"
+          
+          echo "image=$FULL_IMAGE" >> $GITHUB_OUTPUT
+          echo "image_tag=${IMAGE_TAG}" >> $GITHUB_OUTPUT
+          echo "Image built and pushed: $FULL_IMAGE"
+
+      - name: Run smoke e2e tests
         shell: bash
         env:
-          ENABLE_SCALE_TO_ZERO: ${{ matrix.scale_to_zero }}
-          CLUSTER_GPU_TYPE: ${{ matrix.gpu_type }}
-          E2E_GPU_TYPE: ${{ matrix.e2e_gpu_type }}
-          MULTI_MODEL_TESTING: "false"
+          ENVIRONMENT: kind-emulator
+          USE_SIMULATOR: "true"
+          SCALE_TO_ZERO_ENABLED: "false"
+          CREATE_CLUSTER: "true"
+          INSTALL_GATEWAY_CTRLPLANE: "true"
+          E2E_TESTS_ENABLED: "true"
+          IMG: ${{ steps.build-image.outputs.image }}
+          DELETE_CLUSTER: "true"
         run: |
-          make test-e2e
+          make test-e2e-smoke-with-setup
