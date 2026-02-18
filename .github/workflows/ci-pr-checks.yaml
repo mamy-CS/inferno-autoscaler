@@ -5,6 +5,17 @@ on:
     branches:
       - main
       - dev
+  # Allow manual triggering of full e2e tests
+  workflow_dispatch:
+    inputs:
+      run_full_tests:
+        description: 'Run full e2e test suite (default: smoke tests only)'
+        required: false
+        default: 'false'
+        type: string
+  # Allow triggering via PR comments
+  issue_comment:
+    types: [created]
 
 jobs:
   # Check if PR contains code changes (not just docs/metadata)
@@ -68,14 +79,57 @@ jobs:
         run: |
           make test
 
-  # E2E tests run in parallel with different configurations:
-  # - HPAScaleToZero feature gate settings (true/false)
-  # - GPU types (nvidia/amd) for limiter tests
+  # Check if full e2e tests should run (via workflow_dispatch or comment trigger)
+  check-full-tests:
+    runs-on: ubuntu-latest
+    outputs:
+      run_full: ${{ steps.check.outputs.run_full }}
+    steps:
+      - name: Check if full tests requested
+        id: check
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Check workflow_dispatch input
+            const workflowInput = '${{ github.event.inputs.run_full_tests }}';
+            if (workflowInput === 'true' || workflowInput === true) {
+              core.setOutput('run_full', 'true');
+              return;
+            }
+            
+            // Check for /test-full comment trigger
+            if (context.eventName === 'issue_comment') {
+              const comment = context.payload.comment.body.trim().toLowerCase();
+              if (comment === '/test-full' || comment === '/test-full-kind') {
+                // Verify user has write access
+                const username = context.payload.comment.user.login;
+                try {
+                  const { data: permission } = await github.rest.repos.getCollaboratorPermissionLevel({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    username: username
+                  });
+                  const privilegedRoles = ['admin', 'maintain', 'write'];
+                  if (privilegedRoles.includes(permission.permission)) {
+                    core.setOutput('run_full', 'true');
+                    return;
+                  }
+                } catch (e) {
+                  console.log('Could not verify permissions:', e);
+                }
+              }
+            }
+            
+            core.setOutput('run_full', 'false');
+
+  # E2E tests - smoke tests run automatically, full tests on approval
   # Skip e2e tests if PR only contains docs/metadata changes
   e2e-tests:
     runs-on: ubuntu-latest
-    needs: [lint-and-test, check-code-changes]
-    if: needs.check-code-changes.outputs.has_code_changes == 'true'
+    needs: [lint-and-test, check-code-changes, check-full-tests]
+    if: |
+      needs.check-code-changes.outputs.has_code_changes == 'true' ||
+      needs.check-full-tests.outputs.run_full == 'true'
     timeout-minutes: 60
     permissions:
       contents: read
@@ -141,16 +195,31 @@ jobs:
           echo "image_tag=${IMAGE_TAG}" >> $GITHUB_OUTPUT
           echo "Image built and pushed: $FULL_IMAGE"
 
-      - name: Run smoke e2e tests
+      - name: Determine test type
+        id: test-type
+        run: |
+          if [ "${{ needs.check-full-tests.outputs.run_full }}" == "true" ]; then
+            echo "test_target=test-e2e-full-with-setup" >> $GITHUB_OUTPUT
+            echo "test_name=full" >> $GITHUB_OUTPUT
+            echo "scale_to_zero=true" >> $GITHUB_OUTPUT
+            echo "delete_cluster=false" >> $GITHUB_OUTPUT
+          else
+            echo "test_target=test-e2e-smoke-with-setup" >> $GITHUB_OUTPUT
+            echo "test_name=smoke" >> $GITHUB_OUTPUT
+            echo "scale_to_zero=false" >> $GITHUB_OUTPUT
+            echo "delete_cluster=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run e2e tests (${{ steps.test-type.outputs.test_name }})
         shell: bash
         env:
           ENVIRONMENT: kind-emulator
           USE_SIMULATOR: "true"
-          SCALE_TO_ZERO_ENABLED: "false"
+          SCALE_TO_ZERO_ENABLED: ${{ steps.test-type.outputs.scale_to_zero }}
           CREATE_CLUSTER: "true"
           INSTALL_GATEWAY_CTRLPLANE: "true"
           E2E_TESTS_ENABLED: "true"
           IMG: ${{ steps.build-image.outputs.image }}
-          DELETE_CLUSTER: "true"
+          DELETE_CLUSTER: ${{ steps.test-type.outputs.delete_cluster }}
         run: |
-          make test-e2e-smoke-with-setup
+          make ${{ steps.test-type.outputs.test_target }}
