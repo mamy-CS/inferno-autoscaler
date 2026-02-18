@@ -126,79 +126,34 @@ See [Saturation Analyzer Documentation](../../docs/saturation-analyzer.md) for c
 
 WVA uses ConfigMaps for cluster-wide configuration.
 
-### Service Class ConfigMap
-
-Defines SLO requirements for different service tiers:
-
-```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: serviceclass
-  namespace: workload-variant-autoscaler-system
-data:
-  serviceClasses: |
-    - name: Premium
-      model: meta/llama-3.1-8b
-      priority: 1
-      slo-itl: 24        # Time per output token (ms)
-      slo-ttw: 500       # Time to first token (ms)
-      
-    - name: Standard
-      model: meta/llama-3.1-8b
-      priority: 5
-      slo-itl: 50
-      slo-ttw: 1000
-      
-    - name: Freemium
-      model: meta/llama-3.1-8b
-      priority: 10
-      slo-itl: 100
-      slo-ttw: 2000
-```
-
-## Unified Configuration System
-
-WVA uses a unified configuration system that consolidates all settings into a single `Config` structure. This provides clear precedence rules, type safety, and separation between static (immutable) and dynamic (runtime-updatable) configuration.
-
-### Configuration Structure
-
-The unified `Config` consists of two parts:
-
-1. **StaticConfig**: Immutable settings loaded at startup (require controller restart to change)
-   - Infrastructure settings (metrics/probe addresses, leader election)
-   - Connection settings (Prometheus URL, TLS certificates)
-   - Feature flags
-
-2. **DynamicConfig**: Runtime-updatable settings (can be changed via ConfigMap updates)
-   - Optimization interval
-   - Saturation scaling thresholds
-   - Scale-to-zero configuration
-   - Prometheus cache settings
-
 ### Configuration Precedence
 
-Configuration values are loaded with the following precedence (highest to lowest):
+Configuration values are resolved with following precedence (highest to lowest):
 
-1. **CLI Flags** (highest priority)
+1. **CLI Flags** — only when explicitly set on the command line (highest priority)
 2. **Environment Variables**
 3. **ConfigMap** (in `workload-variant-autoscaler-system` namespace)
 4. **Defaults** (lowest priority)
 
+> **Note:** CLI flag defaults do **not** override environment variables or ConfigMap values.
+> Only flags that are explicitly passed on the command line take precedence.
+> For example, if `--leader-elect` is not passed but `LEADER_ELECT=true` is set in
+> the environment, the environment value (`true`) is used.
+
 **Example:**
 ```bash
-# CLI flag (highest priority)
---metrics-addr=":8443"
+# CLI flag explicitly set (highest priority)
+--metrics-bind-address=":8443"
 
-# Environment variable (overridden by flags)
+# Environment variable (used when flag is not explicitly set)
 export METRICS_BIND_ADDRESS=":8080"
 
-# ConfigMap (overridden by env/flags)
+# ConfigMap (used when neither flag nor env is set)
 # wva-variantautoscaling-config
 data:
   METRICS_BIND_ADDRESS: ":9090"
 
-# Default (used if none of above are set)
+# Default (used if none of the above are set)
 # Default: "0" (disabled)
 ```
 
@@ -457,10 +412,10 @@ metadata:
 data:
   # Mutable: Optimization interval (can be changed at runtime)
   GLOBAL_OPT_INTERVAL: "60s"
-  
+
   # Immutable: Prometheus connection (requires restart if changed)
   PROMETHEUS_BASE_URL: "https://prometheus:9090"
-  
+
   # Immutable: Feature flags (require restart if changed)
   WVA_SCALE_TO_ZERO: "true"
   WVA_LIMITED_MODE: "false"
@@ -478,11 +433,11 @@ env:
   # Prometheus connection (immutable - requires restart to change)
   - name: PROMETHEUS_BASE_URL
     value: "https://prometheus:9090"
-  
+
   # Optional: Override ConfigMap name
   - name: CONFIG_MAP_NAME
     value: "my-custom-config"
-  
+
   # Optional: Override namespace
   - name: POD_NAMESPACE
     value: "workload-variant-autoscaler-system"
@@ -492,18 +447,50 @@ env:
 
 ### Configuration via CLI Flags
 
-Infrastructure settings can be configured via CLI flags (highest precedence):
+Infrastructure settings can be configured via CLI flags. Only flags explicitly passed on the command line take highest precedence; unset flags fall through to environment variables, ConfigMap, and then defaults.
 
 ```bash
 # Start controller with custom settings
 ./manager \
-  --metrics-addr=":8443" \
-  --probe-addr=":8081" \
-  --enable-leader-election \
-  --leader-election-id="my-election-id"
+  --metrics-bind-address=":8443" \
+  --health-probe-bind-address=":8081" \
+  --leader-elect \
+  --leader-election-lease-duration=60s \
+  --leader-election-renew-deadline=50s \
+  --leader-election-retry-period=10s \
+  --rest-client-timeout=60s
 ```
 
+### Configuration Parameter Reference
+
+The following table lists all static configuration parameters with their CLI flag, environment variable, ConfigMap key, type, and default value. All three sources share the same key name (except CLI flags which use kebab-case).
+
 **Note:** CLI flags are typically set in the Helm chart or deployment manifest, not directly.
+
+| Parameter | CLI Flag | Env Var / ConfigMap Key | Type | Default | Description |
+|-----------|----------|------------------------|------|---------|-------------|
+| Metrics bind address | `--metrics-bind-address` | `METRICS_BIND_ADDRESS` | string | `0` | Metrics endpoint bind address (`:8443` for HTTPS, `:8080` for HTTP, `0` to disable) |
+| Health probe address | `--health-probe-bind-address` | `HEALTH_PROBE_BIND_ADDRESS` | string | `:8081` | Health probe endpoint bind address |
+| Leader election | `--leader-elect` | `LEADER_ELECT` | bool | `false` | Enable leader election for HA |
+| Leader election ID | — | `LEADER_ELECTION_ID` | string | `72dd1cf1.llm-d.ai` | Leader election coordination ID |
+| Lease duration | `--leader-election-lease-duration` | `LEADER_ELECTION_LEASE_DURATION` | duration | `60s` | Duration non-leaders wait before force-acquiring leadership |
+| Renew deadline | `--leader-election-renew-deadline` | `LEADER_ELECTION_RENEW_DEADLINE` | duration | `50s` | Duration the leader retries refreshing before giving up |
+| Retry period | `--leader-election-retry-period` | `LEADER_ELECTION_RETRY_PERIOD` | duration | `10s` | Duration between retry attempts |
+| REST timeout | `--rest-client-timeout` | `REST_CLIENT_TIMEOUT` | duration | `60s` | Timeout for Kubernetes API server REST calls |
+| Secure metrics | `--metrics-secure` | `METRICS_SECURE` | bool | `true` | Serve metrics endpoint via HTTPS |
+| Enable HTTP/2 | `--enable-http2` | `ENABLE_HTTP2` | bool | `false` | Enable HTTP/2 for metrics and webhook servers |
+| Watch namespace | `--watch-namespace` | `WATCH_NAMESPACE` | string | `""` | Namespace to watch (empty = all namespaces) |
+| Log verbosity | `-v` | `V` | int | `2` | Log level verbosity |
+| Webhook cert path | `--webhook-cert-path` | `WEBHOOK_CERT_PATH` | string | `""` | Directory containing the webhook certificate |
+| Webhook cert name | `--webhook-cert-name` | `WEBHOOK_CERT_NAME` | string | `tls.crt` | Webhook certificate file name |
+| Webhook cert key | `--webhook-cert-key` | `WEBHOOK_CERT_KEY` | string | `tls.key` | Webhook key file name |
+| Metrics cert path | `--metrics-cert-path` | `METRICS_CERT_PATH` | string | `""` | Directory containing the metrics server certificate |
+| Metrics cert name | `--metrics-cert-name` | `METRICS_CERT_NAME` | string | `tls.crt` | Metrics server certificate file name |
+| Metrics cert key | `--metrics-cert-key` | `METRICS_CERT_KEY` | string | `tls.key` | Metrics key file name |
+| Scale to zero | — | `WVA_SCALE_TO_ZERO` | bool | `false` | Enable scale-to-zero feature |
+| Limited mode | — | `WVA_LIMITED_MODE` | bool | `false` | Enable limited mode |
+| Scale-from-zero concurrency | — | `SCALE_FROM_ZERO_ENGINE_MAX_CONCURRENCY` | int | `10` | Max concurrent scale-from-zero operations |
+| EPP bearer token | — | `EPP_METRIC_READER_BEARER_TOKEN` | string | `""` | EPP metric reader bearer token |
 
 ### Fail-Fast Validation
 
@@ -611,7 +598,7 @@ spec:
 See [CRD Reference](crd-reference.md) for advanced configuration options.
 
 ## Best Practices
- 
+
 ### Environment Variables
 
 WVA supports configuration via environment variables for operational settings:
@@ -737,4 +724,3 @@ For complete documentation, see [Multi-Controller Isolation Guide](multi-control
 - [Run the Quick Start Demo](../tutorials/demo.md)
 - [Integrate with HPA](../integrations/hpa-integration.md)
 - [Set up Prometheus monitoring](../integrations/prometheus.md)
-

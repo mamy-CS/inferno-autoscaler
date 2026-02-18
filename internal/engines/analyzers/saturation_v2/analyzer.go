@@ -32,9 +32,11 @@ func NewSaturationAnalyzer(store *CapacityKnowledgeStore) *SaturationAnalyzer {
 	}
 }
 
-// Name returns the analyzer identifier.
+// Name returns the analyzer identifier for logging and result metadata.
+// Note: the config value "saturation" (in analyzerName YAML field) selects this analyzer,
+// but the descriptive name here is used in AnalyzerResult.AnalyzerName for observability.
 func (a *SaturationAnalyzer) Name() string {
-	return "saturation"
+	return "saturation-token-based"
 }
 
 // EvictStaleHistory removes k2 history entries that have not been updated
@@ -120,16 +122,16 @@ func (a *SaturationAnalyzer) Analyze(ctx context.Context, input interfaces.Analy
 
 	// Phase 5: Build result
 	result := &interfaces.AnalyzerResult{
-		AnalyzerName:     a.Name(),
-		ModelID:          input.ModelID,
-		Namespace:        input.Namespace,
-		AnalyzedAt:       time.Now(),
+		AnalyzerName:      a.Name(),
+		ModelID:           input.ModelID,
+		Namespace:         input.Namespace,
+		AnalyzedAt:        time.Now(),
 		VariantCapacities: variantCapacities,
-		TotalSupply:      totalSupply,
-		TotalDemand:      totalDemand,
-		Utilization:      utilization,
-		RequiredCapacity: requiredCapacity,
-		SpareCapacity:    spareCapacity,
+		TotalSupply:       totalSupply,
+		TotalDemand:       totalDemand,
+		Utilization:       utilization,
+		RequiredCapacity:  requiredCapacity,
+		SpareCapacity:     spareCapacity,
 	}
 
 	return result, nil
