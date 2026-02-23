@@ -48,17 +48,6 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils"
 )
 
-// Constants for MetricsAvailable condition
-// Note: Reasons should match api/v1alpha1 constants for consistency
-const (
-	// MetricsReasonAvailable uses ReasonMetricsFound from API for consistency
-	MetricsReasonAvailable = llmdVariantAutoscalingV1alpha1.ReasonMetricsFound
-	// MetricsReasonUnavailable uses ReasonMetricsMissing from API for consistency
-	MetricsReasonUnavailable  = llmdVariantAutoscalingV1alpha1.ReasonMetricsMissing
-	MetricsMessageAvailable   = "Saturation metrics data is available for scaling decisions"
-	MetricsMessageUnavailable = "No saturation metrics available - pods may not be ready or metrics not yet scraped"
-)
-
 type Engine struct {
 	client   client.Client
 	scheme   *runtime.Scheme
@@ -892,8 +881,8 @@ func (e *Engine) applySaturationDecisions(
 				VariantName:      vaName,
 				Namespace:        va.Namespace,
 				MetricsAvailable: false,
-				MetricsReason:    MetricsReasonUnavailable,
-				MetricsMessage:   MetricsMessageUnavailable,
+				MetricsReason:    llmdVariantAutoscalingV1alpha1.ReasonMetricsMissing,
+				MetricsMessage:   llmdVariantAutoscalingV1alpha1.MessageMetricsUnavailable,
 			})
 			// Trigger reconciler to apply the condition
 			common.DecisionTrigger <- event.GenericEvent{
@@ -982,11 +971,11 @@ func (e *Engine) applySaturationDecisions(
 		//   saturation metrics in this run.
 		// Either condition implies saturation metrics were available and usable.
 		metricsAvailable := hasAllocation || hasDecision
-		metricsReason := MetricsReasonUnavailable
-		metricsMessage := MetricsMessageUnavailable
+		metricsReason := llmdVariantAutoscalingV1alpha1.ReasonMetricsMissing
+		metricsMessage := llmdVariantAutoscalingV1alpha1.MessageMetricsUnavailable
 		if metricsAvailable {
-			metricsReason = MetricsReasonAvailable
-			metricsMessage = MetricsMessageAvailable
+			metricsReason = llmdVariantAutoscalingV1alpha1.ReasonMetricsFound
+			metricsMessage = llmdVariantAutoscalingV1alpha1.MessageMetricsAvailable
 		}
 
 		common.DecisionCache.Set(va.Name, va.Namespace, interfaces.VariantDecision{

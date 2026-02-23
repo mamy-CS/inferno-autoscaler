@@ -121,6 +121,14 @@ const (
 	ReasonPrometheusError = "PrometheusError"
 )
 
+// Condition messages for MetricsAvailable
+const (
+	// MessageMetricsAvailable indicates metrics are available for scaling decisions
+	MessageMetricsAvailable = "Saturation metrics data is available for scaling decisions"
+	// MessageMetricsUnavailable indicates metrics are not available
+	MessageMetricsUnavailable = "No saturation metrics available - pods may not be ready or metrics not yet scraped"
+)
+
 // Condition Reasons for OptimizationReady
 const (
 	// ReasonOptimizationSucceeded indicates optimization completed successfully

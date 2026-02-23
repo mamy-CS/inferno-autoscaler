@@ -14,20 +14,62 @@ import (
 	"k8s.io/utils/ptr"
 )
 
-// CreateHPA creates a HorizontalPodAutoscaler resource for WVA integration
+// CreateHPA creates a HorizontalPodAutoscaler for WVA integration. Fails if it already exists.
 func CreateHPA(
 	ctx context.Context,
 	k8sClient *kubernetes.Clientset,
 	namespace, name, deploymentName, vaName string,
 	minReplicas, maxReplicas int32,
 ) error {
+	hpa := buildHPA(namespace, name, deploymentName, vaName, minReplicas, maxReplicas)
+	_, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(namespace).Create(ctx, hpa, metav1.CreateOptions{})
+	return err
+}
+
+// DeleteHPA deletes the HorizontalPodAutoscaler. Idempotent; ignores NotFound.
+func DeleteHPA(ctx context.Context, k8sClient *kubernetes.Clientset, namespace, name string) error {
+	hpaName := name + "-hpa"
+	err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(namespace).Delete(ctx, hpaName, metav1.DeleteOptions{})
+	if err != nil && !errors.IsNotFound(err) {
+		return fmt.Errorf("delete HPA %s: %w", hpaName, err)
+	}
+	return nil
+}
+
+// EnsureHPA creates or replaces the HPA (idempotent for test setup).
+func EnsureHPA(
+	ctx context.Context,
+	k8sClient *kubernetes.Clientset,
+	namespace, name, deploymentName, vaName string,
+	minReplicas, maxReplicas int32,
+) error {
+	hpa := buildHPA(namespace, name, deploymentName, vaName, minReplicas, maxReplicas)
+	existing, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(namespace).Get(ctx, hpa.Name, metav1.GetOptions{})
+	if err == nil && existing != nil {
+		deleteErr := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(namespace).Delete(ctx, hpa.Name, metav1.DeleteOptions{})
+		if deleteErr != nil && !errors.IsNotFound(deleteErr) {
+			return fmt.Errorf("delete existing HPA %s: %w", hpa.Name, deleteErr)
+		}
+		waitErr := wait.PollUntilContextTimeout(ctx, 1*time.Second, 10*time.Second, true, func(ctx context.Context) (bool, error) {
+			_, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(namespace).Get(ctx, hpa.Name, metav1.GetOptions{})
+			return errors.IsNotFound(err), nil
+		})
+		if waitErr != nil {
+			return fmt.Errorf("timeout waiting for HPA %s deletion: %w", hpa.Name, waitErr)
+		}
+	} else if err != nil && !errors.IsNotFound(err) {
+		return fmt.Errorf("check existing HPA %s: %w", hpa.Name, err)
+	}
+	_, err = k8sClient.AutoscalingV2().HorizontalPodAutoscalers(namespace).Create(ctx, hpa, metav1.CreateOptions{})
+	return err
+}
+
+func buildHPA(namespace, name, deploymentName, vaName string, minReplicas, maxReplicas int32) *autoscalingv2.HorizontalPodAutoscaler {
 	hpa := &autoscalingv2.HorizontalPodAutoscaler{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name + "-hpa",
 			Namespace: namespace,
-			Labels: map[string]string{
-				"test-resource": "true",
-			},
+			Labels:    map[string]string{"test-resource": "true"},
 		},
 		Spec: autoscalingv2.HorizontalPodAutoscalerSpec{
 			ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{
@@ -44,9 +86,7 @@ func CreateHPA(
 						Metric: autoscalingv2.MetricIdentifier{
 							Name: "wva_desired_replicas",
 							Selector: &metav1.LabelSelector{
-								MatchLabels: map[string]string{
-									"variant_name": vaName,
-								},
+								MatchLabels: map[string]string{"variant_name": vaName},
 							},
 						},
 						Target: autoscalingv2.MetricTarget{
@@ -59,55 +99,17 @@ func CreateHPA(
 			Behavior: &autoscalingv2.HorizontalPodAutoscalerBehavior{
 				ScaleUp: &autoscalingv2.HPAScalingRules{
 					StabilizationWindowSeconds: ptr.To(int32(0)),
-					Policies: []autoscalingv2.HPAScalingPolicy{
-						{
-							Type:          autoscalingv2.PodsScalingPolicy,
-							Value:         10,
-							PeriodSeconds: 15,
-						},
-					},
+					Policies:                   []autoscalingv2.HPAScalingPolicy{{Type: autoscalingv2.PodsScalingPolicy, Value: 10, PeriodSeconds: 15}},
 				},
 				ScaleDown: &autoscalingv2.HPAScalingRules{
 					StabilizationWindowSeconds: ptr.To(int32(60)),
-					Policies: []autoscalingv2.HPAScalingPolicy{
-						{
-							Type:          autoscalingv2.PodsScalingPolicy,
-							Value:         1,
-							PeriodSeconds: 60,
-						},
-					},
+					Policies:                   []autoscalingv2.HPAScalingPolicy{{Type: autoscalingv2.PodsScalingPolicy, Value: 1, PeriodSeconds: 60}},
 				},
 			},
 		},
 	}
-
-	// Add scale-to-zero behavior if minReplicas is 0
 	if minReplicas == 0 {
-		hpa.Annotations = map[string]string{
-			"autoscaling.alpha.kubernetes.io/feature-gates": "HPAScaleToZero=true",
-		}
+		hpa.Annotations = map[string]string{"autoscaling.alpha.kubernetes.io/feature-gates": "HPAScaleToZero=true"}
 	}
-
-	// Check if HPA already exists and delete it if it does (idempotent cleanup)
-	existing, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(namespace).Get(ctx, hpa.Name, metav1.GetOptions{})
-	if err == nil && existing != nil {
-		// HPA exists, delete it first to ensure clean state
-		deleteErr := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(namespace).Delete(ctx, hpa.Name, metav1.DeleteOptions{})
-		if deleteErr != nil && !errors.IsNotFound(deleteErr) {
-			return fmt.Errorf("failed to delete existing HPA %s: %w", hpa.Name, deleteErr)
-		}
-		// Wait for deletion to complete
-		waitErr := wait.PollUntilContextTimeout(ctx, 1*time.Second, 10*time.Second, true, func(ctx context.Context) (bool, error) {
-			_, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(namespace).Get(ctx, hpa.Name, metav1.GetOptions{})
-			return errors.IsNotFound(err), nil
-		})
-		if waitErr != nil {
-			return fmt.Errorf("timeout waiting for HPA %s deletion: %w", hpa.Name, waitErr)
-		}
-	} else if err != nil && !errors.IsNotFound(err) {
-		return fmt.Errorf("failed to check for existing HPA %s: %w", hpa.Name, err)
-	}
-
-	_, err = k8sClient.AutoscalingV2().HorizontalPodAutoscalers(namespace).Create(ctx, hpa, metav1.CreateOptions{})
-	return err
+	return hpa
 }

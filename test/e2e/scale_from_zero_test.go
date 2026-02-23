@@ -81,7 +81,7 @@ var _ = Describe("Scale-From-Zero Feature", Label("smoke", "full"), Ordered, fun
 
 		By("Creating model service deployment with 0 initial replicas")
 		// Create deployment with 0 replicas using the fixture
-		err := fixtures.CreateModelService(ctx, k8sClient, cfg.LLMDNamespace, modelServiceName, poolName, cfg.ModelID, cfg.UseSimulator, cfg.MaxNumSeqs)
+		err := fixtures.EnsureModelService(ctx, k8sClient, cfg.LLMDNamespace, modelServiceName, poolName, cfg.ModelID, cfg.UseSimulator, cfg.MaxNumSeqs)
 		Expect(err).NotTo(HaveOccurred(), "Failed to create model service")
 
 		// Immediately scale deployment to 0 (with retry to handle race conditions)
@@ -95,11 +95,11 @@ var _ = Describe("Scale-From-Zero Feature", Label("smoke", "full"), Ordered, fun
 		}, 30*time.Second, 2*time.Second).Should(Succeed(), "Should successfully scale deployment to 0 replicas")
 
 		By("Creating service to expose model server")
-		err = fixtures.CreateService(ctx, k8sClient, cfg.LLMDNamespace, modelServiceName, modelServiceName+"-decode", 8000)
+		err = fixtures.EnsureService(ctx, k8sClient, cfg.LLMDNamespace, modelServiceName, modelServiceName+"-decode", 8000)
 		Expect(err).NotTo(HaveOccurred(), "Failed to create service")
 
 		By("Creating ServiceMonitor for metrics scraping")
-		err = fixtures.CreateServiceMonitor(ctx, crClient, cfg.MonitoringNS, cfg.LLMDNamespace, modelServiceName, modelServiceName+"-decode")
+		err = fixtures.EnsureServiceMonitor(ctx, crClient, cfg.MonitoringNS, cfg.LLMDNamespace, modelServiceName, modelServiceName+"-decode")
 		Expect(err).NotTo(HaveOccurred(), "Failed to create ServiceMonitor")
 
 		// Register cleanup for ServiceMonitor
@@ -128,12 +128,22 @@ var _ = Describe("Scale-From-Zero Feature", Label("smoke", "full"), Ordered, fun
 		}, 1*time.Minute, 5*time.Second).Should(Succeed())
 
 		By("Creating VariantAutoscaling resource")
-		err = fixtures.CreateVariantAutoscaling(
+		err = fixtures.EnsureVariantAutoscaling(
 			ctx, crClient, cfg.LLMDNamespace, vaName,
 			modelServiceName+"-decode", cfg.ModelID, cfg.AcceleratorType, 30.0,
 			cfg.ControllerInstance,
 		)
 		Expect(err).NotTo(HaveOccurred(), "Failed to create VariantAutoscaling")
+
+		By("Creating scaler with minReplicas=0 (HPA or ScaledObject per backend)")
+		if cfg.ScalerBackend == "keda" {
+			_ = k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Delete(ctx, hpaName+"-hpa", metav1.DeleteOptions{})
+			err = fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace, hpaName, modelServiceName+"-decode", vaName, 0, 10, cfg.MonitoringNS)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create ScaledObject with scale-to-zero")
+		} else {
+			err = fixtures.EnsureHPA(ctx, k8sClient, cfg.LLMDNamespace, hpaName, modelServiceName+"-decode", vaName, 0, 10)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create HPA with scale-to-zero")
+		}
 
 		// Wait for VA to be marked as inactive (replicas == 0) and for InferencePool to be available
 		// The scale-from-zero engine checks for inactive VAs, so we need to ensure:

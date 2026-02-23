@@ -88,7 +88,7 @@ var _ = Describe("Parallel Load Scale-Up Test", Label("full"), Ordered, func() {
 		jobBaseName = sanitizeK8sName(modelServiceName)
 
 		By("Creating model service deployment")
-		err := fixtures.CreateModelService(ctx, k8sClient, cfg.LLMDNamespace, modelServiceName, poolName, cfg.ModelID, cfg.UseSimulator, cfg.MaxNumSeqs)
+		err := fixtures.EnsureModelService(ctx, k8sClient, cfg.LLMDNamespace, modelServiceName, poolName, cfg.ModelID, cfg.UseSimulator, cfg.MaxNumSeqs)
 		Expect(err).NotTo(HaveOccurred(), "Failed to create model service")
 
 		// Register cleanup for deployment
@@ -104,7 +104,7 @@ var _ = Describe("Parallel Load Scale-Up Test", Label("full"), Ordered, func() {
 		})
 
 		By("Creating service to expose model server")
-		err = fixtures.CreateService(ctx, k8sClient, cfg.LLMDNamespace, modelServiceName, deploymentName, 8000)
+		err = fixtures.EnsureService(ctx, k8sClient, cfg.LLMDNamespace, modelServiceName, deploymentName, 8000)
 		Expect(err).NotTo(HaveOccurred(), "Failed to create service")
 
 		// Register cleanup for service
@@ -120,7 +120,7 @@ var _ = Describe("Parallel Load Scale-Up Test", Label("full"), Ordered, func() {
 		})
 
 		By("Creating ServiceMonitor for metrics scraping")
-		err = fixtures.CreateServiceMonitor(ctx, crClient, cfg.MonitoringNS, cfg.LLMDNamespace, modelServiceName, deploymentName)
+		err = fixtures.EnsureServiceMonitor(ctx, crClient, cfg.MonitoringNS, cfg.LLMDNamespace, modelServiceName, deploymentName)
 		Expect(err).NotTo(HaveOccurred(), "Failed to create ServiceMonitor")
 
 		// Register cleanup for ServiceMonitor
@@ -149,7 +149,7 @@ var _ = Describe("Parallel Load Scale-Up Test", Label("full"), Ordered, func() {
 		}, 5*time.Minute, 5*time.Second).Should(Succeed())
 
 		By("Creating VariantAutoscaling resource")
-		err = fixtures.CreateVariantAutoscalingWithDefaults(
+		err = fixtures.EnsureVariantAutoscalingWithDefaults(
 			ctx, crClient, cfg.LLMDNamespace, vaName,
 			deploymentName, cfg.ModelID, cfg.AcceleratorType,
 			cfg.ControllerInstance,
@@ -180,7 +180,7 @@ var _ = Describe("Parallel Load Scale-Up Test", Label("full"), Ordered, func() {
 			minReplicas = 0
 		}
 		hpaMinReplicas = minReplicas
-		err = fixtures.CreateHPA(ctx, k8sClient, cfg.LLMDNamespace, hpaName, deploymentName, vaName, minReplicas, 10)
+		err = fixtures.EnsureHPA(ctx, k8sClient, cfg.LLMDNamespace, hpaName, deploymentName, vaName, minReplicas, 10)
 		Expect(err).NotTo(HaveOccurred(), "Failed to create HPA")
 
 		// Register cleanup for HPA
@@ -302,7 +302,7 @@ var _ = Describe("Parallel Load Scale-Up Test", Label("full"), Ordered, func() {
 			OutputTokens: maxTokensPerRequest,
 			ModelID:      cfg.ModelID,
 		}
-		err := fixtures.CreateParallelLoadJobs(ctx, k8sClient, jobBaseName, cfg.LLMDNamespace, targetURL, scaledLoadWorkers, loadCfg)
+		err := fixtures.EnsureParallelLoadJobs(ctx, k8sClient, jobBaseName, cfg.LLMDNamespace, targetURL, scaledLoadWorkers, loadCfg)
 		Expect(err).NotTo(HaveOccurred(), "Should be able to create load generation jobs")
 
 		// Register cleanup for load jobs

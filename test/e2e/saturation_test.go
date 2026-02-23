@@ -38,7 +38,7 @@ var _ = Describe("Saturation Mode - Single VariantAutoscaling", Label("full"), O
 		deploymentName := modelServiceName + "-decode"
 
 		By("Creating model service deployment")
-		err := fixtures.CreateModelService(ctx, k8sClient, cfg.LLMDNamespace, modelServiceName, poolName, cfg.ModelID, cfg.UseSimulator, cfg.MaxNumSeqs)
+		err := fixtures.EnsureModelService(ctx, k8sClient, cfg.LLMDNamespace, modelServiceName, poolName, cfg.ModelID, cfg.UseSimulator, cfg.MaxNumSeqs)
 		Expect(err).NotTo(HaveOccurred(), "Failed to create model service")
 
 		// Register cleanup for deployment (runs even if test fails)
@@ -54,7 +54,7 @@ var _ = Describe("Saturation Mode - Single VariantAutoscaling", Label("full"), O
 		})
 
 		By("Creating service to expose model server")
-		err = fixtures.CreateService(ctx, k8sClient, cfg.LLMDNamespace, modelServiceName, deploymentName, 8000)
+		err = fixtures.EnsureService(ctx, k8sClient, cfg.LLMDNamespace, modelServiceName, deploymentName, 8000)
 		Expect(err).NotTo(HaveOccurred(), "Failed to create service")
 
 		// Register cleanup for service
@@ -70,7 +70,7 @@ var _ = Describe("Saturation Mode - Single VariantAutoscaling", Label("full"), O
 		})
 
 		By("Creating ServiceMonitor for metrics scraping")
-		err = fixtures.CreateServiceMonitor(ctx, crClient, cfg.MonitoringNS, cfg.LLMDNamespace, modelServiceName, deploymentName)
+		err = fixtures.EnsureServiceMonitor(ctx, crClient, cfg.MonitoringNS, cfg.LLMDNamespace, modelServiceName, deploymentName)
 		Expect(err).NotTo(HaveOccurred(), "Failed to create ServiceMonitor")
 
 		// Register cleanup for ServiceMonitor
@@ -125,7 +125,7 @@ var _ = Describe("Saturation Mode - Single VariantAutoscaling", Label("full"), O
 		}, time.Duration(cfg.PodReadyTimeout)*time.Second, 5*time.Second).Should(Succeed())
 
 		By("Creating VariantAutoscaling resource")
-		err = fixtures.CreateVariantAutoscaling(
+		err = fixtures.EnsureVariantAutoscaling(
 			ctx, crClient, cfg.LLMDNamespace, vaName,
 			deploymentName, cfg.ModelID, cfg.AcceleratorType, 30.0,
 			cfg.ControllerInstance,
@@ -137,7 +137,7 @@ var _ = Describe("Saturation Mode - Single VariantAutoscaling", Label("full"), O
 		if cfg.ScaleToZeroEnabled {
 			minReplicas = 0
 		}
-		err = fixtures.CreateHPA(ctx, k8sClient, cfg.LLMDNamespace, hpaName, deploymentName, vaName, minReplicas, 10)
+		err = fixtures.EnsureHPA(ctx, k8sClient, cfg.LLMDNamespace, hpaName, deploymentName, vaName, minReplicas, 10)
 		Expect(err).NotTo(HaveOccurred(), "Failed to create HPA")
 	})
 
@@ -299,25 +299,25 @@ var _ = Describe("Saturation Mode - Multiple VariantAutoscalings", Label("full")
 		By("Creating two model services with different configurations")
 
 		// Pool A (cheaper)
-		err := fixtures.CreateModelService(ctx, k8sClient, cfg.LLMDNamespace, modelServiceA, poolA, cfg.ModelID, cfg.UseSimulator, cfg.MaxNumSeqs)
+		err := fixtures.EnsureModelService(ctx, k8sClient, cfg.LLMDNamespace, modelServiceA, poolA, cfg.ModelID, cfg.UseSimulator, cfg.MaxNumSeqs)
 		Expect(err).NotTo(HaveOccurred())
 
-		err = fixtures.CreateService(ctx, k8sClient, cfg.LLMDNamespace, modelServiceA, modelServiceA+"-decode", 8000)
+		err = fixtures.EnsureService(ctx, k8sClient, cfg.LLMDNamespace, modelServiceA, modelServiceA+"-decode", 8000)
 		Expect(err).NotTo(HaveOccurred())
 
 		By("Creating ServiceMonitor for service A")
-		err = fixtures.CreateServiceMonitor(ctx, crClient, cfg.MonitoringNS, cfg.LLMDNamespace, modelServiceA, modelServiceA+"-decode")
+		err = fixtures.EnsureServiceMonitor(ctx, crClient, cfg.MonitoringNS, cfg.LLMDNamespace, modelServiceA, modelServiceA+"-decode")
 		Expect(err).NotTo(HaveOccurred(), "Failed to create ServiceMonitor A")
 
 		// Pool B (more expensive)
-		err = fixtures.CreateModelService(ctx, k8sClient, cfg.LLMDNamespace, modelServiceB, poolB, cfg.ModelID, cfg.UseSimulator, cfg.MaxNumSeqs)
+		err = fixtures.EnsureModelService(ctx, k8sClient, cfg.LLMDNamespace, modelServiceB, poolB, cfg.ModelID, cfg.UseSimulator, cfg.MaxNumSeqs)
 		Expect(err).NotTo(HaveOccurred())
 
-		err = fixtures.CreateService(ctx, k8sClient, cfg.LLMDNamespace, modelServiceB, modelServiceB+"-decode", 8001)
+		err = fixtures.EnsureService(ctx, k8sClient, cfg.LLMDNamespace, modelServiceB, modelServiceB+"-decode", 8001)
 		Expect(err).NotTo(HaveOccurred())
 
 		By("Creating ServiceMonitor for service B")
-		err = fixtures.CreateServiceMonitor(ctx, crClient, cfg.MonitoringNS, cfg.LLMDNamespace, modelServiceB, modelServiceB+"-decode")
+		err = fixtures.EnsureServiceMonitor(ctx, crClient, cfg.MonitoringNS, cfg.LLMDNamespace, modelServiceB, modelServiceB+"-decode")
 		Expect(err).NotTo(HaveOccurred(), "Failed to create ServiceMonitor B")
 
 		By("Waiting for both model services to be ready")
@@ -333,18 +333,18 @@ var _ = Describe("Saturation Mode - Multiple VariantAutoscalings", Label("full")
 
 		By("Creating two VAs with different costs")
 		// VA A: Lower cost (should be preferred)
-		err = fixtures.CreateVariantAutoscaling(ctx, crClient, cfg.LLMDNamespace, vaA, modelServiceA+"-decode", cfg.ModelID, "A100", 30.0, cfg.ControllerInstance)
+		err = fixtures.EnsureVariantAutoscaling(ctx, crClient, cfg.LLMDNamespace, vaA, modelServiceA+"-decode", cfg.ModelID, "A100", 30.0, cfg.ControllerInstance)
 		Expect(err).NotTo(HaveOccurred())
 
 		// VA B: Higher cost
-		err = fixtures.CreateVariantAutoscaling(ctx, crClient, cfg.LLMDNamespace, vaB, modelServiceB+"-decode", cfg.ModelID, "H100", 50.0, cfg.ControllerInstance)
+		err = fixtures.EnsureVariantAutoscaling(ctx, crClient, cfg.LLMDNamespace, vaB, modelServiceB+"-decode", cfg.ModelID, "H100", 50.0, cfg.ControllerInstance)
 		Expect(err).NotTo(HaveOccurred())
 
 		By("Creating HPAs for both deployments")
-		err = fixtures.CreateHPA(ctx, k8sClient, cfg.LLMDNamespace, hpaA, modelServiceA+"-decode", vaA, 1, 10)
+		err = fixtures.EnsureHPA(ctx, k8sClient, cfg.LLMDNamespace, hpaA, modelServiceA+"-decode", vaA, 1, 10)
 		Expect(err).NotTo(HaveOccurred())
 
-		err = fixtures.CreateHPA(ctx, k8sClient, cfg.LLMDNamespace, hpaB, modelServiceB+"-decode", vaB, 1, 10)
+		err = fixtures.EnsureHPA(ctx, k8sClient, cfg.LLMDNamespace, hpaB, modelServiceB+"-decode", vaB, 1, 10)
 		Expect(err).NotTo(HaveOccurred())
 	})
 

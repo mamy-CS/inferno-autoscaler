@@ -140,26 +140,42 @@ func buildLoadGeneratorArgs(targetURL string, cfg LoadConfig) []string {
 	return args
 }
 
-// CreateBurstLoadJob creates a Kubernetes Job that generates burst load using curl
-// sends requests in parallel batches with sleep between batches
-// This creates queue spikes that trigger saturation detection
+// CreateBurstLoadJob creates a Kubernetes Job that generates burst load using curl. Fails if the job already exists.
 func CreateBurstLoadJob(
 	ctx context.Context,
 	k8sClient *kubernetes.Clientset,
 	namespace, name, targetServiceURL string,
 	loadCfg LoadConfig,
 ) error {
-	jobName := name + "-load"
+	job := buildBurstLoadJob(namespace, name, targetServiceURL, loadCfg)
+	_, err := k8sClient.BatchV1().Jobs(namespace).Create(ctx, job, metav1.CreateOptions{})
+	return err
+}
 
-	// Check if Job already exists and delete it if it does (idempotent cleanup)
+// DeleteBurstLoadJob deletes the burst load Job. Idempotent; ignores NotFound.
+func DeleteBurstLoadJob(ctx context.Context, k8sClient *kubernetes.Clientset, namespace, name string) error {
+	jobName := name + "-load"
+	err := k8sClient.BatchV1().Jobs(namespace).Delete(ctx, jobName, metav1.DeleteOptions{})
+	if err != nil && !errors.IsNotFound(err) {
+		return fmt.Errorf("delete Job %s: %w", jobName, err)
+	}
+	return nil
+}
+
+// EnsureBurstLoadJob creates or replaces the burst load Job (idempotent for test setup).
+func EnsureBurstLoadJob(
+	ctx context.Context,
+	k8sClient *kubernetes.Clientset,
+	namespace, name, targetServiceURL string,
+	loadCfg LoadConfig,
+) error {
+	jobName := name + "-load"
 	existing, err := k8sClient.BatchV1().Jobs(namespace).Get(ctx, jobName, metav1.GetOptions{})
 	if err == nil && existing != nil {
-		// Job exists, delete it first to ensure clean state
 		deleteErr := k8sClient.BatchV1().Jobs(namespace).Delete(ctx, jobName, metav1.DeleteOptions{})
 		if deleteErr != nil && !errors.IsNotFound(deleteErr) {
-			return fmt.Errorf("failed to delete existing Job %s: %w", jobName, deleteErr)
+			return fmt.Errorf("delete existing Job %s: %w", jobName, deleteErr)
 		}
-		// Wait for deletion to complete
 		waitErr := wait.PollUntilContextTimeout(ctx, 1*time.Second, 10*time.Second, true, func(ctx context.Context) (bool, error) {
 			_, err := k8sClient.BatchV1().Jobs(namespace).Get(ctx, jobName, metav1.GetOptions{})
 			return errors.IsNotFound(err), nil
@@ -168,9 +184,14 @@ func CreateBurstLoadJob(
 			return fmt.Errorf("timeout waiting for Job %s deletion: %w", jobName, waitErr)
 		}
 	} else if err != nil && !errors.IsNotFound(err) {
-		return fmt.Errorf("failed to check for existing Job %s: %w", jobName, err)
+		return fmt.Errorf("check existing Job %s: %w", jobName, err)
 	}
+	job := buildBurstLoadJob(namespace, name, targetServiceURL, loadCfg)
+	_, err = k8sClient.BatchV1().Jobs(namespace).Create(ctx, job, metav1.CreateOptions{})
+	return err
+}
 
+func buildBurstLoadJob(namespace, name, targetServiceURL string, loadCfg LoadConfig) *batchv1.Job {
 	backoffLimit := int32(0)
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -252,9 +273,7 @@ func CreateBurstLoadJob(
 			},
 		},
 	}
-
-	_, createErr := k8sClient.BatchV1().Jobs(namespace).Create(ctx, job, metav1.CreateOptions{})
-	return createErr
+	return job
 }
 
 // Parallel load configuration constants
@@ -417,8 +436,7 @@ exit 0
 	}
 }
 
-// CreateParallelLoadJobs creates multiple parallel load generation jobs
-// Each job runs as a separate worker, generating load concurrently
+// CreateParallelLoadJobs creates multiple parallel load generation jobs. Fails if any job already exists.
 func CreateParallelLoadJobs(
 	ctx context.Context,
 	k8sClient *kubernetes.Clientset,
@@ -431,10 +449,22 @@ func CreateParallelLoadJobs(
 		job := createParallelLoadJob(jobName, namespace, targetURL, baseName, i, loadCfg)
 		_, err := k8sClient.BatchV1().Jobs(namespace).Create(ctx, job, metav1.CreateOptions{})
 		if err != nil {
-			return fmt.Errorf("failed to create job %s: %w", jobName, err)
+			return fmt.Errorf("create job %s: %w", jobName, err)
 		}
 	}
 	return nil
+}
+
+// EnsureParallelLoadJobs deletes existing parallel load jobs and creates them (idempotent for test setup).
+func EnsureParallelLoadJobs(
+	ctx context.Context,
+	k8sClient *kubernetes.Clientset,
+	baseName, namespace, targetURL string,
+	numWorkers int,
+	loadCfg LoadConfig,
+) error {
+	DeleteParallelLoadJobs(ctx, k8sClient, baseName, namespace, numWorkers)
+	return CreateParallelLoadJobs(ctx, k8sClient, baseName, namespace, targetURL, numWorkers, loadCfg)
 }
 
 // DeleteParallelLoadJobs deletes all parallel load generation jobs

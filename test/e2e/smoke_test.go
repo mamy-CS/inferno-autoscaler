@@ -87,7 +87,7 @@ var _ = Describe("Smoke Tests - Infrastructure Readiness", Label("smoke", "full"
 			// We no longer create InferencePools in individual tests
 
 			By("Creating model service deployment")
-			err := fixtures.CreateModelService(ctx, k8sClient, cfg.LLMDNamespace, modelServiceName, poolName, cfg.ModelID, cfg.UseSimulator, cfg.MaxNumSeqs)
+			err := fixtures.EnsureModelService(ctx, k8sClient, cfg.LLMDNamespace, modelServiceName, poolName, cfg.ModelID, cfg.UseSimulator, cfg.MaxNumSeqs)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create model service")
 
 			// Register cleanup for deployment (runs even if test fails)
@@ -103,7 +103,7 @@ var _ = Describe("Smoke Tests - Infrastructure Readiness", Label("smoke", "full"
 			})
 
 			By("Creating service to expose model server")
-			err = fixtures.CreateService(ctx, k8sClient, cfg.LLMDNamespace, modelServiceName, deploymentName, 8000)
+			err = fixtures.EnsureService(ctx, k8sClient, cfg.LLMDNamespace, modelServiceName, deploymentName, 8000)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create service")
 
 			// Register cleanup for service
@@ -120,7 +120,7 @@ var _ = Describe("Smoke Tests - Infrastructure Readiness", Label("smoke", "full"
 			})
 
 			By("Creating ServiceMonitor for metrics scraping")
-			err = fixtures.CreateServiceMonitor(ctx, crClient, cfg.MonitoringNS, cfg.LLMDNamespace, modelServiceName, deploymentName)
+			err = fixtures.EnsureServiceMonitor(ctx, crClient, cfg.MonitoringNS, cfg.LLMDNamespace, modelServiceName, deploymentName)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create ServiceMonitor")
 
 			// Register cleanup for ServiceMonitor
@@ -149,7 +149,7 @@ var _ = Describe("Smoke Tests - Infrastructure Readiness", Label("smoke", "full"
 			}, time.Duration(cfg.PodReadyTimeout)*time.Second, 5*time.Second).Should(Succeed())
 
 			By("Creating VariantAutoscaling resource")
-			err = fixtures.CreateVariantAutoscalingWithDefaults(
+			err = fixtures.EnsureVariantAutoscalingWithDefaults(
 				ctx, crClient, cfg.LLMDNamespace, vaName,
 				deploymentName, cfg.ModelID, cfg.AcceleratorType,
 				cfg.ControllerInstance,
@@ -160,7 +160,7 @@ var _ = Describe("Smoke Tests - Infrastructure Readiness", Label("smoke", "full"
 			if cfg.ScaleToZeroEnabled {
 				minReplicas = 0
 			}
-			err = fixtures.CreateHPA(ctx, k8sClient, cfg.LLMDNamespace, hpaName, deploymentName, vaName, minReplicas, 10)
+			err = fixtures.EnsureHPA(ctx, k8sClient, cfg.LLMDNamespace, hpaName, deploymentName, vaName, minReplicas, 10)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create HPA")
 		})
 
@@ -470,7 +470,7 @@ var _ = Describe("Smoke Tests - Infrastructure Readiness", Label("smoke", "full"
 			// Use burst load pattern
 			// Burst pattern creates queue spikes that are more likely to trigger saturation detection
 			targetURL := fmt.Sprintf("http://%s-service.%s.svc.cluster.local:8000/v1/chat/completions", modelServiceName, cfg.LLMDNamespace)
-			err = fixtures.CreateBurstLoadJob(ctx, k8sClient, cfg.LLMDNamespace, "smoke-scaleup-load", targetURL, loadCfg)
+			err = fixtures.EnsureBurstLoadJob(ctx, k8sClient, cfg.LLMDNamespace, "smoke-scaleup-load", targetURL, loadCfg)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create burst load generation job")
 
 			jobName := "smoke-scaleup-load-load"
@@ -836,7 +836,7 @@ var _ = Describe("Smoke Tests - Infrastructure Readiness", Label("smoke", "full"
 			deploymentName := errorTestModelServiceName + "-decode"
 
 			By("Creating model service deployment for error handling tests")
-			err := fixtures.CreateModelService(ctx, k8sClient, cfg.LLMDNamespace, errorTestModelServiceName, errorTestPoolName, cfg.ModelID, cfg.UseSimulator, cfg.MaxNumSeqs)
+			err := fixtures.EnsureModelService(ctx, k8sClient, cfg.LLMDNamespace, errorTestModelServiceName, errorTestPoolName, cfg.ModelID, cfg.UseSimulator, cfg.MaxNumSeqs)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create model service")
 
 			// Register cleanup for deployment
@@ -859,7 +859,7 @@ var _ = Describe("Smoke Tests - Infrastructure Readiness", Label("smoke", "full"
 			}, time.Duration(cfg.PodReadyTimeout)*time.Second, 5*time.Second).Should(Succeed())
 
 			By("Creating VariantAutoscaling resource")
-			err = fixtures.CreateVariantAutoscalingWithDefaults(
+			err = fixtures.EnsureVariantAutoscalingWithDefaults(
 				ctx, crClient, cfg.LLMDNamespace, errorTestVAName,
 				deploymentName, cfg.ModelID, cfg.AcceleratorType,
 				cfg.ControllerInstance,
@@ -931,7 +931,7 @@ var _ = Describe("Smoke Tests - Infrastructure Readiness", Label("smoke", "full"
 			// 3. VA can resume operation when deployment is recreated
 
 			By("Recreating the deployment")
-			err = fixtures.CreateModelService(ctx, k8sClient, cfg.LLMDNamespace, errorTestModelServiceName, errorTestPoolName, cfg.ModelID, cfg.UseSimulator, cfg.MaxNumSeqs)
+			err = fixtures.EnsureModelService(ctx, k8sClient, cfg.LLMDNamespace, errorTestModelServiceName, errorTestPoolName, cfg.ModelID, cfg.UseSimulator, cfg.MaxNumSeqs)
 			Expect(err).NotTo(HaveOccurred(), "Failed to recreate model service")
 
 			By("Waiting for deployment to be created and progressing")

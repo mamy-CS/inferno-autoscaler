@@ -43,7 +43,7 @@ var _ = Describe("Scale-To-Zero Feature", Label("full", "flaky"), Ordered, func(
 		deploymentName := modelServiceName + "-decode"
 
 		By("Creating model service deployment")
-		err := fixtures.CreateModelService(ctx, k8sClient, cfg.LLMDNamespace, modelServiceName, poolName, cfg.ModelID, cfg.UseSimulator, cfg.MaxNumSeqs)
+		err := fixtures.EnsureModelService(ctx, k8sClient, cfg.LLMDNamespace, modelServiceName, poolName, cfg.ModelID, cfg.UseSimulator, cfg.MaxNumSeqs)
 		Expect(err).NotTo(HaveOccurred(), "Failed to create model service")
 
 		// Register cleanup for deployment (runs even if test fails)
@@ -59,7 +59,7 @@ var _ = Describe("Scale-To-Zero Feature", Label("full", "flaky"), Ordered, func(
 		})
 
 		By("Creating service to expose model server")
-		err = fixtures.CreateService(ctx, k8sClient, cfg.LLMDNamespace, modelServiceName, deploymentName, 8000)
+		err = fixtures.EnsureService(ctx, k8sClient, cfg.LLMDNamespace, modelServiceName, deploymentName, 8000)
 		Expect(err).NotTo(HaveOccurred(), "Failed to create service")
 
 		// Register cleanup for service
@@ -75,7 +75,7 @@ var _ = Describe("Scale-To-Zero Feature", Label("full", "flaky"), Ordered, func(
 		})
 
 		By("Creating ServiceMonitor for metrics scraping")
-		err = fixtures.CreateServiceMonitor(ctx, crClient, cfg.MonitoringNS, cfg.LLMDNamespace, modelServiceName, deploymentName)
+		err = fixtures.EnsureServiceMonitor(ctx, crClient, cfg.MonitoringNS, cfg.LLMDNamespace, modelServiceName, deploymentName)
 		Expect(err).NotTo(HaveOccurred(), "Failed to create ServiceMonitor")
 
 		// Register cleanup for ServiceMonitor
@@ -104,7 +104,7 @@ var _ = Describe("Scale-To-Zero Feature", Label("full", "flaky"), Ordered, func(
 		}, time.Duration(cfg.PodReadyTimeout)*time.Second, 5*time.Second).Should(Succeed())
 
 		By("Creating VariantAutoscaling resource")
-		err = fixtures.CreateVariantAutoscaling(
+		err = fixtures.EnsureVariantAutoscaling(
 			ctx, crClient, cfg.LLMDNamespace, vaName,
 			deploymentName, cfg.ModelID, cfg.AcceleratorType, 30.0,
 			cfg.ControllerInstance,
@@ -112,7 +112,7 @@ var _ = Describe("Scale-To-Zero Feature", Label("full", "flaky"), Ordered, func(
 		Expect(err).NotTo(HaveOccurred(), "Failed to create VariantAutoscaling")
 
 		By("Creating HPA with minReplicas=0 for scale-to-zero")
-		err = fixtures.CreateHPA(ctx, k8sClient, cfg.LLMDNamespace, hpaName, deploymentName, vaName, 0, 10)
+		err = fixtures.EnsureHPA(ctx, k8sClient, cfg.LLMDNamespace, hpaName, deploymentName, vaName, 0, 10)
 		Expect(err).NotTo(HaveOccurred(), "Failed to create HPA with scale-to-zero")
 
 		GinkgoWriter.Println("Scale-to-zero test setup complete")
@@ -328,17 +328,17 @@ enable_scale_to_zero: false`, cfg.ModelID),
 		Expect(err).NotTo(HaveOccurred(), "Should be able to create scale-to-zero ConfigMap with disabled setting")
 
 		By("Creating model service deployment")
-		err = fixtures.CreateModelService(ctx, k8sClient, cfg.LLMDNamespace,
+		err = fixtures.EnsureModelService(ctx, k8sClient, cfg.LLMDNamespace,
 			modelServiceName, poolName, cfg.ModelID, cfg.UseSimulator, cfg.MaxNumSeqs)
 		Expect(err).NotTo(HaveOccurred(), "Failed to create model service")
 
 		By("Creating service to expose model server")
-		err = fixtures.CreateService(ctx, k8sClient, cfg.LLMDNamespace,
+		err = fixtures.EnsureService(ctx, k8sClient, cfg.LLMDNamespace,
 			modelServiceName, modelServiceName+"-decode", 8000)
 		Expect(err).NotTo(HaveOccurred(), "Failed to create service")
 
 		By("Creating ServiceMonitor for metrics scraping")
-		err = fixtures.CreateServiceMonitor(ctx, crClient, cfg.MonitoringNS, cfg.LLMDNamespace, modelServiceName, modelServiceName+"-decode")
+		err = fixtures.EnsureServiceMonitor(ctx, crClient, cfg.MonitoringNS, cfg.LLMDNamespace, modelServiceName, modelServiceName+"-decode")
 		Expect(err).NotTo(HaveOccurred(), "Failed to create ServiceMonitor")
 
 		By("Waiting for model service to be ready")
@@ -351,7 +351,7 @@ enable_scale_to_zero: false`, cfg.ModelID),
 		}, time.Duration(cfg.PodReadyTimeout)*time.Second, 5*time.Second).Should(Succeed())
 
 		By("Creating VariantAutoscaling resource")
-		err = fixtures.CreateVariantAutoscaling(
+		err = fixtures.EnsureVariantAutoscaling(
 			ctx, crClient, cfg.LLMDNamespace, vaName,
 			modelServiceName+"-decode", cfg.ModelID, cfg.AcceleratorType, 10.0,
 			cfg.ControllerInstance,
@@ -360,7 +360,7 @@ enable_scale_to_zero: false`, cfg.ModelID),
 
 		By("Creating HPA with minReplicas=1 (scale-to-zero disabled)")
 		// When scale-to-zero is disabled, HPA should use minReplicas=1
-		err = fixtures.CreateHPA(ctx, k8sClient, cfg.LLMDNamespace, hpaName,
+		err = fixtures.EnsureHPA(ctx, k8sClient, cfg.LLMDNamespace, hpaName,
 			modelServiceName+"-decode", vaName, 1, 10)
 		Expect(err).NotTo(HaveOccurred(), "Failed to create HPA")
 
