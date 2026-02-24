@@ -79,11 +79,13 @@ jobs:
           ref: ${{ github.event_name == 'issue_comment' && steps.pr-info.outputs.pr_head_sha || github.event.pull_request.head.sha || github.sha }}
           # For pull_request events, fetch the PR head
           fetch-depth: 0
-      
+
+      # paths-filter only works correctly on pull_request (it uses PR API and base ref).
+      # On issue_comment (e.g. /trigger-e2e-full) we skip it to avoid warnings and set has_code_changes=true.
       - name: Check for code changes
+        if: github.event_name == 'pull_request'
         uses: dorny/paths-filter@v3
         id: filter
-        continue-on-error: true  # Don't fail if paths-filter can't determine changes (e.g., issue_comment without PR context)
         with:
           filters: |
             code:
@@ -93,17 +95,15 @@ jobs:
               - '!LICENSE'
               - '!OWNERS'
               - '!PROJECT'
-      
+
       - name: Set output with default
         id: set-output
         run: |
-          # Use filter output if available, otherwise default to 'true' for issue_comment events
-          # This ensures /trigger-e2e-full works even if PR context is unclear
-          FILTER_OUTPUT="${{ steps.filter.outputs.code }}"
-          if [ "${{ github.event_name }}" == "issue_comment" ] && [ -z "$FILTER_OUTPUT" ]; then
+          # On issue_comment we skip paths-filter (no PR diff context), so treat as code changes so e2e can run
+          if [ "${{ github.event_name }}" == "issue_comment" ]; then
             echo "has_code_changes=true" >> $GITHUB_OUTPUT
-          elif [ -n "$FILTER_OUTPUT" ]; then
-            echo "has_code_changes=$FILTER_OUTPUT" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event_name }}" == "pull_request" ] && [ -n "${{ steps.filter.outputs.code }}" ]; then
+            echo "has_code_changes=${{ steps.filter.outputs.code }}" >> $GITHUB_OUTPUT
           else
             echo "has_code_changes=true" >> $GITHUB_OUTPUT
           fi
