@@ -130,7 +130,7 @@ make test-e2e-full
 
 ### Example: Run with KEDA as Scaler Backend
 
-When using KEDA, set `SCALER_BACKEND=keda`; the deploy script will install KEDA and skip Prometheus Adapter.
+When using KEDA, set `SCALER_BACKEND=keda` and **`ENVIRONMENT=kind-emulator`**; the deploy script will install KEDA and skip Prometheus Adapter. **KEDA is only supported for the kind-emulator (emulated) environment;** for OpenShift use Prometheus Adapter or the platform CMA.
 
 > **Note:** We do not install the OpenShift Custom Metrics Autoscaler (CMA) operator in e2e. We install **upstream KEDA** (e.g. via Helm) to **imitate** CMA behavior—same ScaledObject-driven flow and external metrics API usage. E2E with `SCALER_BACKEND=keda` is a stand-in for validating WVA with an OpenShift CMA–style scaler.
 

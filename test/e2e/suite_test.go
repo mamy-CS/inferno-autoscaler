@@ -52,6 +52,11 @@ var _ = BeforeSuite(func() {
 	By("Loading configuration from environment")
 	cfg = LoadConfigFromEnv()
 
+	// KEDA scaler backend is only supported for kind-emulator (emulated) e2e; on OpenShift use platform CMA / Prometheus Adapter.
+	if cfg.ScalerBackend == "keda" && cfg.Environment != "kind-emulator" {
+		Fail("KEDA scaler backend is only supported for kind-emulator environment. Use ENVIRONMENT=kind-emulator or SCALER_BACKEND=prometheus-adapter.")
+	}
+
 	GinkgoWriter.Printf("=== E2E Test Configuration ===\n")
 	GinkgoWriter.Printf("Environment: %s\n", cfg.Environment)
 	GinkgoWriter.Printf("WVA Namespace: %s\n", cfg.WVANamespace)

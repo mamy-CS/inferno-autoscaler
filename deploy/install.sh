@@ -1624,7 +1624,12 @@ main() {
     fi
 
     # Deploy scaler backend: KEDA or Prometheus Adapter
+    # KEDA in this script is for kind-emulator e2e only; on OpenShift use the platform CMA / Prometheus Adapter.
     if [ "$SCALER_BACKEND" = "keda" ]; then
+        if [ "$ENVIRONMENT" != "kind-emulator" ]; then
+            log_error "KEDA scaler backend is only supported for kind-emulator environment (ENVIRONMENT=kind-emulator). Current: ENVIRONMENT=$ENVIRONMENT. Use SCALER_BACKEND=prometheus-adapter or run with ENVIRONMENT=kind-emulator."
+            exit 1
+        fi
         deploy_keda
     elif [ "$DEPLOY_PROMETHEUS_ADAPTER" = "true" ]; then
         deploy_prometheus_adapter
