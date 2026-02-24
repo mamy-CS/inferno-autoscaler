@@ -10,6 +10,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	promoperator "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -174,27 +175,34 @@ var _ = Describe("Parallel Load Scale-Up Test", Label("full"), Ordered, func() {
 				})
 		})
 
-		By("Creating HPA for the deployment")
+		By("Creating scaler for the deployment (HPA or ScaledObject per backend)")
 		minReplicas := int32(1)
 		if cfg.ScaleToZeroEnabled {
 			minReplicas = 0
 		}
 		hpaMinReplicas = minReplicas
-		err = fixtures.EnsureHPA(ctx, k8sClient, cfg.LLMDNamespace, hpaName, deploymentName, vaName, minReplicas, 10)
-		Expect(err).NotTo(HaveOccurred(), "Failed to create HPA")
-
-		// Register cleanup for HPA
-		DeferCleanup(func() {
-			hpaNameFull := hpaName + "-hpa"
-			cleanupResource(ctx, "HPA", cfg.LLMDNamespace, hpaNameFull,
-				func() error {
-					return k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Delete(ctx, hpaNameFull, metav1.DeleteOptions{})
-				},
-				func() bool {
-					_, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Get(ctx, hpaNameFull, metav1.GetOptions{})
-					return errors.IsNotFound(err)
-				})
-		})
+		if cfg.ScalerBackend == "keda" {
+			_ = k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Delete(ctx, hpaName+"-hpa", metav1.DeleteOptions{})
+			err = fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace, hpaName, deploymentName, vaName, minReplicas, 10, cfg.MonitoringNS)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create ScaledObject")
+			DeferCleanup(func() {
+				_ = fixtures.DeleteScaledObject(ctx, crClient, cfg.LLMDNamespace, hpaName)
+			})
+		} else {
+			err = fixtures.EnsureHPA(ctx, k8sClient, cfg.LLMDNamespace, hpaName, deploymentName, vaName, minReplicas, 10)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create HPA")
+			DeferCleanup(func() {
+				hpaNameFull := hpaName + "-hpa"
+				cleanupResource(ctx, "HPA", cfg.LLMDNamespace, hpaNameFull,
+					func() error {
+						return k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Delete(ctx, hpaNameFull, metav1.DeleteOptions{})
+					},
+					func() bool {
+						_, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Get(ctx, hpaNameFull, metav1.GetOptions{})
+						return errors.IsNotFound(err)
+					})
+			})
+		}
 
 		By("Recording initial state of deployment")
 		deploy, err := k8sClient.AppsV1().Deployments(cfg.LLMDNamespace).Get(ctx, deploymentName, metav1.GetOptions{})
@@ -261,6 +269,9 @@ var _ = Describe("Parallel Load Scale-Up Test", Label("full"), Ordered, func() {
 	})
 
 	It("should verify external metrics API is accessible", func() {
+		if cfg.ScalerBackend == "keda" {
+			Skip("KEDA serves different external metric names; skipping wva_desired_replicas check")
+		}
 		By("Querying external metrics API for wva_desired_replicas")
 		Eventually(func(g Gomega) {
 			result, err := k8sClient.RESTClient().
@@ -358,16 +369,29 @@ var _ = Describe("Parallel Load Scale-Up Test", Label("full"), Ordered, func() {
 			}
 		}, 5*time.Minute, 10*time.Second).Should(Succeed())
 
-		By("Monitoring HPA for scale-up")
+		By("Monitoring scaler (HPA or KEDA-created HPA) for scale-up")
 		Eventually(func(g Gomega) {
-			hpa, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Get(ctx, hpaName+"-hpa", metav1.GetOptions{})
-			g.Expect(err).NotTo(HaveOccurred(), "Should be able to get HPA")
+			var hpa *autoscalingv2.HorizontalPodAutoscaler
+			if cfg.ScalerBackend == "keda" {
+				hpaList, listErr := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).List(ctx, metav1.ListOptions{})
+				g.Expect(listErr).NotTo(HaveOccurred())
+				for i := range hpaList.Items {
+					if hpaList.Items[i].Spec.ScaleTargetRef.Name == deploymentName {
+						hpa = &hpaList.Items[i]
+						break
+					}
+				}
+				g.Expect(hpa).NotTo(BeNil(), "KEDA should have created an HPA for the deployment")
+			} else {
+				var err error
+				hpa, err = k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Get(ctx, hpaName+"-hpa", metav1.GetOptions{})
+				g.Expect(err).NotTo(HaveOccurred(), "Should be able to get HPA")
+			}
 
 			GinkgoWriter.Printf("HPA desiredReplicas: %d, currentReplicas: %d\n",
 				hpa.Status.DesiredReplicas, hpa.Status.CurrentReplicas)
 
 			if !lowLoad {
-				// HPA should also desire more replicas than initial
 				g.Expect(hpa.Status.DesiredReplicas).To(BeNumerically(">", initialOptimized),
 					fmt.Sprintf("HPA should desire more replicas than initial (desired: %d, initial: %d)", hpa.Status.DesiredReplicas, initialOptimized))
 			}

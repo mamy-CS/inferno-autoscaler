@@ -78,6 +78,10 @@ export WVA_NAMESPACE=workload-variant-autoscaler-system
 export USE_SIMULATOR=true                  # true=emulated GPUs, false=real vLLM
 export SCALE_TO_ZERO_ENABLED=false        # HPAScaleToZero feature gate
 
+# Scaler backend: prometheus-adapter (HPA with wva_desired_replicas) or keda (ScaledObjects)
+# Only one backend per run; with keda, do not deploy Prometheus Adapter for external metrics.
+export SCALER_BACKEND=prometheus-adapter  # or keda
+
 # Model configuration
 export MODEL_ID=unsloth/Meta-Llama-3.1-8B
 export ACCELERATOR_TYPE=nvidia.com/gpu
@@ -122,6 +126,40 @@ export ENVIRONMENT=kind
 export USE_SIMULATOR=true
 export SCALE_TO_ZERO_ENABLED=true  # Requires HPAScaleToZero feature gate
 make test-e2e-full
+```
+
+### Example: Run with KEDA as Scaler Backend
+
+When using KEDA, set `SCALER_BACKEND=keda`; the deploy script will install KEDA and skip Prometheus Adapter.
+
+> **Note:** We do not install the OpenShift Custom Metrics Autoscaler (CMA) operator in e2e. We install **upstream KEDA** (e.g. via Helm) to **imitate** CMA behavior—same ScaledObject-driven flow and external metrics API usage. E2E with `SCALER_BACKEND=keda` is a stand-in for validating WVA with an OpenShift CMA–style scaler.
+
+```bash
+# Deploy e2e infrastructure with KEDA, then run smoke tests
+make deploy-e2e-infra SCALER_BACKEND=keda
+make test-e2e-smoke SCALER_BACKEND=keda
+
+# Or deploy + run in one go (smoke or full)
+make deploy-e2e-infra SCALER_BACKEND=keda && make test-e2e-full SCALER_BACKEND=keda
+```
+
+To undeploy after using KEDA: `SCALER_BACKEND=keda make undeploy-wva-emulated-on-kind`.
+
+### Run smoke with full setup (Kind + KEDA) and save output
+
+Single command that creates the Kind cluster, deploys e2e infra with KEDA, and runs smoke tests. You can run this from any terminal; use `tee` to save output for later reference.
+
+```bash
+ENVIRONMENT=kind-emulator \
+USE_SIMULATOR=true \
+SCALE_TO_ZERO_ENABLED=false \
+CREATE_CLUSTER=true \
+INSTALL_GATEWAY_CTRLPLANE=true \
+E2E_TESTS_ENABLED=true \
+IMG=ghcr.io/llm-d/llm-d-workload-variant-autoscaler:0.0.1-test \
+DELETE_CLUSTER=false \
+SCALER_BACKEND=keda \
+make test-e2e-smoke-with-setup 2>&1 | tee test/e2e/e2e-smoke-keda-with-setup.log
 ```
 
 ## Test Tiers

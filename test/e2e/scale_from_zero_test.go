@@ -14,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -164,8 +165,12 @@ var _ = Describe("Scale-From-Zero Feature", Label("smoke", "full"), Ordered, fun
 	AfterAll(func() {
 		By("Cleaning up scale-from-zero test resources")
 
-		// Delete HPA
-		_ = k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Delete(ctx, hpaName+"-hpa", metav1.DeleteOptions{})
+		// Delete scaler (HPA or ScaledObject)
+		if cfg.ScalerBackend == "keda" {
+			_ = fixtures.DeleteScaledObject(ctx, crClient, cfg.LLMDNamespace, hpaName)
+		} else {
+			_ = k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Delete(ctx, hpaName+"-hpa", metav1.DeleteOptions{})
+		}
 
 		// Delete VA
 		va := &variantautoscalingv1alpha1.VariantAutoscaling{
@@ -212,6 +217,26 @@ var _ = Describe("Scale-From-Zero Feature", Label("smoke", "full"), Ordered, fun
 			GinkgoWriter.Println("Deployment verified at 0 replicas")
 		})
 
+		It("should have scaler configured with minReplicas=0", func() {
+			if cfg.ScalerBackend == "keda" {
+				By("Verifying ScaledObject allows scale-to-zero")
+				so := &unstructured.Unstructured{}
+				so.SetAPIVersion("keda.sh/v1alpha1")
+				so.SetKind("ScaledObject")
+				err := crClient.Get(ctx, client.ObjectKey{Namespace: cfg.LLMDNamespace, Name: hpaName + "-so"}, so)
+				Expect(err).NotTo(HaveOccurred())
+				minReplicas, found, err := unstructured.NestedInt64(so.Object, "spec", "minReplicaCount")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(found).To(BeTrue(), "ScaledObject should have minReplicaCount")
+				Expect(minReplicas).To(Equal(int64(0)), "ScaledObject should allow scale-to-zero")
+			} else {
+				By("Verifying HPA allows scale-to-zero")
+				hpa, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Get(ctx, hpaName+"-hpa", metav1.GetOptions{})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(hpa.Spec.MinReplicas).NotTo(BeNil(), "HPA should have MinReplicas set")
+				Expect(*hpa.Spec.MinReplicas).To(Equal(int32(0)), "HPA should allow scale-to-zero")
+			}
+		})
 	})
 
 	Context("Scale-from-zero with pending requests", func() {

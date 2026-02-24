@@ -11,6 +11,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	variantautoscalingv1alpha1 "github.com/llm-d/llm-d-workload-variant-autoscaler/api/v1alpha1"
@@ -111,9 +112,15 @@ var _ = Describe("Scale-To-Zero Feature", Label("full", "flaky"), Ordered, func(
 		)
 		Expect(err).NotTo(HaveOccurred(), "Failed to create VariantAutoscaling")
 
-		By("Creating HPA with minReplicas=0 for scale-to-zero")
-		err = fixtures.EnsureHPA(ctx, k8sClient, cfg.LLMDNamespace, hpaName, deploymentName, vaName, 0, 10)
-		Expect(err).NotTo(HaveOccurred(), "Failed to create HPA with scale-to-zero")
+		By("Creating scaler with minReplicas=0 (HPA or ScaledObject per backend)")
+		if cfg.ScalerBackend == "keda" {
+			_ = k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Delete(ctx, hpaName+"-hpa", metav1.DeleteOptions{})
+			err = fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace, hpaName, deploymentName, vaName, 0, 10, cfg.MonitoringNS)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create ScaledObject with scale-to-zero")
+		} else {
+			err = fixtures.EnsureHPA(ctx, k8sClient, cfg.LLMDNamespace, hpaName, deploymentName, vaName, 0, 10)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create HPA with scale-to-zero")
+		}
 
 		GinkgoWriter.Println("Scale-to-zero test setup complete")
 	})
@@ -121,19 +128,21 @@ var _ = Describe("Scale-To-Zero Feature", Label("full", "flaky"), Ordered, func(
 	AfterAll(func() {
 		By("Cleaning up scale-to-zero test resources")
 
-		// Delete in reverse dependency order: HPA -> VA
+		// Delete in reverse dependency order: scaler -> VA
 		// Service and Deployment cleanup handled by DeferCleanup
-		hpaNameFull := hpaName + "-hpa"
-
-		// Delete HPA
-		cleanupResource(ctx, "HPA", cfg.LLMDNamespace, hpaNameFull,
-			func() error {
-				return k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Delete(ctx, hpaNameFull, metav1.DeleteOptions{})
-			},
-			func() bool {
-				_, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Get(ctx, hpaNameFull, metav1.GetOptions{})
-				return errors.IsNotFound(err)
-			})
+		if cfg.ScalerBackend == "keda" {
+			Expect(fixtures.DeleteScaledObject(ctx, crClient, cfg.LLMDNamespace, hpaName)).NotTo(HaveOccurred())
+		} else {
+			hpaNameFull := hpaName + "-hpa"
+			cleanupResource(ctx, "HPA", cfg.LLMDNamespace, hpaNameFull,
+				func() error {
+					return k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Delete(ctx, hpaNameFull, metav1.DeleteOptions{})
+				},
+				func() bool {
+					_, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Get(ctx, hpaNameFull, metav1.GetOptions{})
+					return errors.IsNotFound(err)
+				})
+		}
 
 		// Delete VA
 		va := &variantautoscalingv1alpha1.VariantAutoscaling{
@@ -153,15 +162,25 @@ var _ = Describe("Scale-To-Zero Feature", Label("full", "flaky"), Ordered, func(
 	})
 
 	Context("Initial state and scale-up", func() {
-		It("should have HPA configured with minReplicas=0", func() {
-			By("Verifying HPA allows scale-to-zero")
-			hpa, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Get(ctx, hpaName+"-hpa", metav1.GetOptions{})
-			Expect(err).NotTo(HaveOccurred())
-
-			Expect(hpa.Spec.MinReplicas).NotTo(BeNil())
-			Expect(*hpa.Spec.MinReplicas).To(Equal(int32(0)), "HPA should have minReplicas=0")
-
-			GinkgoWriter.Println("HPA verified with minReplicas=0 for scale-to-zero")
+		It("should have scaler configured with minReplicas=0", func() {
+			if cfg.ScalerBackend == "keda" {
+				By("Verifying ScaledObject allows scale-to-zero")
+				so := &unstructured.Unstructured{}
+				so.SetAPIVersion("keda.sh/v1alpha1")
+				so.SetKind("ScaledObject")
+				err := crClient.Get(ctx, client.ObjectKey{Namespace: cfg.LLMDNamespace, Name: hpaName + "-so"}, so)
+				Expect(err).NotTo(HaveOccurred())
+				minReplicas, found, err := unstructured.NestedInt64(so.Object, "spec", "minReplicaCount")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(found).To(BeTrue())
+				Expect(minReplicas).To(Equal(int64(0)), "ScaledObject should allow scale-to-zero")
+			} else {
+				By("Verifying HPA allows scale-to-zero")
+				hpa, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Get(ctx, hpaName+"-hpa", metav1.GetOptions{})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(hpa.Spec.MinReplicas).NotTo(BeNil())
+				Expect(*hpa.Spec.MinReplicas).To(Equal(int32(0)), "HPA should have minReplicas=0")
+			}
 		})
 
 		It("should scale up under load", func() {
@@ -358,11 +377,15 @@ enable_scale_to_zero: false`, cfg.ModelID),
 		)
 		Expect(err).NotTo(HaveOccurred(), "Failed to create VariantAutoscaling")
 
-		By("Creating HPA with minReplicas=1 (scale-to-zero disabled)")
-		// When scale-to-zero is disabled, HPA should use minReplicas=1
-		err = fixtures.EnsureHPA(ctx, k8sClient, cfg.LLMDNamespace, hpaName,
-			modelServiceName+"-decode", vaName, 1, 10)
-		Expect(err).NotTo(HaveOccurred(), "Failed to create HPA")
+		By("Creating scaler with minReplicas=1 (scale-to-zero disabled)")
+		if cfg.ScalerBackend == "keda" {
+			_ = k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Delete(ctx, hpaName+"-hpa", metav1.DeleteOptions{})
+			err = fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace, hpaName, modelServiceName+"-decode", vaName, 1, 10, cfg.MonitoringNS)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create ScaledObject")
+		} else {
+			err = fixtures.EnsureHPA(ctx, k8sClient, cfg.LLMDNamespace, hpaName, modelServiceName+"-decode", vaName, 1, 10)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create HPA")
+		}
 
 		GinkgoWriter.Println("Scale-to-zero disabled test setup complete")
 	})
@@ -377,9 +400,11 @@ enable_scale_to_zero: false`, cfg.ModelID),
 		}
 
 		By("Cleaning up test resources")
-		// Delete HPA
-		_ = k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Delete(ctx,
-			hpaName+"-hpa", metav1.DeleteOptions{})
+		if cfg.ScalerBackend == "keda" {
+			_ = fixtures.DeleteScaledObject(ctx, crClient, cfg.LLMDNamespace, hpaName)
+		} else {
+			_ = k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Delete(ctx, hpaName+"-hpa", metav1.DeleteOptions{})
+		}
 
 		// Delete VA
 		_ = crClient.Delete(ctx, &variantautoscalingv1alpha1.VariantAutoscaling{

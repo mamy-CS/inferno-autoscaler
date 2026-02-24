@@ -108,6 +108,11 @@ DECODE_REPLICAS=${DECODE_REPLICAS:-""}
 # Useful for e2e testing where tests create their own VA/HPA resources
 INFRA_ONLY=${INFRA_ONLY:-false}
 
+# Scaler backend for e2e: "prometheus-adapter" (default) or "keda"
+# When keda: do not deploy Prometheus Adapter; deploy KEDA instead (ScaledObjects, external metrics API)
+SCALER_BACKEND=${SCALER_BACKEND:-prometheus-adapter}
+KEDA_NAMESPACE=${KEDA_NAMESPACE:-keda-system}
+
 # Environment-related variables
 SCRIPT_DIR=$(cd $(dirname "${BASH_SOURCE[0]}") && pwd)
 ENVIRONMENT=${ENVIRONMENT:-"kubernetes"}
@@ -223,6 +228,8 @@ Environment Variables:
   HPA_STABILIZATION_SECONDS    HPA stabilization window in seconds (default: 240)
   HPA_MIN_REPLICAS             HPA minReplicas (default: 1, set to 0 for scale-to-zero)
   INFRA_ONLY                   Deploy only infrastructure (default: false, same as --infra-only flag)
+  SCALER_BACKEND               Scaler backend: prometheus-adapter (default) or keda. When keda, deploys KEDA and skips Prometheus Adapter.
+  KEDA_NAMESPACE               Namespace for KEDA (default: keda-system)
   UNDEPLOY                     Undeploy mode (default: false)
   DELETE_NAMESPACES            Delete namespaces after undeploy (default: false)
   CONTROLLER_INSTANCE          Controller instance label for multi-controller isolation (optional)
@@ -999,6 +1006,30 @@ deploy_llm_d_infrastructure() {
     log_success "llm-d infrastructure deployment complete"
 }
 
+deploy_keda() {
+    log_info "Deploying KEDA (scaler backend)..."
+
+    kubectl create namespace "$KEDA_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+
+    helm repo add kedacore https://kedacore.github.io/charts 2>/dev/null || true
+    helm repo update
+
+    if ! helm upgrade -i keda kedacore/keda \
+        -n "$KEDA_NAMESPACE" \
+        --set prometheus.metricServer.enabled=true \
+        --set prometheus.operator.enabled=true \
+        --wait \
+        --timeout=5m; then
+        if [ "$E2E_TESTS_ENABLED" = "true" ]; then
+            log_error "KEDA Helm installation failed - required for E2E tests with SCALER_BACKEND=keda"
+        else
+            log_warning "KEDA Helm installation failed, but continuing..."
+        fi
+    else
+        log_success "KEDA deployed in $KEDA_NAMESPACE"
+    fi
+}
+
 deploy_prometheus_adapter() {
     log_info "Deploying Prometheus Adapter..."
 
@@ -1188,8 +1219,15 @@ verify_deployment() {
         fi
     fi
 
-    # Check Prometheus Adapter
-    if [ "$DEPLOY_PROMETHEUS_ADAPTER" = "true" ]; then
+    # Check scaler backend (KEDA or Prometheus Adapter)
+    if [ "$SCALER_BACKEND" = "keda" ]; then
+        log_info "Checking KEDA..."
+        if kubectl get pods -n "$KEDA_NAMESPACE" -l app.kubernetes.io/name=keda-operator 2>/dev/null | grep -q Running; then
+            log_success "KEDA is running"
+        else
+            log_warning "KEDA may still be starting"
+        fi
+    elif [ "$DEPLOY_PROMETHEUS_ADAPTER" = "true" ]; then
         log_info "Checking Prometheus Adapter..."
         if kubectl get pods -n $MONITORING_NAMESPACE -l app.kubernetes.io/name=prometheus-adapter 2>/dev/null | grep -q Running; then
             log_success "Prometheus Adapter is running"
@@ -1232,7 +1270,9 @@ print_summary() {
     if [ "$DEPLOY_LLM_D" = "true" ]; then
         echo "✓ llm-d Infrastructure (Gateway, GAIE, ModelService)"
     fi
-    if [ "$DEPLOY_PROMETHEUS_ADAPTER" = "true" ]; then
+    if [ "$SCALER_BACKEND" = "keda" ]; then
+        echo "✓ KEDA (scaler backend, external metrics API)"
+    elif [ "$DEPLOY_PROMETHEUS_ADAPTER" = "true" ]; then
         echo "✓ Prometheus Adapter (external metrics API)"
     fi
     if [ "$DEPLOY_VA" = "true" ]; then
@@ -1295,6 +1335,14 @@ print_summary() {
 }
 
 # Undeployment functions
+undeploy_keda() {
+    log_info "Uninstalling KEDA..."
+    helm uninstall keda -n "$KEDA_NAMESPACE" 2>/dev/null || \
+        log_warning "KEDA not found or already uninstalled"
+    kubectl delete namespace "$KEDA_NAMESPACE" --ignore-not-found --timeout=120s 2>/dev/null || true
+    log_success "KEDA uninstalled"
+}
+
 undeploy_prometheus_adapter() {
     log_info "Uninstalling Prometheus Adapter..."
 
@@ -1384,8 +1432,10 @@ cleanup() {
         undeploy_prometheus_stack
     fi
 
-    # Undeploy in reverse order
-    if [ "$DEPLOY_PROMETHEUS_ADAPTER" = "true" ]; then
+    # Undeploy scaler backend (KEDA or Prometheus Adapter)
+    if [ "$SCALER_BACKEND" = "keda" ]; then
+        undeploy_keda
+    elif [ "$DEPLOY_PROMETHEUS_ADAPTER" = "true" ]; then
         undeploy_prometheus_adapter
     fi
 
@@ -1417,6 +1467,7 @@ cleanup() {
     echo "=========================================="
     echo ""
     echo "Removed components:"
+    [ "$SCALER_BACKEND" = "keda" ] && echo "✓ KEDA"
     [ "$DEPLOY_PROMETHEUS_ADAPTER" = "true" ] && echo "✓ Prometheus Adapter"
     [ "$DEPLOY_LLM_D" = "true" ] && echo "✓ llm-d Infrastructure"
     [ "$DEPLOY_WVA" = "true" ] && echo "✓ WVA Controller"
@@ -1430,6 +1481,7 @@ cleanup() {
         echo "  - $LLMD_NS"
         echo "  - $WVA_NS"
         echo "  - $MONITORING_NAMESPACE"
+        [ "$SCALER_BACKEND" = "keda" ] && echo "  - $KEDA_NAMESPACE"
     fi
     echo ""
     echo "=========================================="
@@ -1445,6 +1497,12 @@ main() {
         log_info "Infra-only mode enabled: Skipping VA and HPA deployment"
         DEPLOY_VA=false
         DEPLOY_HPA=false
+    fi
+
+    # When using KEDA as scaler backend: skip Prometheus Adapter and deploy KEDA instead
+    if [ "$SCALER_BACKEND" = "keda" ]; then
+        log_info "Scaler backend is KEDA: Skipping Prometheus Adapter, will deploy KEDA"
+        DEPLOY_PROMETHEUS_ADAPTER=false
     fi
 
     # Undeploy mode
@@ -1513,6 +1571,7 @@ main() {
     echo "    WVA Namespace:        $WVA_NS"
     echo "    llm-d Namespace:      $LLMD_NS"
     echo "    Monitoring Namespace: $MONITORING_NAMESPACE"
+    echo "    Scaler Backend:       $SCALER_BACKEND"
     echo "    Model:                $MODEL_ID"
     echo "    Accelerator:          $ACCELERATOR_TYPE"
     echo ""
@@ -1564,8 +1623,10 @@ main() {
         log_info "Skipping llm-d deployment (DEPLOY_LLM_D=false)"
     fi
 
-    # Deploy Prometheus Adapter
-    if [ "$DEPLOY_PROMETHEUS_ADAPTER" = "true" ]; then
+    # Deploy scaler backend: KEDA or Prometheus Adapter
+    if [ "$SCALER_BACKEND" = "keda" ]; then
+        deploy_keda
+    elif [ "$DEPLOY_PROMETHEUS_ADAPTER" = "true" ]; then
         deploy_prometheus_adapter
     else
         log_info "Skipping Prometheus Adapter deployment (DEPLOY_PROMETHEUS_ADAPTER=false)"

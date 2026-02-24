@@ -11,6 +11,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	variantautoscalingv1alpha1 "github.com/llm-d/llm-d-workload-variant-autoscaler/api/v1alpha1"
@@ -132,31 +133,41 @@ var _ = Describe("Saturation Mode - Single VariantAutoscaling", Label("full"), O
 		)
 		Expect(err).NotTo(HaveOccurred(), "Failed to create VariantAutoscaling")
 
-		By("Creating HPA for the deployment")
+		By("Creating scaler for the deployment (HPA or ScaledObject per backend)")
 		minReplicas := int32(1)
 		if cfg.ScaleToZeroEnabled {
 			minReplicas = 0
 		}
-		err = fixtures.EnsureHPA(ctx, k8sClient, cfg.LLMDNamespace, hpaName, deploymentName, vaName, minReplicas, 10)
-		Expect(err).NotTo(HaveOccurred(), "Failed to create HPA")
+		if cfg.ScalerBackend == "keda" {
+			// Remove any existing HPA that might manage this deployment (e.g. from a prior run with prometheus-adapter)
+			// so KEDA's webhook does not reject the ScaledObject with "workload already managed by HPA"
+			_ = k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Delete(ctx, hpaName+"-hpa", metav1.DeleteOptions{})
+			err = fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace, hpaName, deploymentName, vaName, minReplicas, 10, cfg.MonitoringNS)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create ScaledObject")
+		} else {
+			err = fixtures.EnsureHPA(ctx, k8sClient, cfg.LLMDNamespace, hpaName, deploymentName, vaName, minReplicas, 10)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create HPA")
+		}
 	})
 
 	AfterAll(func() {
 		By("Cleaning up test resources")
 
-		// Delete in reverse dependency order: HPA -> VA
+		// Delete in reverse dependency order: scaler (HPA or ScaledObject) -> VA
 		// Service and Deployment cleanup is handled by DeferCleanup registered in BeforeAll
-		hpaNameFull := hpaName + "-hpa"
-
-		// Delete HPA
-		cleanupResource(ctx, "HPA", cfg.LLMDNamespace, hpaNameFull,
-			func() error {
-				return k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Delete(ctx, hpaNameFull, metav1.DeleteOptions{})
-			},
-			func() bool {
-				_, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Get(ctx, hpaNameFull, metav1.GetOptions{})
-				return errors.IsNotFound(err)
-			})
+		if cfg.ScalerBackend == "keda" {
+			Expect(fixtures.DeleteScaledObject(ctx, crClient, cfg.LLMDNamespace, hpaName)).NotTo(HaveOccurred())
+		} else {
+			hpaNameFull := hpaName + "-hpa"
+			cleanupResource(ctx, "HPA", cfg.LLMDNamespace, hpaNameFull,
+				func() error {
+					return k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Delete(ctx, hpaNameFull, metav1.DeleteOptions{})
+				},
+				func() bool {
+					_, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Get(ctx, hpaNameFull, metav1.GetOptions{})
+					return errors.IsNotFound(err)
+				})
+		}
 
 		// Delete VA
 		va := &variantautoscalingv1alpha1.VariantAutoscaling{
@@ -211,15 +222,34 @@ var _ = Describe("Saturation Mode - Single VariantAutoscaling", Label("full"), O
 			GinkgoWriter.Printf("VA Status: %+v\n", va.Status)
 		})
 
-		It("should have HPA created and tracking VA metrics", func() {
-			By("Verifying HPA exists")
-			hpa, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Get(ctx, hpaName+"-hpa", metav1.GetOptions{})
-			Expect(err).NotTo(HaveOccurred(), "HPA should exist")
-
-			By("Verifying HPA is configured for external metrics")
-			Expect(hpa.Spec.Metrics).NotTo(BeEmpty(), "HPA should have metrics configured")
-			Expect(hpa.Spec.Metrics[0].Type).To(Equal(autoscalingv2.ExternalMetricSourceType), "HPA should use External metric type")
-			Expect(hpa.Spec.Metrics[0].External.Metric.Name).To(Equal("wva_desired_replicas"))
+		It("should have scaler created and tracking VA metrics", func() {
+			deploymentName := modelServiceName + "-decode"
+			if cfg.ScalerBackend == "keda" {
+				By("Verifying ScaledObject exists")
+				so := &unstructured.Unstructured{}
+				so.SetAPIVersion("keda.sh/v1alpha1")
+				so.SetKind("ScaledObject")
+				err := crClient.Get(ctx, client.ObjectKey{Namespace: cfg.LLMDNamespace, Name: hpaName + "-so"}, so)
+				Expect(err).NotTo(HaveOccurred(), "ScaledObject should exist")
+				Eventually(func(g Gomega) {
+					hpaList, listErr := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).List(ctx, metav1.ListOptions{})
+					g.Expect(listErr).NotTo(HaveOccurred())
+					for i := range hpaList.Items {
+						if hpaList.Items[i].Spec.ScaleTargetRef.Name == deploymentName {
+							return
+						}
+					}
+					g.Expect(false).To(BeTrue(), "KEDA should have created an HPA for the deployment")
+				}, 2*time.Minute, 5*time.Second).Should(Succeed())
+			} else {
+				By("Verifying HPA exists")
+				hpa, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Get(ctx, hpaName+"-hpa", metav1.GetOptions{})
+				Expect(err).NotTo(HaveOccurred(), "HPA should exist")
+				By("Verifying HPA is configured for external metrics")
+				Expect(hpa.Spec.Metrics).NotTo(BeEmpty(), "HPA should have metrics configured")
+				Expect(hpa.Spec.Metrics[0].Type).To(Equal(autoscalingv2.ExternalMetricSourceType), "HPA should use External metric type")
+				Expect(hpa.Spec.Metrics[0].External.Metric.Name).To(Equal("wva_desired_replicas"))
+			}
 		})
 	})
 
@@ -340,20 +370,33 @@ var _ = Describe("Saturation Mode - Multiple VariantAutoscalings", Label("full")
 		err = fixtures.EnsureVariantAutoscaling(ctx, crClient, cfg.LLMDNamespace, vaB, modelServiceB+"-decode", cfg.ModelID, "H100", 50.0, cfg.ControllerInstance)
 		Expect(err).NotTo(HaveOccurred())
 
-		By("Creating HPAs for both deployments")
-		err = fixtures.EnsureHPA(ctx, k8sClient, cfg.LLMDNamespace, hpaA, modelServiceA+"-decode", vaA, 1, 10)
-		Expect(err).NotTo(HaveOccurred())
-
-		err = fixtures.EnsureHPA(ctx, k8sClient, cfg.LLMDNamespace, hpaB, modelServiceB+"-decode", vaB, 1, 10)
-		Expect(err).NotTo(HaveOccurred())
+		By("Creating scalers for both deployments (HPA or ScaledObject per backend)")
+		if cfg.ScalerBackend == "keda" {
+			// Remove any existing HPAs that might manage these deployments so KEDA's webhook accepts the ScaledObjects
+			_ = k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Delete(ctx, hpaA+"-hpa", metav1.DeleteOptions{})
+			_ = k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Delete(ctx, hpaB+"-hpa", metav1.DeleteOptions{})
+			err = fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace, hpaA, modelServiceA+"-decode", vaA, 1, 10, cfg.MonitoringNS)
+			Expect(err).NotTo(HaveOccurred())
+			err = fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace, hpaB, modelServiceB+"-decode", vaB, 1, 10, cfg.MonitoringNS)
+			Expect(err).NotTo(HaveOccurred())
+		} else {
+			err = fixtures.EnsureHPA(ctx, k8sClient, cfg.LLMDNamespace, hpaA, modelServiceA+"-decode", vaA, 1, 10)
+			Expect(err).NotTo(HaveOccurred())
+			err = fixtures.EnsureHPA(ctx, k8sClient, cfg.LLMDNamespace, hpaB, modelServiceB+"-decode", vaB, 1, 10)
+			Expect(err).NotTo(HaveOccurred())
+		}
 	})
 
 	AfterAll(func() {
 		By("Cleaning up multi-variant test resources")
 
-		// Delete HPAs
-		_ = k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Delete(ctx, hpaA+"-hpa", metav1.DeleteOptions{})
-		_ = k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Delete(ctx, hpaB+"-hpa", metav1.DeleteOptions{})
+		if cfg.ScalerBackend == "keda" {
+			_ = fixtures.DeleteScaledObject(ctx, crClient, cfg.LLMDNamespace, hpaA)
+			_ = fixtures.DeleteScaledObject(ctx, crClient, cfg.LLMDNamespace, hpaB)
+		} else {
+			_ = k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Delete(ctx, hpaA+"-hpa", metav1.DeleteOptions{})
+			_ = k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Delete(ctx, hpaB+"-hpa", metav1.DeleteOptions{})
+		}
 
 		// Delete VAs
 		_ = crClient.Delete(ctx, &variantautoscalingv1alpha1.VariantAutoscaling{

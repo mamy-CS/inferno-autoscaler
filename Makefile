@@ -22,6 +22,7 @@ NUM_PROMPTS          ?= 3000
 ENVIRONMENT                 ?= kind-emulator
 USE_SIMULATOR               ?= true
 SCALE_TO_ZERO_ENABLED       ?= false
+SCALER_BACKEND              ?= prometheus-adapter  # prometheus-adapter (HPA) or keda (ScaledObject)
 E2E_MONITORING_NAMESPACE    ?= workload-variant-autoscaler-monitoring
 E2E_EMULATED_LLMD_NAMESPACE ?= llm-d-sim
 
@@ -104,18 +105,20 @@ destroy-kind-cluster:
 	export KIND=$(KIND) KUBECTL=$(KUBECTL) && \
         deploy/kind-emulator/teardown.sh
 
-# Deploys the WVA controller on a pre-existing Kind cluster or creates one if specified
+# Deploys the WVA controller on a pre-existing Kind cluster or creates one if specified.
+# Set SCALER_BACKEND=keda if you want to install KEDA instead of Prometheus Adapter.
 .PHONY: deploy-wva-emulated-on-kind
-deploy-wva-emulated-on-kind:
+deploy-wva-emulated-on-kind: ## Deploy WVA + llm-d on Kind (Prometheus Adapter as scaler backend)
 	@echo ">>> Deploying workload-variant-autoscaler (cluster args: $(KIND_ARGS), image: $(IMG))"
-	KIND=$(KIND) KUBECTL=$(KUBECTL) IMG=$(IMG) DEPLOY_LLM_D=$(DEPLOY_LLM_D) ENVIRONMENT=kind-emulator CREATE_CLUSTER=$(CREATE_CLUSTER) CLUSTER_GPU_TYPE=$(CLUSTER_GPU_TYPE) CLUSTER_NODES=$(CLUSTER_NODES) CLUSTER_GPUS=$(CLUSTER_GPUS) MULTI_MODEL_TESTING=$(MULTI_MODEL_TESTING) NAMESPACE_SCOPED=false \
+	KIND=$(KIND) KUBECTL=$(KUBECTL) IMG=$(IMG) DEPLOY_LLM_D=$(DEPLOY_LLM_D) ENVIRONMENT=kind-emulator CREATE_CLUSTER=$(CREATE_CLUSTER) CLUSTER_GPU_TYPE=$(CLUSTER_GPU_TYPE) CLUSTER_NODES=$(CLUSTER_NODES) CLUSTER_GPUS=$(CLUSTER_GPUS) MULTI_MODEL_TESTING=$(MULTI_MODEL_TESTING) NAMESPACE_SCOPED=false SCALER_BACKEND=$(SCALER_BACKEND) \
 		deploy/install.sh
 
 ## Undeploy WVA from the emulated environment on Kind.
+## Undeploy WVA from Kind (set SCALER_BACKEND=keda if you deployed with KEDA)
 .PHONY: undeploy-wva-emulated-on-kind
 undeploy-wva-emulated-on-kind:
 	@echo ">>> Undeploying workload-variant-autoscaler from Kind"
-	KIND=$(KIND) KUBECTL=$(KUBECTL) ENVIRONMENT=kind-emulator DEPLOY_LLM_D=$(DEPLOY_LLM_D) DELETE_NAMESPACES=$(DELETE_NAMESPACES) DELETE_CLUSTER=$(DELETE_CLUSTER) \
+	KIND=$(KIND) KUBECTL=$(KUBECTL) ENVIRONMENT=kind-emulator DEPLOY_LLM_D=$(DEPLOY_LLM_D) DELETE_NAMESPACES=$(DELETE_NAMESPACES) DELETE_CLUSTER=$(DELETE_CLUSTER) SCALER_BACKEND=$(SCALER_BACKEND) \
 		deploy/install.sh --undeploy
 
 ## Deploy WVA to OpenShift cluster with specified image.
@@ -195,7 +198,7 @@ test-e2e-openshift: ## [DEPRECATED] Run the e2e tests on OpenShift. Supports KUB
 # Deploys only the infrastructure (WVA controller + llm-d) without VA/HPA resources.
 # If IMG is set, builds the image locally first (unless SKIP_BUILD=true).
 .PHONY: deploy-e2e-infra
-deploy-e2e-infra: ## Deploy e2e test infrastructure (infra-only mode: WVA controller + llm-d, no VA/HPA). If IMG is set, builds the image locally first (unless SKIP_BUILD=true)
+deploy-e2e-infra: ## Deploy e2e test infrastructure (infra-only: WVA + llm-d, no VA/HPA). Uses Prometheus Adapter unless SCALER_BACKEND=keda.
 	@echo "Deploying e2e test infrastructure (infra-only mode)..."
 	@if [ -n "$(IMG)" ]; then \
 		echo "IMG is set to '$(IMG)'"; \
@@ -218,6 +221,7 @@ deploy-e2e-infra: ## Deploy e2e test infrastructure (infra-only mode: WVA contro
 		INFRA_ONLY=true \
 		USE_SIMULATOR=$(USE_SIMULATOR) \
 		SCALE_TO_ZERO_ENABLED=$(SCALE_TO_ZERO_ENABLED) \
+		SCALER_BACKEND=$(SCALER_BACKEND) \
 		INSTALL_GATEWAY_CTRLPLANE=true \
 		NAMESPACE_SCOPED=false \
 		WVA_IMAGE_REPO=$$IMAGE_REPO \
@@ -230,11 +234,13 @@ deploy-e2e-infra: ## Deploy e2e test infrastructure (infra-only mode: WVA contro
 		INFRA_ONLY=true \
 		USE_SIMULATOR=$(USE_SIMULATOR) \
 		SCALE_TO_ZERO_ENABLED=$(SCALE_TO_ZERO_ENABLED) \
+		SCALER_BACKEND=$(SCALER_BACKEND) \
 		INSTALL_GATEWAY_CTRLPLANE=true \
 		NAMESPACE_SCOPED=false \
 		./deploy/install.sh; \
 	fi
 
+# Deploy e2e infrastructure with KEDA as scaler backend (installs KEDA, skips Prometheus Adapter).
 # Runs a subset of smoke tests from the e2e suite.
 .PHONY: test-e2e-smoke
 test-e2e-smoke: manifests generate fmt vet ## Run smoke e2e tests
@@ -248,6 +254,7 @@ test-e2e-smoke: manifests generate fmt vet ## Run smoke e2e tests
 	MONITORING_NAMESPACE=$(E2E_MONITORING_NAMESPACE) \
 	USE_SIMULATOR=$(USE_SIMULATOR) \
 	SCALE_TO_ZERO_ENABLED=$(SCALE_TO_ZERO_ENABLED) \
+	SCALER_BACKEND=$(SCALER_BACKEND) \
 	MODEL_ID=$(MODEL_ID) \
 	REQUEST_RATE=$(REQUEST_RATE) \
 	NUM_PROMPTS=$(NUM_PROMPTS) \
@@ -271,6 +278,7 @@ test-e2e-full: manifests generate fmt vet ## Run full e2e test suite
 	WVA_NAMESPACE=$(CONTROLLER_NAMESPACE) \
 	USE_SIMULATOR=$(USE_SIMULATOR) \
 	SCALE_TO_ZERO_ENABLED=$(SCALE_TO_ZERO_ENABLED) \
+	SCALER_BACKEND=$(SCALER_BACKEND) \
 	MODEL_ID=$(MODEL_ID) \
 	REQUEST_RATE=$(REQUEST_RATE) \
 	NUM_PROMPTS=$(NUM_PROMPTS) \

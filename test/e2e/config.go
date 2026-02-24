@@ -24,6 +24,11 @@ type E2EConfig struct {
 	// Feature gates
 	ScaleToZeroEnabled bool // HPAScaleToZero feature gate
 
+	// Scaler backend: "prometheus-adapter" (HPA) or "keda" (ScaledObject)
+	ScalerBackend string
+	// KEDANamespace is the namespace where KEDA is installed (used when ScalerBackend is "keda")
+	KEDANamespace string
+
 	// EPP configuration
 	EPPMode          string            // "poolName" or "endpointSelector"
 	PoolName         string            // InferencePool name (if using poolName mode)
@@ -67,6 +72,10 @@ func LoadConfigFromEnv() E2EConfig {
 
 		// Feature gate defaults
 		ScaleToZeroEnabled: getEnvBool("SCALE_TO_ZERO_ENABLED", false),
+
+		// Scaler backend: prometheus-adapter (default) or keda
+		ScalerBackend: getEnv("SCALER_BACKEND", "prometheus-adapter"),
+		KEDANamespace: getEnv("KEDA_NAMESPACE", "keda-system"),
 
 		// EPP defaults
 		EPPMode:          getEnv("EPP_MODE", "poolName"),

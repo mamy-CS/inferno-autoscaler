@@ -125,12 +125,20 @@ var _ = Describe("GPU Limiter Feature", Label("full"), Ordered, func() {
 		)
 		Expect(err).NotTo(HaveOccurred(), "Failed to create VA B")
 
-		By("Creating HPAs for both deployments")
-		err = fixtures.EnsureHPA(ctx, k8sClient, cfg.LLMDNamespace, hpaA, modelServiceA+"-decode", vaA, 1, 10)
-		Expect(err).NotTo(HaveOccurred(), "Failed to create HPA A")
-
-		err = fixtures.EnsureHPA(ctx, k8sClient, cfg.LLMDNamespace, hpaB, modelServiceB+"-decode", vaB, 1, 10)
-		Expect(err).NotTo(HaveOccurred(), "Failed to create HPA B")
+		By("Creating scalers for both deployments (HPA or ScaledObject per backend)")
+		if cfg.ScalerBackend == "keda" {
+			_ = k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Delete(ctx, hpaA+"-hpa", metav1.DeleteOptions{})
+			_ = k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Delete(ctx, hpaB+"-hpa", metav1.DeleteOptions{})
+			err = fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace, hpaA, modelServiceA+"-decode", vaA, 1, 10, cfg.MonitoringNS)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create ScaledObject A")
+			err = fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace, hpaB, modelServiceB+"-decode", vaB, 1, 10, cfg.MonitoringNS)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create ScaledObject B")
+		} else {
+			err = fixtures.EnsureHPA(ctx, k8sClient, cfg.LLMDNamespace, hpaA, modelServiceA+"-decode", vaA, 1, 10)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create HPA A")
+			err = fixtures.EnsureHPA(ctx, k8sClient, cfg.LLMDNamespace, hpaB, modelServiceB+"-decode", vaB, 1, 10)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create HPA B")
+		}
 
 		GinkgoWriter.Println("GPU Limiter test setup complete with two VAs (NVIDIA and AMD accelerators)")
 	})
@@ -138,28 +146,32 @@ var _ = Describe("GPU Limiter Feature", Label("full"), Ordered, func() {
 	AfterAll(func() {
 		By("Cleaning up GPU limiter test resources")
 
-		// Delete in reverse dependency order: HPA -> VA -> Service -> Deployment
+		// Delete in reverse dependency order: scaler -> VA -> Service -> Deployment
 		// ServiceMonitor cleanup is handled by DeferCleanup registered in BeforeAll
 
-		// Delete HPAs
-		hpaNameA := hpaA + "-hpa"
-		hpaNameB := hpaB + "-hpa"
-		cleanupResource(ctx, "HPA", cfg.LLMDNamespace, hpaNameA,
-			func() error {
-				return k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Delete(ctx, hpaNameA, metav1.DeleteOptions{})
-			},
-			func() bool {
-				_, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Get(ctx, hpaNameA, metav1.GetOptions{})
-				return errors.IsNotFound(err)
-			})
-		cleanupResource(ctx, "HPA", cfg.LLMDNamespace, hpaNameB,
-			func() error {
-				return k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Delete(ctx, hpaNameB, metav1.DeleteOptions{})
-			},
-			func() bool {
-				_, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Get(ctx, hpaNameB, metav1.GetOptions{})
-				return errors.IsNotFound(err)
-			})
+		if cfg.ScalerBackend == "keda" {
+			_ = fixtures.DeleteScaledObject(ctx, crClient, cfg.LLMDNamespace, hpaA)
+			_ = fixtures.DeleteScaledObject(ctx, crClient, cfg.LLMDNamespace, hpaB)
+		} else {
+			hpaNameA := hpaA + "-hpa"
+			hpaNameB := hpaB + "-hpa"
+			cleanupResource(ctx, "HPA", cfg.LLMDNamespace, hpaNameA,
+				func() error {
+					return k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Delete(ctx, hpaNameA, metav1.DeleteOptions{})
+				},
+				func() bool {
+					_, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Get(ctx, hpaNameA, metav1.GetOptions{})
+					return errors.IsNotFound(err)
+				})
+			cleanupResource(ctx, "HPA", cfg.LLMDNamespace, hpaNameB,
+				func() error {
+					return k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Delete(ctx, hpaNameB, metav1.DeleteOptions{})
+				},
+				func() bool {
+					_, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Get(ctx, hpaNameB, metav1.GetOptions{})
+					return errors.IsNotFound(err)
+				})
+		}
 
 		// Delete VAs
 		vaAObj := &variantautoscalingv1alpha1.VariantAutoscaling{

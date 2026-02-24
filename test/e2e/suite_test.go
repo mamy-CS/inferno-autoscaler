@@ -16,6 +16,8 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
@@ -29,12 +31,13 @@ import (
 )
 
 var (
-	cfg        E2EConfig
-	k8sClient  *kubernetes.Clientset
-	crClient   client.Client
-	restConfig *rest.Config
-	ctx        context.Context
-	cancel     context.CancelFunc
+	cfg           E2EConfig
+	k8sClient     *kubernetes.Clientset
+	crClient      client.Client
+	dynamicClient dynamic.Interface
+	restConfig    *rest.Config
+	ctx           context.Context
+	cancel        context.CancelFunc
 )
 
 func TestE2E(t *testing.T) {
@@ -55,6 +58,7 @@ var _ = BeforeSuite(func() {
 	GinkgoWriter.Printf("LLMD Namespace: %s\n", cfg.LLMDNamespace)
 	GinkgoWriter.Printf("Use Simulator: %v\n", cfg.UseSimulator)
 	GinkgoWriter.Printf("Scale-to-Zero Enabled: %v\n", cfg.ScaleToZeroEnabled)
+	GinkgoWriter.Printf("Scaler Backend: %s\n", cfg.ScalerBackend)
 	GinkgoWriter.Printf("Model ID: %s\n", cfg.ModelID)
 	GinkgoWriter.Printf("Load Strategy: %s\n", cfg.LoadStrategy)
 	GinkgoWriter.Printf("==============================\n\n")
@@ -84,6 +88,9 @@ var _ = BeforeSuite(func() {
 
 	crClient, err = client.New(restConfig, client.Options{Scheme: s})
 	Expect(err).NotTo(HaveOccurred(), "Failed to create controller-runtime client")
+
+	dynamicClient, err = dynamic.NewForConfig(restConfig)
+	Expect(err).NotTo(HaveOccurred(), "Failed to create dynamic client")
 
 	ctx, cancel = context.WithCancel(context.Background())
 
@@ -120,6 +127,15 @@ var _ = BeforeSuite(func() {
 		g.Expect(err).NotTo(HaveOccurred())
 		g.Expect(pods.Items).NotTo(BeEmpty(), "Prometheus pod not found")
 	}, 2*time.Minute, 5*time.Second).Should(Succeed(), "Prometheus should be running")
+
+	if cfg.ScalerBackend == "keda" {
+		By("Verifying KEDA is available (ScaledObject CRD)")
+		Eventually(func(g Gomega) {
+			gvr := schema.GroupVersionResource{Group: "keda.sh", Version: "v1alpha1", Resource: "scaledobjects"}
+			_, err := dynamicClient.Resource(gvr).Namespace(cfg.LLMDNamespace).List(ctx, metav1.ListOptions{Limit: 1})
+			g.Expect(err).NotTo(HaveOccurred(), "KEDA ScaledObject CRD should be installed when SCALER_BACKEND=keda")
+		}, 30*time.Second, 5*time.Second).Should(Succeed(), "KEDA should be available")
+	}
 
 	GinkgoWriter.Println("BeforeSuite completed successfully - infrastructure ready")
 })
@@ -222,6 +238,27 @@ func cleanupTestResources(ctx context.Context, k8sClient *kubernetes.Clientset, 
 					_, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(namespace).Get(ctx, hpa.Name, metav1.GetOptions{})
 					return errors.IsNotFound(err)
 				}, "HPA", hpa.Name)
+			}
+		}
+	}
+
+	// Clean up test ScaledObjects (KEDA backend)
+	if dynamicClient != nil {
+		soGVR := schema.GroupVersionResource{Group: "keda.sh", Version: "v1alpha1", Resource: "scaledobjects"}
+		soList, err := dynamicClient.Resource(soGVR).Namespace(namespace).List(ctx, metav1.ListOptions{})
+		if err == nil {
+			for _, so := range soList.Items {
+				labels := so.GetLabels()
+				if labels != nil && labels["test-resource"] == "true" {
+					soName := so.GetName()
+					GinkgoWriter.Printf("Cleaning up leftover ScaledObject: %s\n", soName)
+					deleteResourceWithVerification(ctx, func() error {
+						return dynamicClient.Resource(soGVR).Namespace(namespace).Delete(ctx, soName, metav1.DeleteOptions{})
+					}, func() bool {
+						_, getErr := dynamicClient.Resource(soGVR).Namespace(namespace).Get(ctx, soName, metav1.GetOptions{})
+						return errors.IsNotFound(getErr)
+					}, "ScaledObject", soName)
+				}
 			}
 		}
 	}
