@@ -96,17 +96,12 @@ jobs:
               - '!OWNERS'
               - '!PROJECT'
 
-      - name: Set output with default
+      - name: Set has_code_changes
         id: set-output
-        run: |
-          # On issue_comment we skip paths-filter (no PR diff context), so treat as code changes so e2e can run
-          if [ "${{ github.event_name }}" == "issue_comment" ]; then
-            echo "has_code_changes=true" >> $GITHUB_OUTPUT
-          elif [ "${{ github.event_name }}" == "pull_request" ] && [ -n "${{ steps.filter.outputs.code }}" ]; then
-            echo "has_code_changes=${{ steps.filter.outputs.code }}" >> $GITHUB_OUTPUT
-          else
-            echo "has_code_changes=true" >> $GITHUB_OUTPUT
-          fi
+        run: echo "has_code_changes=${{ env.HAS_CODE_CHANGES }}" >> $GITHUB_OUTPUT
+        env:
+          # Only reference steps.filter when pull_request (filter step ran); otherwise treat as code changes
+          HAS_CODE_CHANGES: ${{ github.event_name == 'pull_request' && steps.filter.outputs.code || 'true' }}
 
   lint-and-test:
     runs-on: ubuntu-latest
@@ -212,6 +207,9 @@ jobs:
                 return;
               }
 
+              // Set run_full immediately so e2e runs even if reaction/comment APIs fail below
+              core.setOutput('run_full', 'true');
+
               // Get PR details
               const { data: pr } = await github.rest.pulls.get({
                 owner: context.repo.owner,
@@ -222,7 +220,7 @@ jobs:
               console.log(`${comment} approved by ${commenter} for PR #${issue.number}`);
               console.log(`PR head SHA: ${pr.head.sha}`);
 
-              // Add reaction to acknowledge
+              // Add reaction to acknowledge (best-effort; run_full already set)
               await github.rest.reactions.createForIssueComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
@@ -239,7 +237,6 @@ jobs:
                 body: `🚀 **Full E2E tests triggered by ${comment}**\n\n[View the Kind E2E workflow run](${runUrl})`
               });
 
-              core.setOutput('run_full', 'true');
               return;
             }
             
