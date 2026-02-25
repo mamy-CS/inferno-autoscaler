@@ -60,6 +60,9 @@ export TTFT_AVERAGE_LATENCY_MS=200          # Average time-to-first-token for th
 # Performance tuning (optional)
 export VLLM_MAX_NUM_SEQS=64                 # vLLM max concurrent sequences (batch size)
 export HPA_STABILIZATION_SECONDS=240        # HPA stabilization window
+
+# Image load (optional; auto-detected if unset)
+export KIND_IMAGE_PLATFORM=linux/amd64      # Single platform for kind load (avoids "digest not found")
 ```
 
 **Deployment flags**:
@@ -266,6 +269,25 @@ pkill -f "kubectl port-forward"
 
 # Verify pod is running before port-forwarding
 kubectl get pods -n <namespace>
+```
+
+### `kind load` fails with "content digest ... not found"
+
+This can happen when loading a multi-platform image into Kind: the image manifest references blobs for multiple platforms (e.g. `linux/arm64`, `linux/amd64`), but the stream that `kind load` feeds into containerd does not include all of them, so `ctr` reports a missing digest. See [kubernetes-sigs/kind#3795](https://github.com/kubernetes-sigs/kind/issues/3795) and [kubernetes-sigs/kind#3845](https://github.com/kubernetes-sigs/kind/issues/3845). The install script works around it by pulling a single-platform image before loading. If you still see the error or need a specific architecture, set the platform explicitly:
+
+```bash
+# Force linux/amd64 (e.g. for Intel or emulated nodes)
+KIND_IMAGE_PLATFORM=linux/amd64 make deploy-wva-emulated-on-kind CREATE_CLUSTER=true DEPLOY_LLM_D=true
+
+# Force linux/arm64 (e.g. for Apple Silicon with native arm64 nodes)
+KIND_IMAGE_PLATFORM=linux/arm64 make deploy-wva-emulated-on-kind CREATE_CLUSTER=true DEPLOY_LLM_D=true
+```
+
+Alternatively, build the image locally and deploy with `IfNotPresent` so the script skips the registry pull and loads your local single-platform image:
+
+```bash
+make docker-build IMG=ghcr.io/llm-d/workload-variant-autoscaler:latest
+WVA_IMAGE_PULL_POLICY=IfNotPresent make deploy-wva-emulated-on-kind CREATE_CLUSTER=true DEPLOY_LLM_D=true
 ```
 
 ## Development Workflow
