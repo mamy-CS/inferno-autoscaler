@@ -398,8 +398,8 @@ func GetProjectDir() (string, error) {
 		return wd, err
 	}
 
-	// Handle both test packages
-	m := regexp.MustCompile(`/test/(e2e-saturation-based|e2e)`)
+	// Handle test package path (consolidated e2e suite)
+	m := regexp.MustCompile(`/test/e2e`)
 	wd = m.ReplaceAllString(wd, "")
 	return wd, nil
 }
