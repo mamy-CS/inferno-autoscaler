@@ -96,8 +96,7 @@ workload-variant-autoscaler/
 ├── test/                 # Tests
 │   ├── e2e/             # End-to-end tests
 │   └── utils/           # Test utilities
-├── tools/                # Development tools
-│   └── vllm-emulator/   # vLLM emulator for testing
+├── hack/                 # Dev scripts (e.g. hack/burst_load_generator.sh for manual load)
 └── charts/               # Helm charts
     └── workload-variant-autoscaler/
 ```

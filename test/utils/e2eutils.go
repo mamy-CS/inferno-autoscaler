@@ -123,7 +123,7 @@ func InstallPrometheusOperator() error {
 	// Install Prometheus with TLS configuration
 	cmd = exec.Command("helm", "upgrade", "-i", "kube-prometheus-stack", "prometheus-community/kube-prometheus-stack",
 		"-n", monitoringNamespace,
-		"-f", "deploy/examples/vllm-emulator/prometheus-operator/prometheus-tls-values.yaml")
+		"-f", "deploy/prometheus-operator/prometheus-tls-values.yaml")
 	if _, err := Run(cmd); err != nil {
 		return err
 	}
