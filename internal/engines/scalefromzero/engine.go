@@ -267,8 +267,8 @@ func (e *Engine) processInactiveVariant(ctx context.Context, va wvav1alpha1.Vari
 	}
 
 	if !pendingRequestExist {
-		// Log at INFO so E2E and operators see why this VA stayed at zero (no deceptive silence).
-		logger.Info("Scale-from-zero: skipping VA, no pending requests in flow control queue",
+		// Scale-from-zero loop runs every 100ms; log at DEBUG to avoid flooding (10/sec per inactive VA).
+		logger.V(logging.DEBUG).Info("Scale-from-zero: skipping VA, no pending requests in flow control queue",
 			"va", va.Name,
 			"namespace", va.Namespace,
 			"modelID", va.Spec.ModelID)
