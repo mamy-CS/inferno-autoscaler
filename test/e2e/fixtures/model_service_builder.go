@@ -162,9 +162,9 @@ func buildModelServerArgs(modelID string, useSimulator bool, maxNumSeqs int) []s
 		// text completion API.
 		// Note: blockSize must be one of {8, 16, 32, 64, 128} per simulator validation.
 		const (
-			simulatorKVCacheSize = 1   // minimal cache: 1 unique block / 1 max block = 100% usage during load
-			simulatorBlockSize   = 8   // minimum valid block size; 8 tokens / 8 = 1 block per request
-			simulatorMaxModelLen = 512 // must exceed prompt tokens + max_tokens (burst load uses ~9 + 400 = 409)
+			simulatorKVCacheSize = 1        // minimal cache: 1 unique block / 1 max block = 100% usage during load
+			simulatorBlockSize   = 8        // minimum valid block size; 8 tokens / 8 = 1 block per request
+			simulatorMaxModelLen = 512      // must exceed prompt tokens + max_tokens (burst load uses ~9 + 400 = 409)
 			simulatorTTFT        = "2000ms" // time-to-first-token (slow to hold KV cache)
 			simulatorITL         = "100ms"  // inter-token latency (slow to keep requests active)
 		)

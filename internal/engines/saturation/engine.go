@@ -1010,6 +1010,7 @@ func (e *Engine) applySaturationDecisions(
 		if hasDecision {
 			logger.Info("Applied saturation decision via shared cache",
 				"variant", vaName,
+				"namespace", updateVa.Namespace,
 				"action", decision.Action,
 				"target", targetReplicas,
 				"reason", reason)
