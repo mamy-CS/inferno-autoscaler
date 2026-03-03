@@ -293,7 +293,7 @@ KIND_IMAGE_PLATFORM=linux/arm64 make deploy-wva-emulated-on-kind CREATE_CLUSTER=
 Alternatively, build the image locally and deploy with `IfNotPresent` so the script skips the registry pull and loads your local single-platform image:
 
 ```bash
-make docker-build IMG=ghcr.io/llm-d/workload-variant-autoscaler:latest
+make docker-build IMG=ghcr.io/llm-d/llm-d-workload-variant-autoscaler:latest
 WVA_IMAGE_PULL_POLICY=IfNotPresent make deploy-wva-emulated-on-kind CREATE_CLUSTER=true DEPLOY_LLM_D=true
 ```
 
