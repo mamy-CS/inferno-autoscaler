@@ -258,6 +258,21 @@ Runs OpenShift E2E tests on dedicated cluster:
 - On failure: automatically scales down GPU workloads while preserving debugging resources (VA, HPA, logs)
 - Smart resource management frees GPUs for other PRs without manual intervention
 
+#### Triggering E2E via PR Comments
+
+You can trigger specific e2e runs by commenting on a PR:
+
+| Comment | Workflow | Who can use | Effect |
+|--------|----------|-------------|--------|
+| **`/trigger-e2e-full`** | `ci-pr-checks.yaml` | Anyone with PR access | Runs the **full** e2e suite on Kind (instead of smoke only). Aliases: `/test-e2e-full`, `/test-full`. |
+| **`/ok-to-test`** | `ci-e2e-openshift.yaml` | Maintainers/admins only | Approves running **OpenShift e2e** on a **fork PR**. Fork PRs do not run this workflow automatically; a maintainer must comment `/ok-to-test` after reviewing the code. |
+| **`/retest`** | `ci-e2e-openshift.yaml` | Maintainers/admins only | Re-triggers the OpenShift e2e workflow (e.g. after a run failure or to re-run with latest code). |
+
+**When to use:**
+
+- **Full e2e on Kind**: Comment `/trigger-e2e-full` when you want the full e2e suite to run on your PR (e.g. after making scaling or saturation changes). By default, PRs only run smoke e2e.
+- **Fork PRs**: If you opened a PR from a fork, OpenShift e2e will not run until a maintainer or admin comments `/ok-to-test`. Contributors should wait for that approval; maintainers use `/ok-to-test` after reviewing the PR.
+
 ### Running CI Tests Locally
 
 #### Simulate PR Checks
