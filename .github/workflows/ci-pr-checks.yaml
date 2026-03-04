@@ -53,6 +53,7 @@ jobs:
     outputs:
       has_code_changes: ${{ steps.set-output.outputs.has_code_changes }}
       pr_head_sha: ${{ steps.pr-info.outputs.pr_head_sha }}
+      pr_head_repo: ${{ steps.pr-info.outputs.pr_head_repo }}
     steps:
       - name: Get PR number for issue_comment events
         id: pr-info
@@ -70,15 +71,19 @@ jobs:
               repo: context.repo.repo,
               pull_number: issue.number
             });
+            const baseRepo = `${context.repo.owner}/${context.repo.repo}`;
+            const headRepo = pr.head.repo ? pr.head.repo.full_name : baseRepo;
             core.setOutput('pr_number', issue.number.toString());
             core.setOutput('pr_head_sha', pr.head.sha);
+            core.setOutput('pr_head_repo', headRepo);
 
       - name: Checkout source
         uses: actions/checkout@v4
         with:
-          # For issue_comment events, checkout the PR head SHA
+          # For issue_comment on a fork PR: checkout from head repo so the commit exists
+          repository: ${{ steps.pr-info.outputs.pr_head_repo || github.repository }}
           ref: ${{ github.event_name == 'issue_comment' && steps.pr-info.outputs.pr_head_sha || github.event.pull_request.head.sha || github.sha }}
-          # For pull_request events, fetch the PR head
+          token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
       
       - name: Check for code changes
@@ -275,11 +280,15 @@ jobs:
             exit 1
           fi
           echo "Checkout will use PR head SHA: ${{ needs.check-code-changes.outputs.pr_head_sha }}"
+          echo "PR head repo: ${{ needs.check-code-changes.outputs.pr_head_repo || github.repository }}"
 
       - name: Checkout source
         uses: actions/checkout@v4
         with:
-          ref: ${{ needs.check-code-changes.outputs.pr_head_sha || '' }}
+          # For issue_comment on a fork PR: checkout from head repo so the commit exists
+          repository: ${{ needs.check-code-changes.outputs.pr_head_repo || github.repository }}
+          ref: ${{ needs.check-code-changes.outputs.pr_head_sha || github.sha }}
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Extract Go version from go.mod
         run: sed -En 's/^go (.*)$/GO_VERSION=\1/p' go.mod >> $GITHUB_ENV
