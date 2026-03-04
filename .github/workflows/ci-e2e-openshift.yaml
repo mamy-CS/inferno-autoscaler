@@ -71,9 +71,11 @@ on:
         default: '240'
 
 jobs:
-  # Gate: Check permissions and handle /ok-to-test for fork PRs
-  # - Maintainers (write access): Tests run automatically
-  # - External contributors: Must wait for maintainer to comment /ok-to-test
+  # Gate: Check permissions and handle /ok-to-test for fork PRs.
+  # - Maintainers (write access): Tests run automatically on pull_request.
+  # - Fork PRs: Gate succeeds (no failure) so the PR does not show a false red check; E2E runs
+  #   only after a maintainer comments /ok-to-test. Branch protection should require the
+  #   "e2e-openshift" job so merge stays blocked until that run passes.
   gate:
     runs-on: ubuntu-latest
     outputs:
@@ -244,9 +246,9 @@ jobs:
                   }
                 }
 
-                // Fail the gate to prevent deceptive green badge.
-                // E2E will run via the /ok-to-test comment trigger (issue_comment event).
-                core.setFailed('Fork PR — E2E cannot run on pull_request event (no secrets access). Auto-posted /ok-to-test to trigger via comment.');
+                // Do not fail the gate: fork PRs cannot run E2E on pull_request (no secrets).
+                // Gate succeeds so the PR does not show a false failure; branch protection
+                // should require "e2e-openshift" so merge stays blocked until /ok-to-test run passes.
                 return;
               }
               // Non-fork PR from maintainer - run directly
@@ -265,9 +267,10 @@ jobs:
               }
             }
 
-            // Fail the gate to prevent deceptive green badge.
-            // E2E requires a maintainer to comment /ok-to-test after reviewing the code.
-            core.setFailed('Fork PR from external contributor — awaiting /ok-to-test from a maintainer.');
+            // Do not fail the gate: GitHub does not allow updating status from upstream on fork
+            // PRs, so a failed gate would stay red even after /ok-to-test run passes. Let the gate
+            // succeed; branch protection should require "e2e-openshift" so merge stays blocked
+            // until a maintainer comments /ok-to-test and E2E passes.
 
       - name: Write workflow summary
         if: always()
@@ -283,9 +286,8 @@ jobs:
               core.summary.addRaw([
                 '⏸️ **E2E tests skipped — fork PR**\n\n',
                 'Fork PRs cannot run E2E on `pull_request` events (no access to secrets/GPU runners).\n\n',
-                'A maintainer must comment `/ok-to-test` to trigger the E2E suite.\n\n',
-                '> **Why is this red?** To prevent a deceptive green badge. ',
-                'Green means E2E passed; this run did not execute E2E tests.\n',
+                'A maintainer must comment `/ok-to-test` to trigger the E2E suite. ',
+                'Branch protection should require **e2e-openshift** so merge stays blocked until E2E passes.\n',
               ].join('')).write();
             } else {
               core.summary.addRaw('⏸️ **E2E tests were skipped** (gate check did not pass for this trigger).\n').write();

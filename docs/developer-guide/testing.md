@@ -271,7 +271,7 @@ You can trigger specific e2e runs by commenting on a PR:
 **When to use:**
 
 - **Full e2e on Kind**: Comment `/trigger-e2e-full` when you want the full e2e suite to run on your PR (e.g. after making scaling or saturation changes). By default, PRs only run smoke e2e.
-- **Fork PRs**: If you opened a PR from a fork, OpenShift e2e will not run until a maintainer or admin comments `/ok-to-test`. Contributors should wait for that approval; maintainers use `/ok-to-test` after reviewing the PR.
+- **Fork PRs**: If you opened a PR from a fork, OpenShift e2e will not run until a maintainer or admin comments `/ok-to-test`. Contributors should wait for that approval; maintainers use `/ok-to-test` after reviewing the PR. Branch protection should require the **e2e-openshift** status check so merge stays blocked until that run passes (the gate check is intentionally green on fork PRs to avoid a false failure that cannot be updated from upstream).
 
 ### Running CI Tests Locally
 
