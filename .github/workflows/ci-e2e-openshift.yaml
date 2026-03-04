@@ -173,12 +173,12 @@ jobs:
 
               // Post comment with link to the e2e workflow run
               const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-              const cmdDesc = comment === '/ok-to-test' ? 'Approve and run OpenShift E2E' : 'Re-run OpenShift E2E';
+              const cmdDesc = comment === '/ok-to-test' ? 'approve and run' : 're-run';
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: issue.number,
-                body: `🚀 **${cmdDesc}** (\`${comment}\`)\n\n[View the OpenShift E2E workflow run](${runUrl})`
+                body: `🚀 **OpenShift E2E** — ${cmdDesc} (\`${comment}\`)\n\n[View the OpenShift E2E workflow run](${runUrl})`
               });
               return;
             }
