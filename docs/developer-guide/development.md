@@ -17,7 +17,7 @@ Guide for developers contributing to Workload-Variant-Autoscaler.
 1. **Clone the repository:**
 
    ```bash
-   git clone https://github.com/llm-d/llm-d-workload-variant-autoscaler.git
+   git clone https://github.com/llm-d/llm-d-workload-variant-autoscaler.git 
    cd llm-d-workload-variant-autoscaler
    ```
 
