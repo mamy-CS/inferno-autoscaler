@@ -36,6 +36,8 @@ WVA_NS=${WVA_NS:-"workload-variant-autoscaler-system"}
 WVA_RECONCILE_INTERVAL=${WVA_RECONCILE_INTERVAL:-"60s"} # WVA controller reconcile interval - tests set 30s interval
 SKIP_TLS_VERIFY=true  # Skip TLS verification in emulated environments
 WVA_LOG_LEVEL="debug" # WVA log level set to debug for emulated environments
+# gaie-sim (llm-d) deploys InferencePool as inference.networking.k8s.io/v1; WVA must watch that group to populate the datastore (scale-from-zero).
+POOL_GROUP=${POOL_GROUP:-"inference.networking.k8s.io"}
 
 # llm-d Configuration
 LLM_D_INFERENCE_SIM_IMG_REPO=${LLM_D_INFERENCE_SIM_IMG_REPO:-"ghcr.io/llm-d/llm-d-inference-sim"}

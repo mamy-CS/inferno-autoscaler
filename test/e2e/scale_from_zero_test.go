@@ -23,9 +23,10 @@ import (
 )
 
 // Scale-from-zero test validates that the WVA controller correctly detects pending requests
-// and scales up deployments from zero replicas when the HPAScaleToZero feature gate is enabled.
-// NOTE: Disabled — standard HPA rejects minReplicas=0; requires KEDA ScaledObject support.
-var _ = PDescribe("Scale-From-Zero Feature", Label("smoke", "full"), Ordered, func() {
+// and scales up deployments from zero replicas. Requires GIE queuing (ENABLE_EXPERIMENTAL_FLOW_CONTROL_LAYER
+// on EPP and an InferenceObjective); deploy with E2E_TESTS_ENABLED=true or ENABLE_SCALE_TO_ZERO=true.
+// Uses KEDA ScaledObject when standard HPA rejects minReplicas=0 (e.g. OpenShift).
+var _ = Describe("Scale-From-Zero Feature", Label("smoke", "full"), Ordered, func() {
 	var (
 		poolName         = "scale-from-zero-pool"
 		modelServiceName = "scale-from-zero-ms"
@@ -34,10 +35,10 @@ var _ = PDescribe("Scale-From-Zero Feature", Label("smoke", "full"), Ordered, fu
 	)
 
 	BeforeAll(func() {
-		// Skip if HPAScaleToZero is not enabled
-		// if !cfg.ScaleToZeroEnabled {
-		// 	Skip("HPAScaleToZero feature gate is not enabled; skipping scale-from-zero test")
-		// }
+		// Scale-from-zero is not validated on OpenShift (POOL_GROUP / flow control setup differs; HPA minReplicas=0 often unsupported).
+		if cfg.Environment == "openshift" {
+			Skip("Scale-from-zero test is disabled on OpenShift")
+		}
 
 		// Note: InferencePool should already exist from infra-only deployment
 		// We no longer create InferencePools in individual tests
