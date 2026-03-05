@@ -161,7 +161,10 @@ var _ = Describe("Scale-From-Zero Feature", Label("smoke", "full"), Ordered, fun
 		// InferencePool reconciler runs again. We wait here to allow time for reconciliation.
 		// We wait longer to ensure the InferencePool reconciler has had time to register the pool
 		// in the datastore before the scale-from-zero engine runs.
-		time.Sleep(30 * time.Second) // Allow time for VA reconciliation and InferencePool registration
+		// When running in the full smoke suite (not focused), other specs may have run first and the
+		// leader may have just been elected or cache may still be syncing; wait longer so the
+		// InferencePool reconciler on the leader has populated the datastore.
+		time.Sleep(60 * time.Second) // Allow time for VA reconciliation and InferencePool registration
 
 		GinkgoWriter.Println("Scale-from-zero test setup complete with deployment at 0 replicas")
 	})
