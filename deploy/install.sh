@@ -503,6 +503,18 @@ set_wva_logging_level() {
     echo ""
 }
 
+# Detect which InferencePool API group is in use in the cluster (v1 vs v1alpha2).
+# Sets DETECTED_POOL_GROUP to inference.networking.k8s.io or inference.networking.x-k8s.io
+# so WVA can be upgraded to watch the correct group (required for scale-from-zero datastore).
+detect_inference_pool_api_group() {
+    DETECTED_POOL_GROUP=""
+    if [ -n "$(kubectl get inferencepools.inference.networking.k8s.io -A -o name --request-timeout=10s 2>/dev/null | head -1)" ]; then
+        DETECTED_POOL_GROUP="inference.networking.k8s.io"
+    elif [ -n "$(kubectl get inferencepools.inference.networking.x-k8s.io -A -o name --request-timeout=10s 2>/dev/null | head -1)" ]; then
+        DETECTED_POOL_GROUP="inference.networking.x-k8s.io"
+    fi
+}
+
 deploy_wva_controller() {
     log_info "Deploying Workload-Variant-Autoscaler..."
     log_info "Using image: $WVA_IMAGE_REPO:$WVA_IMAGE_TAG"
@@ -1033,6 +1045,23 @@ deploy_llm_d_infrastructure() {
     log_info "Waiting for llm-d components to initialize..."
     kubectl wait --for=condition=Available deployment --all -n $LLMD_NS --timeout=60s || \
         log_warning "llm-d components are not ready yet - check 'kubectl get pods -n $LLMD_NS'"
+
+    # Align WVA with the InferencePool API group in use (scale-from-zero requires WVA to watch the same group).
+    # llm-d version determines whether pools are inference.networking.k8s.io (v1) or inference.networking.x-k8s.io (v1alpha2).
+    if [ "$DEPLOY_WVA" == "true" ]; then
+        detect_inference_pool_api_group
+        if [ -n "$DETECTED_POOL_GROUP" ]; then
+            log_info "Detected InferencePool API group: $DETECTED_POOL_GROUP; upgrading WVA to watch it (scale-from-zero)"
+            if helm upgrade "$WVA_RELEASE_NAME" ${WVA_PROJECT}/charts/workload-variant-autoscaler \
+                -n $WVA_NS --reuse-values --set wva.poolGroup=$DETECTED_POOL_GROUP --wait --timeout=60s; then
+                log_success "WVA upgraded with wva.poolGroup=$DETECTED_POOL_GROUP"
+            else
+                log_warning "WVA upgrade with poolGroup failed - scale-from-zero may not see the InferencePool"
+            fi
+        else
+            log_warning "Could not detect InferencePool API group - WVA may have empty datastore for scale-from-zero"
+        fi
+    fi
 
     # Deploy second model infrastructure for multi-model testing (limiter e2e tests)
     if [ "$MULTI_MODEL_TESTING" == "true" ]; then
