@@ -56,6 +56,10 @@
 
    **Solution**: Verify requests are being sent to the correct model endpoint.
 
+### E2E and infra-only deploys
+
+For e2e and infra-only deploys, the install script enables EPP flow control and optionally applies an InferenceObjective when `E2E_TESTS_ENABLED=true` or `ENABLE_SCALE_TO_ZERO=true`. See [deploy/install.sh](https://github.com/llm-d/llm-d-workload-variant-autoscaler/blob/main/deploy/install.sh) and [deploy/inference-objective-e2e.yaml](https://github.com/llm-d/llm-d-workload-variant-autoscaler/blob/main/deploy/inference-objective-e2e.yaml).
+
 ## Slow Scale-Up Response
 
 **Symptom**: Deployment takes too long to scale up from zero.

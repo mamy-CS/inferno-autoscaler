@@ -42,7 +42,7 @@ The ScaleFromZero engine continuously monitors inactive VariantAutoscaling resou
 ## Prerequisites
 
 - WVA and llm-d installed and running - deployment options available for [kind](https://github.com/llm-d/llm-d-workload-variant-autoscaler/blob/main/deploy/kind-emulator/README.md), [OpenShift](https://github.com/llm-d/llm-d-workload-variant-autoscaler/blob/main/deploy/openshift/README.md) and [Kubernetes](https://github.com/llm-d/llm-d-workload-variant-autoscaler/blob/main/deploy/kubernetes/README.md)
-- **GIE queuing**: EndpointPicker (EPP) with flow control enabled (set EPP env `ENABLE_EXPERIMENTAL_FLOW_CONTROL_LAYER=true`) so queue metrics are collected. Optionally deploy an **InferenceObjective** that references your InferencePool so the gateway uses GIE queuing. For e2e and infra-only deploys, the install script does this automatically when `E2E_TESTS_ENABLED=true` or `ENABLE_SCALE_TO_ZERO=true` (see [deploy/install.sh](https://github.com/llm-d/llm-d-workload-variant-autoscaler/blob/main/deploy/install.sh) and [deploy/inference-objective-e2e.yaml](https://github.com/llm-d/llm-d-workload-variant-autoscaler/blob/main/deploy/inference-objective-e2e.yaml)).
+- **EPP flow control**: EndpointPicker (EPP) with flow control enabled (set EPP env `ENABLE_EXPERIMENTAL_FLOW_CONTROL_LAYER=true`) so the queue metric `inference_extension_flow_control_queue_size` is collected. InferenceObjective is not required to enable this metric; it is a QoS policy for priority-based scheduling and optional for scale-from-zero.
 
 
 ## Usage
