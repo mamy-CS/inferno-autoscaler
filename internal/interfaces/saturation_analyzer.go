@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	autoscalingv1 "k8s.io/api/autoscaling/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -155,7 +155,7 @@ type VariantDecision struct {
 	// Used by allocation algorithms to prioritize saturated variants.
 	SpareCapacity float64
 	// ScaleTargetRef references the Deployment/StatefulSet for scheduling constraints
-	ScaleTargetRef *autoscalingv1.CrossVersionObjectReference
+	ScaleTargetRef *autoscalingv2.CrossVersionObjectReference
 
 	// --- Pipeline tracking ---
 	// DecisionSteps records each pipeline stage's contribution to the final decision.

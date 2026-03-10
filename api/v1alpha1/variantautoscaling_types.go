@@ -1,7 +1,7 @@
 package v1alpha1
 
 import (
-	autoscalingv1 "k8s.io/api/autoscaling/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -21,7 +21,7 @@ type VariantAutoscalingSpec struct {
 	// ScaleTargetRef references the scalable resource to manage.
 	// This follows the same pattern as HorizontalPodAutoscaler.
 	// +kubebuilder:validation:Required
-	ScaleTargetRef autoscalingv1.CrossVersionObjectReference `json:"scaleTargetRef"`
+	ScaleTargetRef autoscalingv2.CrossVersionObjectReference `json:"scaleTargetRef"`
 
 	// ModelID specifies the unique identifier of the model to be autoscaled.
 	// +kubebuilder:validation:MinLength=1
