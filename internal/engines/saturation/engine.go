@@ -49,6 +49,25 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils"
 )
 
+// resolveSaturationConfig resolves config for a model.
+// Lookup: "{modelID}#{namespace}" → "default" → zero-value with defaults.
+func resolveSaturationConfig(
+	configMap map[string]config.SaturationScalingConfig,
+	modelID, namespace string,
+) config.SaturationScalingConfig {
+	if cfg, ok := configMap[modelID+"#"+namespace]; ok {
+		cfg.ApplyDefaults()
+		return cfg
+	}
+	if cfg, ok := configMap["default"]; ok {
+		cfg.ApplyDefaults()
+		return cfg
+	}
+	cfg := config.SaturationScalingConfig{}
+	cfg.ApplyDefaults()
+	return cfg
+}
+
 type Engine struct {
 	client   client.Client
 	scheme   *runtime.Scheme
@@ -82,7 +101,7 @@ type Engine struct {
 
 	// optimizer is the V2 scaling optimizer that produces VariantDecisions from
 	// AnalyzerResults. Selected per-cycle based on enableLimiter config:
-	// CostAwareOptimizer (unlimited) or GreedyBySaturationOptimizer (limited).
+	// CostAwareOptimizer (unlimited) or GreedyByScoreOptimizer (limited).
 	optimizer pipeline.ScalingOptimizer
 }
 
@@ -236,7 +255,7 @@ func (e *Engine) optimize(ctx context.Context) error {
 	enableLimiter := false
 	if cfg, ok := globalSatCfgMap["default"]; ok {
 		cfg.ApplyDefaults()
-		analyzerName = cfg.AnalyzerName
+		analyzerName = cfg.GetAnalyzerName()
 		enableLimiter = cfg.EnableLimiter
 	}
 
@@ -249,7 +268,7 @@ func (e *Engine) optimize(ctx context.Context) error {
 	// Applies to V2 and queueing-model paths which both use the optimizer pipeline.
 	if analyzerName == "saturation" || analyzerName == interfaces.QueueingModelAnalyzerName {
 		if enableLimiter {
-			e.optimizer = pipeline.NewGreedyBySaturationOptimizer()
+			e.optimizer = pipeline.NewGreedyByScoreOptimizer()
 		} else {
 			e.optimizer = pipeline.NewCostAwareOptimizer()
 		}
@@ -325,13 +344,7 @@ func (e *Engine) optimizeV1(
 			continue
 		}
 
-		saturationConfig, ok := saturationConfigMap["default"]
-		if !ok {
-			logger.Info("Default saturation scaling config not found for namespace, skipping model",
-				"namespace", namespace,
-				"modelID", modelID)
-			continue
-		}
+		saturationConfig := resolveSaturationConfig(saturationConfigMap, modelID, namespace)
 
 		saturationTargets, saturationAnalysis, variantStates, err := e.RunSaturationAnalysis(ctx, modelID, modelVAs, saturationConfig, e.client)
 		if err != nil {
@@ -342,33 +355,20 @@ func (e *Engine) optimizeV1(
 
 		var finalDecisions []interfaces.VariantDecision
 		if saturationAnalysis != nil {
-			// Apply scale-to-zero enforcement after saturation analysis
-			// Get namespace-aware scale-to-zero config (namespace-local > global)
+			// Convert saturation targets to decisions first, then apply enforcer
+			finalDecisions = e.convertSaturationTargetsToDecisions(ctx, saturationTargets, saturationAnalysis, variantStates)
+
+			// Apply scale-to-zero enforcement on decisions
 			scaleToZeroConfig := e.Config.ScaleToZeroConfigForNamespace(namespace)
-
-			// Copy original targets for logging (enforcer modifies map in place)
-			originalTargets := make(map[string]int, len(saturationTargets))
-			for k, v := range saturationTargets {
-				originalTargets[k] = v
-			}
-
-			enforcedTargets, scaledToZero := e.ScaleToZeroEnforcer.EnforcePolicy(
-				ctx,
-				modelID,
-				modelVAs[0].Namespace,
-				saturationTargets,
-				saturationAnalysis.VariantAnalyses,
-				scaleToZeroConfig,
+			scaledToZero := e.ScaleToZeroEnforcer.EnforcePolicyOnDecisions(
+				ctx, modelID, namespace,
+				finalDecisions, scaleToZeroConfig, "v1-saturation",
 			)
 			if scaledToZero {
 				logger.Info("Scale-to-zero enforcement applied",
-					"modelID", modelID,
-					"originalTargets", originalTargets,
-					"enforcedTargets", enforcedTargets)
+					"modelID", modelID)
 			}
-			saturationTargets = enforcedTargets
 
-			finalDecisions = e.convertSaturationTargetsToDecisions(ctx, saturationTargets, saturationAnalysis, variantStates)
 			logger.Info("Saturation-only decisions made for model",
 				"modelID", modelID,
 				"decisionCount", len(finalDecisions))
@@ -382,7 +382,7 @@ func (e *Engine) optimizeV1(
 	// Apply GPU limiter if enabled
 	// Note: Limiter uses global saturation config since it's applied globally to all decisions
 	globalSaturationConfigMap := e.Config.SaturationConfig()
-	var globalSaturationConfig interfaces.SaturationScalingConfig
+	var globalSaturationConfig config.SaturationScalingConfig
 	if len(globalSaturationConfigMap) > 0 {
 		if cfg, ok := globalSaturationConfigMap["default"]; ok {
 			globalSaturationConfig = cfg
@@ -443,13 +443,7 @@ func (e *Engine) optimizeV2(
 				"namespace", namespace, "modelID", modelID)
 			continue
 		}
-		saturationConfig, ok := saturationConfigMap["default"]
-		if !ok {
-			logger.Info("Default saturation scaling config not found for namespace, skipping model",
-				"namespace", namespace, "modelID", modelID)
-			continue
-		}
-		saturationConfig.ApplyDefaults()
+		saturationConfig := resolveSaturationConfig(saturationConfigMap, modelID, namespace)
 
 		data, err := e.prepareModelData(ctx, modelID, modelVAs, e.client)
 		if err != nil {
@@ -480,7 +474,7 @@ func (e *Engine) optimizeV2(
 
 	// Stage 2: Compute GPU constraints and call optimizer
 	var constraints []*pipeline.ResourceConstraints
-	if _, ok := e.optimizer.(*pipeline.GreedyBySaturationOptimizer); ok {
+	if _, ok := e.optimizer.(*pipeline.GreedyByScoreOptimizer); ok {
 		currentUsage := computeCurrentGPUUsage(requests)
 		if limiter, ok := e.GPULimiter.(*pipeline.DefaultLimiter); ok {
 			constraint, err := limiter.ComputeConstraints(ctx, currentUsage)
@@ -569,7 +563,10 @@ func (e *Engine) BuildVariantStates(
 		// Extract GPUs per replica from deployment's pod template
 		gpusPerReplica := getDeploymentGPUsPerReplica(deploy)
 
-		ctrl.LoggerFrom(ctx).V(logging.DEBUG).Info("BuildVariantStates result", "variant", va.Name, "currentReplicas", currentReplicas, "readyReplicas", readyReplicas, "pendingReplicas", pendingReplicas, "gpusPerReplica", gpusPerReplica)
+		// Extract P/D role from deployment labels
+		role := getRoleFromDeployment(deploy)
+
+		ctrl.LoggerFrom(ctx).V(logging.DEBUG).Info("BuildVariantStates result", "variant", va.Name, "currentReplicas", currentReplicas, "readyReplicas", readyReplicas, "pendingReplicas", pendingReplicas, "gpusPerReplica", gpusPerReplica, "role", role)
 
 		states = append(states, interfaces.VariantReplicaState{
 			VariantName:     va.Name,
@@ -577,10 +574,34 @@ func (e *Engine) BuildVariantStates(
 			DesiredReplicas: va.Status.DesiredOptimizedAlloc.NumReplicas,
 			PendingReplicas: pendingReplicas,
 			GPUsPerReplica:  gpusPerReplica,
+			Role:            role,
 		})
 	}
 
 	return states
+}
+
+// getRoleFromDeployment extracts the P/D role from a deployment's pod template labels.
+// Returns "prefill", "decode", or "both" (default when no role label is present).
+func getRoleFromDeployment(deploy *appsv1.Deployment) string {
+	if deploy == nil {
+		return "both"
+	}
+	labels := deploy.Spec.Template.Labels
+	if labels == nil {
+		return "both"
+	}
+	if val, ok := labels["llm-d.ai/role"]; ok {
+		switch val {
+		case "prefill":
+			return "prefill"
+		case "decode":
+			return "decode"
+		default:
+			return "both"
+		}
+	}
+	return "both"
 }
 
 // gpuVendors lists the resource name prefixes for GPU vendors
@@ -790,7 +811,7 @@ func (e *Engine) RunSaturationAnalysis(
 	ctx context.Context,
 	modelID string,
 	modelVAs []llmdVariantAutoscalingV1alpha1.VariantAutoscaling,
-	SaturationConfig interfaces.SaturationScalingConfig,
+	SaturationConfig config.SaturationScalingConfig,
 	k8sClient client.Client,
 ) (map[string]int, *interfaces.ModelSaturationAnalysis, []interfaces.VariantReplicaState, error) {
 	logger := ctrl.LoggerFrom(ctx)
