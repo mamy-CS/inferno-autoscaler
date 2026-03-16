@@ -12,6 +12,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	variantautoscalingv1alpha1 "github.com/llm-d/llm-d-workload-variant-autoscaler/api/v1alpha1"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils"
 )
 
 // VAOption is a functional option for configuring VariantAutoscaling resources.
@@ -113,8 +114,8 @@ func EnsureVariantAutoscalingWithDefaults(
 
 func buildVariantAutoscaling(namespace, name, deploymentName, modelID, accelerator string, cost float64, controllerInstance string, opts ...VAOption) *variantautoscalingv1alpha1.VariantAutoscaling {
 	labels := map[string]string{
-		"test-resource":                          "true",
-		"inference.optimization/acceleratorName": accelerator,
+		"test-resource":            "true",
+		utils.AcceleratorNameLabel: accelerator,
 	}
 	if controllerInstance != "" {
 		labels["wva.llmd.ai/controller-instance"] = controllerInstance
