@@ -108,8 +108,9 @@ export E2E_EVENTUALLY_POLL_QUICK=2
 export E2E_EVENTUALLY_POLL_SLOW=10
 export E2E_EVENTUALLY_POLL_VERY_SLOW=15
 
-# kind-emulator + prometheus-adapter: BeforeSuite probes adapter + external.metrics API before restarting pods.
-# auto (default if unset): restart only if probe fails within E2E_PROM_ADAPTER_PROBE_SEC (default 90).
+# kind-emulator + prometheus-adapter: BeforeSuite probes adapter readiness + `external.metrics.k8s.io/v1beta1` discovery
+# before optionally restarting pods.
+# auto (default if unset): restart only if the probe fails within E2E_PROM_ADAPTER_PROBE_SEC (default 90).
 # true: always delete adapter pods (legacy). false: never restart.
 export RESTART_PROMETHEUS_ADAPTER=auto   # or true / false
 export E2E_PROM_ADAPTER_PROBE_SEC=90
@@ -351,7 +352,7 @@ See [config.go](config.go:1) for the complete list of configuration options.
 | `MaxNumSeqs` | `MAX_NUM_SEQS` | `5` | vLLM batch size (lower = easier to saturate) |
 | `EventuallyStandardSec` | `E2E_EVENTUALLY_STANDARD` | `120` | Default `Eventually` timeout (see bash block above for full set) |
 | `ScaleUpTimeout` | `SCALE_UP_TIMEOUT` | `600` | Longest scale / job waits |
-| (suite) | `RESTART_PROMETHEUS_ADAPTER` | `auto` | `auto` / `true` / `false` — adapter pod restart policy on kind-emulator |
+| (suite) | `RESTART_PROMETHEUS_ADAPTER` | `auto` | adapter pod restart policy on kind-emulator (`auto` probes adapter pod Ready + `external.metrics.k8s.io/v1beta1` discovery; restart only on probe failure) |
 
 Bounded **minimal traffic** (e.g. scale-from-zero trigger job) is documented per spec in code; sustained load belongs in benchmarking, not this suite.
 
@@ -377,7 +378,7 @@ Use this when smoke/full tests fail on **VA reconciliation**, **HPA / desired re
 
 **Things to verify:**
 1. **Prometheus** is scraping model/EPP targets; **`MetricsAvailable`** on the VA in `kubectl describe`.
-2. **`external.metrics.k8s.io`** works when using **`SCALER_BACKEND=prometheus-adapter`**; on kind-emulator try **`RESTART_PROMETHEUS_ADAPTER=true`** if the API is empty after install.
+2. **`external.metrics.k8s.io`** works when using **`SCALER_BACKEND=prometheus-adapter`**; on kind-emulator, the default `auto` mode already probes adapter pod Ready + `external.metrics.k8s.io/v1beta1` discovery. If the API is still empty after install, set **`RESTART_PROMETHEUS_ADAPTER=true`** to force a restart.
 3. **Scale-from-zero:** infra deployed with **`E2E_TESTS_ENABLED=true`** (or **`ENABLE_SCALE_TO_ZERO=true`**) so EPP flow control is on; raise **`E2E_EVENTUALLY_*`** / **`SCALE_UP_TIMEOUT`** if cold start is slow; see **Tier 2** trigger job tunables.
 
 **Debug commands** (adjust `-n` to your llm-d namespace, e.g. `LLMD_NAMESPACE`):
