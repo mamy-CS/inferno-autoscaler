@@ -195,14 +195,14 @@ kubectl apply -f ../../config/samples/
 ### 3. Generate Load
 
 **Option A — Run E2E tests (recommended)**  
-The e2e suite deploys infra, creates resources, generates load, and validates scaling. No manual load tool needed.
+The consolidated e2e suite (`test/e2e/`) exercises infra-only deploy, resource wiring, reconciliation, and deterministic correctness checks. For sustained load or benchmarking, use **Option B** or separate perf workflows — not required for e2e.
 
 ```bash
 # From repo root, after deploying (e.g. make deploy-wva-emulated-on-kind)
 make deploy-e2e-infra   # if not already done
 make test-e2e-smoke    # quick validation
 # or
-make test-e2e-full     # full suite including saturation scaling
+make test-e2e-full     # full suite (`full && !flaky`)
 ```
 
 See [Testing Guide](../../docs/developer-guide/testing.md) and [E2E Test Suite README](../../test/e2e/README.md).
