@@ -228,8 +228,8 @@ deploy_prometheus_stack() {
     
     # Add helm repo
     helm repo add prometheus-community https://prometheus-community.github.io/helm-charts || true
-    if [ "${SKIP_HELM_REPO_UPDATE:-}" = "true" ] || { [ -z "${SKIP_HELM_REPO_UPDATE:-}" ] && [ "${E2E_TESTS_ENABLED:-false}" = "true" ]; }; then
-        log_info "Skipping helm repo update for e2e run (SKIP_HELM_REPO_UPDATE=true)"
+    if [ "${SKIP_HELM_REPO_UPDATE:-}" = "true" ]; then
+        log_info "Skipping helm repo update (SKIP_HELM_REPO_UPDATE=true)"
     else
         helm repo update
     fi

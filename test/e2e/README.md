@@ -117,7 +117,7 @@ export E2E_PROM_ADAPTER_PROBE_SEC=90
 
 ### Optional: faster `deploy/install.sh` for e2e
 
-When **`E2E_TESTS_ENABLED=true`** (as in `make deploy-e2e-infra` / `*-with-setup`), `install.sh` skips **`helm repo update`** by default so setup is faster and more deterministic. To force repo refresh, set **`SKIP_HELM_REPO_UPDATE=false`**.
+`deploy/install.sh` runs **`helm repo update`** by default. To skip (faster but requires existing repo indexes), set **`SKIP_HELM_REPO_UPDATE=true`**.
 
 For infra-only e2e deploys, **`E2E_DEPLOY_WAIT_TIMEOUT`** (default **`120s`**) bounds how long `install.sh` waits for the EPP deployment and inference-gateway deployment to become Available after llm-d Helm apply. Increase if your cluster is slow to pull images.
 

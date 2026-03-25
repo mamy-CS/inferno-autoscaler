@@ -167,7 +167,7 @@ When `E2E_TESTS_ENABLED=true` (or `ENABLE_SCALE_TO_ZERO=true`), the deploy scrip
 
 **Install script tuning (optional, same variables as `deploy/install.sh`):**
 
-- **`SKIP_HELM_REPO_UPDATE`**: When unset and **`E2E_TESTS_ENABLED=true`**, `helm repo update` is skipped during e2e-oriented installs (faster, less network churn). Set to `false` to force a refresh.
+- **`SKIP_HELM_REPO_UPDATE`**: When set to **`true`**, `helm repo update` is skipped during installs (faster, less network churn). Default runs `helm repo update` to refresh repo indexes.
 - **`E2E_DEPLOY_WAIT_TIMEOUT`**: For infra-only e2e deploys (`INFRA_ONLY=true` with `E2E_TESTS_ENABLED=true`), caps the `kubectl wait` for the EPP and inference-gateway deployments (default **`120s`**). Raise it if image pulls rollouts routinely exceed that window.
 
 Alternatively, use the Makefile to deploy infra and run tests in one go:

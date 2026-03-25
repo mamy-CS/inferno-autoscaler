@@ -156,20 +156,12 @@ log_error() {
     exit 1
 }
 
-# For deterministic e2e runs, avoid repeated helm repo index refreshes.
-# This trims setup time and network variance in CI/local smoke runs.
-# Override with SKIP_HELM_REPO_UPDATE=false to force refresh.
+# Helm repo update behavior:
+# - Default: DO NOT skip (`helm repo update` runs)
+# - Opt-in: set `SKIP_HELM_REPO_UPDATE=true` to skip (faster, but requires repo indexes to already exist)
 should_skip_helm_repo_update() {
-    local skip="${SKIP_HELM_REPO_UPDATE:-}"
-    if [ -z "$skip" ] && [ "$E2E_TESTS_ENABLED" = "true" ]; then
-        echo "true"
-        return
-    fi
-    if [ "$skip" = "true" ]; then
-        echo "true"
-    else
-        echo "false"
-    fi
+    local skip="${SKIP_HELM_REPO_UPDATE:-false}"
+    echo "$skip"
 }
 
 # APIService guard: background loop that continuously ensures the

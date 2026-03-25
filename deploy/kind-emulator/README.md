@@ -192,7 +192,7 @@ kubectl port-forward -n llm-d-sim svc/infra-sim-inference-gateway 8000:80
 kubectl apply -f ../../config/samples/
 ```
 
-### 3. Generate Load
+### 3. Run E2E test
 
 **Option A — Run E2E tests (recommended)**  
 The consolidated e2e suite (`test/e2e/`) exercises infra-only deploy, resource wiring, reconciliation, and deterministic correctness checks. For sustained load or benchmarking, use **Option B** or separate perf workflows — not required for e2e.
@@ -206,6 +206,8 @@ make test-e2e-full     # full suite (`full && !flaky`)
 ```
 
 See [Testing Guide](../../docs/developer-guide/testing.md) and [E2E Test Suite README](../../test/e2e/README.md).
+
+### 4. Generate Load
 
 **Option B — Manual load with burst script**  
 Use the script in the e2e fixtures (requires only `curl`; no Python). After port-forwarding the inference gateway or vLLM service to `localhost:8000`:
@@ -221,7 +223,7 @@ export BATCH_SIZE=10
 
 Tune load with `TOTAL_REQUESTS`, `BATCH_SIZE`, and optional `BATCH_SLEEP`, `MAX_TOKENS`, `CURL_TIMEOUT` (see script header).
 
-### 4. Monitor
+### 5. Monitor
 
 ```bash
 # Watch deployments scale
