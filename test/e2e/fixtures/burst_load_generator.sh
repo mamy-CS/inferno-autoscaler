@@ -2,6 +2,10 @@
 # Burst Load Generator Script
 # Keep in sync with hack/burst_load_generator.sh (canonical copy for docs and manual use).
 #
+# Embedded from this path via //go:embed in workload_builder.go (same directory
+# so go:embed resolves reliably in tooling). Benchmark load Jobs only; not used
+# by test/e2e. See workload_builder.go for context.
+#
 # This script generates burst load by sending requests in parallel batches with sleep between batches.
 # This creates queue spikes that are more likely to trigger saturation detection.
 #

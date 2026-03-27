@@ -1,6 +1,6 @@
 #!/bin/sh
 # Burst Load Generator Script
-# Keep in sync with test/e2e/fixtures/scripts/burst_load_generator.sh (e2e embeds that copy).
+# Keep in sync with test/e2e/fixtures/burst_load_generator.sh (e2e embeds that copy).
 #
 # This script generates burst load by sending requests in parallel batches with sleep between batches.
 # This creates queue spikes that are more likely to trigger saturation detection.
