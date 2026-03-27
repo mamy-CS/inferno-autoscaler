@@ -46,6 +46,8 @@ analyzerName: %q
 	saturationTriggerServicePreflightDelay = 5
 	saturationTriggerPreflightTimeoutSec   = 30
 	saturationTriggerRequestTimeoutSec     = 240
+	saturationConfigRestoreMaxRetries      = 5
+	saturationConfigRestoreRetryDelay      = 500 * time.Millisecond
 
 	// Use aggressive V1 thresholds to make bounded traffic (6 fixed requests)
 	// deterministically cross saturation conditions in e2e. This is test-only
@@ -560,7 +562,7 @@ var _ = Describe("Saturation analyzer path and status propagation", Label("full"
 		if cmExistedBefore && cmOriginal != nil {
 			restoreErr := func() error {
 				var lastErr error
-				for i := 0; i < 5; i++ {
+				for i := 0; i < saturationConfigRestoreMaxRetries; i++ {
 					current, getErr := k8sClient.CoreV1().ConfigMaps(cmNamespace).Get(ctx, cmName, metav1.GetOptions{})
 					if getErr != nil {
 						lastErr = getErr
@@ -583,7 +585,7 @@ var _ = Describe("Saturation analyzer path and status propagation", Label("full"
 					if !errors.IsConflict(updateErr) {
 						return updateErr
 					}
-					time.Sleep(500 * time.Millisecond)
+					time.Sleep(saturationConfigRestoreRetryDelay)
 				}
 				return lastErr
 			}()
