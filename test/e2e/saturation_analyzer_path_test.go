@@ -2,8 +2,8 @@ package e2e
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
-	"io"
 	"strings"
 	"time"
 
@@ -20,7 +20,11 @@ import (
 	variantautoscalingv1alpha1 "github.com/llm-d/llm-d-workload-variant-autoscaler/api/v1alpha1"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/config"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/test/e2e/fixtures"
+	testutils "github.com/llm-d/llm-d-workload-variant-autoscaler/test/utils"
 )
+
+//go:embed fixtures/saturation_threshold_trigger.sh
+var saturationThresholdTriggerScript string
 
 // TODO(cleanup): Unify analyzer-path configuration across algorithms
 // (saturation config fields vs queueing-model config presence), then simplify
@@ -116,130 +120,35 @@ func saturationConfigMapNameFromDeployment(dep *appsv1.Deployment) string {
 	return config.SaturationConfigMapName()
 }
 
-// controllerLogsContain checks recent controller-manager logs across all pods for a pattern.
-func controllerLogsContain(ctx context.Context, pattern string, sinceSeconds int64) (bool, string, error) {
-	podList, err := k8sClient.CoreV1().Pods(cfg.WVANamespace).List(ctx, metav1.ListOptions{
-		LabelSelector: "control-plane=controller-manager",
-	})
-	if err != nil {
-		return false, "", err
-	}
-	if len(podList.Items) == 0 {
-		return false, "", fmt.Errorf("no controller-manager pods found")
-	}
-	var combined strings.Builder
-	for _, pod := range podList.Items {
-		opts := &corev1.PodLogOptions{SinceSeconds: &sinceSeconds}
-		stream, streamErr := k8sClient.CoreV1().Pods(cfg.WVANamespace).GetLogs(pod.Name, opts).Stream(ctx)
-		if streamErr != nil {
-			return false, "", streamErr
-		}
-		func() {
-			defer func() {
-				_ = stream.Close()
-			}()
-			raw, readErr := io.ReadAll(stream)
-			if readErr != nil {
-				err = readErr
-				return
-			}
-			combined.WriteString("\n--- pod: ")
-			combined.WriteString(pod.Name)
-			combined.WriteString(" ---\n")
-			combined.Write(raw)
-		}()
-		if err != nil {
-			return false, "", err
-		}
-	}
-	logs := combined.String()
-	return strings.Contains(logs, pattern), logs, nil
-}
-
-// expectAnalyzerPathLog waits until a specific analyzer path marker appears for the test model.
+// expectAnalyzerPathLog is a Ginkgo helper: it Eventually-waits until WVA
+// controller-manager logs contain both the analyzer path marker for mode and
+// modelID. It uses testutils.PodLogsLabelSelectorContain for log collection.
 func expectAnalyzerPathLog(mode, modelID string) {
+	GinkgoHelper()
+	const controllerManagerLabel = "control-plane=controller-manager"
 	pattern := fmt.Sprintf("Processing model (%s)", mode)
 	Eventually(func(g Gomega) {
-		ok, logs, logErr := controllerLogsContain(ctx, pattern, 120)
+		ok, logs, logErr := testutils.PodLogsLabelSelectorContain(ctx, k8sClient, cfg.WVANamespace, controllerManagerLabel, pattern, 120)
 		g.Expect(logErr).NotTo(HaveOccurred())
 		g.Expect(ok && strings.Contains(logs, modelID)).To(BeTrue())
 	}, time.Duration(cfg.EventuallyLongSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
 }
 
 // createSaturationThresholdTriggerJob creates a bounded request job to cross saturation thresholds deterministically.
+// The shell logic lives in fixtures/saturation_threshold_trigger.sh (//go:embed above).
 func createSaturationThresholdTriggerJob(name, namespace, targetService, modelID string, targetPort int, numRequests int, maxTokens int) *batchv1.Job {
 	backoffLimit := int32(1)
-	script := fmt.Sprintf(`#!/bin/sh
-set -eu
-echo "Saturation threshold trigger job starting..."
-echo "Sending %d requests to %s:%d for model %s (max_tokens=%d)"
-
-MAX_RETRIES=%d
-RETRY_DELAY=%d
-READY=false
-for i in $(seq 1 $MAX_RETRIES); do
-  HTTP_CODE=$(curl -s -o /dev/null -w "%%{http_code}" --max-time %d "http://%s:%d/v1/models" || true)
-  if [ "$HTTP_CODE" = "200" ]; then
-    echo "Service preflight passed on attempt $i"
-    READY=true
-    break
-  fi
-  echo "Service preflight attempt $i failed (HTTP $HTTP_CODE), retrying in ${RETRY_DELAY}s..."
-  sleep $RETRY_DELAY
-done
-if [ "$READY" != "true" ]; then
-  echo "Service preflight failed after $MAX_RETRIES attempts"
-  exit 1
-fi
-
-SENT=0
-SUCCESS=0
-FAILED=0
-while [ $SENT -lt %d ]; do
-  echo "Sending request $((SENT + 1)) / %d..."
-  RESPONSE=$(curl -s -w "\n%%{http_code}" --max-time %d -X POST "http://%s:%d/v1/completions" \
-    -H "Content-Type: application/json" \
-    -d '{"model":"%s","prompt":"Deterministic saturation threshold crossing prompt","max_tokens":%d}' 2>&1)
-  HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-
-  if [ "$HTTP_CODE" = "200" ]; then
-    SUCCESS=$((SUCCESS + 1))
-    echo "Request $((SENT + 1)) succeeded (HTTP $HTTP_CODE)"
-  else
-    FAILED=$((FAILED + 1))
-    echo "Request $((SENT + 1)) failed (HTTP $HTTP_CODE)"
-    echo "Response body:"
-    echo "$RESPONSE" | sed '$d'
-  fi
-
-  SENT=$((SENT + 1))
-done
-
-echo "Saturation threshold trigger job completed: sent=$SENT, success=$SUCCESS, failed=$FAILED"
-if [ $SUCCESS -gt 0 ]; then
-  exit 0
-fi
-exit 1
-`,
-		numRequests,
-		targetService,
-		targetPort,
-		modelID,
-		maxTokens,
-		saturationTriggerServicePreflightTries,
-		saturationTriggerServicePreflightDelay,
-		saturationTriggerPreflightTimeoutSec,
-		targetService,
-		targetPort,
-		numRequests,
-		numRequests,
-		saturationTriggerRequestTimeoutSec,
-		targetService,
-		targetPort,
-		modelID,
-		maxTokens,
-	)
-
+	env := []corev1.EnvVar{
+		{Name: "NUM_REQUESTS", Value: fmt.Sprintf("%d", numRequests)},
+		{Name: "TARGET_SERVICE", Value: targetService},
+		{Name: "TARGET_PORT", Value: fmt.Sprintf("%d", targetPort)},
+		{Name: "MODEL_ID", Value: modelID},
+		{Name: "MAX_TOKENS", Value: fmt.Sprintf("%d", maxTokens)},
+		{Name: "MAX_RETRIES", Value: fmt.Sprintf("%d", saturationTriggerServicePreflightTries)},
+		{Name: "RETRY_DELAY", Value: fmt.Sprintf("%d", saturationTriggerServicePreflightDelay)},
+		{Name: "PREFLIGHT_TIMEOUT", Value: fmt.Sprintf("%d", saturationTriggerPreflightTimeoutSec)},
+		{Name: "REQUEST_TIMEOUT", Value: fmt.Sprintf("%d", saturationTriggerRequestTimeoutSec)},
+	}
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -254,7 +163,8 @@ exit 1
 						{
 							Name:    "curl-threshold-trigger",
 							Image:   "quay.io/curl/curl:8.11.1",
-							Command: []string{"sh", "-c", script},
+							Command: []string{"sh", "-c", saturationThresholdTriggerScript},
+							Env:     env,
 						},
 					},
 				},
@@ -265,6 +175,7 @@ exit 1
 
 // runThresholdTriggerJob creates and waits for a bounded trigger job to complete.
 func runThresholdTriggerJob(ctx context.Context, namespace, targetService, modelID string, targetPort int, numRequests int, maxTokens int) {
+	GinkgoHelper()
 	By("Waiting for target service endpoints to become ready before triggering requests")
 	Eventually(func(g Gomega) {
 		eps, err := k8sClient.CoreV1().Endpoints(namespace).Get(ctx, targetService, metav1.GetOptions{})
@@ -282,6 +193,8 @@ func runThresholdTriggerJob(ctx context.Context, namespace, targetService, model
 	_, err := k8sClient.BatchV1().Jobs(namespace).Create(ctx, job, metav1.CreateOptions{})
 	Expect(err).NotTo(HaveOccurred(), "failed creating threshold trigger job")
 	DeferCleanup(func() {
+		// Explicitly use background propagation so Job child pods are garbage-collected
+		// during e2e cleanup (avoids preserved-pod warnings in test output).
 		propagation := metav1.DeletePropagationBackground
 		_ = k8sClient.BatchV1().Jobs(namespace).Delete(ctx, jobName, metav1.DeleteOptions{
 			PropagationPolicy: &propagation,
@@ -402,6 +315,7 @@ func runThresholdTriggerJob(ctx context.Context, namespace, targetService, model
 
 // waitForPositiveDesiredAllocation logs VA progress and waits for a positive desired replica recommendation.
 func waitForPositiveDesiredAllocation(ctx context.Context, namespace, vaName string) {
+	GinkgoHelper()
 	Eventually(func(g Gomega) {
 		va := &variantautoscalingv1alpha1.VariantAutoscaling{}
 		getErr := crClient.Get(ctx, client.ObjectKey{Name: vaName, Namespace: namespace}, va)
@@ -442,6 +356,7 @@ func waitForPositiveDesiredAllocation(ctx context.Context, namespace, vaName str
 
 // expectNoScaleUpAboveBaseline asserts that desired replicas do not exceed baseline for a bounded window.
 func expectNoScaleUpAboveBaseline(ctx context.Context, namespace, vaName string, baseline int32, windowSec int) {
+	GinkgoHelper()
 	Consistently(func(g Gomega) {
 		va := &variantautoscalingv1alpha1.VariantAutoscaling{}
 		getErr := crClient.Get(ctx, client.ObjectKey{Name: vaName, Namespace: namespace}, va)
@@ -476,6 +391,7 @@ func expectNoScaleUpAboveBaseline(ctx context.Context, namespace, vaName string,
 // before the bounded threshold trigger runs. This avoids firing traffic before the control
 // loop and metrics pipeline have any observable signal for this VA.
 func waitForSaturationInfraSignal(ctx context.Context, namespace, vaName string) {
+	GinkgoHelper()
 	Eventually(func(g Gomega) {
 		va := &variantautoscalingv1alpha1.VariantAutoscaling{}
 		getErr := crClient.Get(ctx, client.ObjectKey{Name: vaName, Namespace: namespace}, va)

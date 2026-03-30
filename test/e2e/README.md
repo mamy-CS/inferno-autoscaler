@@ -264,7 +264,7 @@ ginkgo -v --label-filter="smoke" ./test/e2e/
    - Run a bounded V1 threshold-crossing request job (no sustained load)
    - Bounded deterministic assertions only (no benchmark/load criteria)
 
-   **Threshold-crossing tunables** (`createSaturationThresholdTriggerJob` in [`saturation_analyzer_path_test.go`](saturation_analyzer_path_test.go)):
+   **Threshold-crossing tunables** ([`createSaturationThresholdTriggerJob`](saturation_analyzer_path_test.go); shell in [`fixtures/saturation_threshold_trigger.sh`](fixtures/saturation_threshold_trigger.sh), embedded with `//go:embed`):
 
    | Parameter | Current value | Role |
    |-----------|---------------|------|
