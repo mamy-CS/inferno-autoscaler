@@ -26,6 +26,7 @@ import (
 // refactor may move load-only code and the embedded script into a dedicated
 // package such as test/loadgen for clearer ownership. The script lives in this
 // directory (not fixtures/scripts/) so //go:embed matches reliably for vet/gopls.
+// hack/burst_load_generator.sh is a symlink to this file for docs and CLI use.
 
 //go:embed burst_load_generator.sh
 var burstLoadGeneratorScript string
