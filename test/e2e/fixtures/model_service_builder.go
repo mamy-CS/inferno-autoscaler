@@ -14,7 +14,9 @@ import (
 	"k8s.io/utils/ptr"
 )
 
-// CreateModelService creates a model service deployment. Fails if the deployment already exists.
+// CreateModelService creates the model-server Deployment only (name + "-decode").
+// It does not create a Kubernetes Service; callers must use CreateService or EnsureService
+// (typically naming the Service name + "-service") to expose the deployment.
 func CreateModelService(ctx context.Context, k8sClient *kubernetes.Clientset, namespace, name, poolName, modelID string, useSimulator bool, maxNumSeqs int) error {
 	deployment := buildModelServiceDeployment(namespace, name, poolName, modelID, useSimulator, maxNumSeqs)
 	_, err := k8sClient.AppsV1().Deployments(namespace).Create(ctx, deployment, metav1.CreateOptions{})
@@ -31,7 +33,8 @@ func DeleteModelService(ctx context.Context, k8sClient *kubernetes.Clientset, na
 	return nil
 }
 
-// EnsureModelService creates or replaces the model service deployment (idempotent for test setup).
+// EnsureModelService creates or replaces the model-server Deployment only (name + "-decode").
+// It does not create a Kubernetes Service; pair with EnsureService for a ClusterIP Service.
 func EnsureModelService(ctx context.Context, k8sClient *kubernetes.Clientset, namespace, name, poolName, modelID string, useSimulator bool, maxNumSeqs int) error {
 	appLabel := name + "-decode"
 	deploymentName := appLabel

@@ -50,8 +50,6 @@ analyzerName: %q
 	saturationTriggerServicePreflightDelay = 5
 	saturationTriggerPreflightTimeoutSec   = 30
 	saturationTriggerRequestTimeoutSec     = 240
-	saturationConfigRestoreMaxRetries      = 5
-	saturationConfigRestoreRetryDelay      = 500 * time.Millisecond
 
 	// Use aggressive V1 thresholds to make bounded traffic (6 fixed requests)
 	// deterministically cross saturation conditions in e2e. This is test-only
@@ -419,9 +417,12 @@ var _ = Describe("Saturation analyzer path and status propagation", Label("full"
 	const (
 		poolName     = "saturation-path-pool"
 		modelSvcName = "saturation-path-ms"
-		serviceName  = modelSvcName + "-service"
-		smName       = modelSvcName + "-monitor"
-		vaName       = "saturation-path-va"
+		// modelDecodeDeployment is the Deployment name fixtures.CreateModelService creates
+		// (name + "-decode"), matching llm-d model-service decode pods / labels.
+		modelDecodeDeployment = modelSvcName + "-decode"
+		serviceName           = modelSvcName + "-service"
+		smName                = modelSvcName + "-monitor"
+		vaName                = "saturation-path-va"
 	)
 
 	var (
@@ -453,16 +454,17 @@ var _ = Describe("Saturation analyzer path and status propagation", Label("full"
 		}
 
 		By("Creating model service + service + ServiceMonitor for saturation path test")
-		err = fixtures.EnsureModelService(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName, poolName, modelID, cfg.UseSimulator, cfg.MaxNumSeqs)
+		_ = fixtures.DeleteModelService(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName) // best-effort; CreateModelService fails if deployment exists
+		err = fixtures.CreateModelService(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName, poolName, modelID, cfg.UseSimulator, cfg.MaxNumSeqs)
 		Expect(err).NotTo(HaveOccurred())
-		err = fixtures.EnsureService(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName, modelSvcName+"-decode", 8000)
+		err = fixtures.EnsureService(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName, modelDecodeDeployment, 8000)
 		Expect(err).NotTo(HaveOccurred())
-		err = fixtures.EnsureServiceMonitor(ctx, crClient, cfg.MonitoringNS, cfg.LLMDNamespace, modelSvcName, modelSvcName+"-decode")
+		err = fixtures.EnsureServiceMonitor(ctx, crClient, cfg.MonitoringNS, cfg.LLMDNamespace, modelSvcName, modelDecodeDeployment)
 		Expect(err).NotTo(HaveOccurred())
 
 		By("Waiting for model service to be ready")
 		Eventually(func(g Gomega) {
-			dep, depErr := k8sClient.AppsV1().Deployments(cfg.LLMDNamespace).Get(ctx, modelSvcName+"-decode", metav1.GetOptions{})
+			dep, depErr := k8sClient.AppsV1().Deployments(cfg.LLMDNamespace).Get(ctx, modelDecodeDeployment, metav1.GetOptions{})
 			g.Expect(depErr).NotTo(HaveOccurred())
 			g.Expect(dep.Status.ReadyReplicas).To(BeNumerically(">=", 1))
 		}, time.Duration(cfg.PodReadyTimeout)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
@@ -470,7 +472,7 @@ var _ = Describe("Saturation analyzer path and status propagation", Label("full"
 		By("Creating VA for dedicated saturation analyzer path model")
 		err = fixtures.EnsureVariantAutoscalingWithDefaults(
 			ctx, crClient, cfg.LLMDNamespace, vaName,
-			modelSvcName+"-decode", modelID, cfg.AcceleratorType, cfg.ControllerInstance,
+			modelDecodeDeployment, modelID, cfg.AcceleratorType, cfg.ControllerInstance,
 		)
 		Expect(err).NotTo(HaveOccurred())
 	})
@@ -478,37 +480,18 @@ var _ = Describe("Saturation analyzer path and status propagation", Label("full"
 	AfterAll(func() {
 		By("Restoring saturation ConfigMap state")
 		if cmExistedBefore && cmOriginal != nil {
-			restoreErr := func() error {
-				var lastErr error
-				for i := 0; i < saturationConfigRestoreMaxRetries; i++ {
-					current, getErr := k8sClient.CoreV1().ConfigMaps(cmNamespace).Get(ctx, cmName, metav1.GetOptions{})
-					if getErr != nil {
-						lastErr = getErr
-						if errors.IsNotFound(getErr) {
-							restored := cmOriginal.DeepCopy()
-							restored.ResourceVersion = ""
-							_, createErr := k8sClient.CoreV1().ConfigMaps(cmNamespace).Create(ctx, restored, metav1.CreateOptions{})
-							return createErr
-						}
-						continue
-					}
-
-					// Preserve live metadata/resourceVersion; only restore test-mutated data.
-					current.Data = cloneStringMap(cmOriginal.Data)
-					_, updateErr := k8sClient.CoreV1().ConfigMaps(cmNamespace).Update(ctx, current, metav1.UpdateOptions{})
-					if updateErr == nil {
-						return nil
-					}
-					lastErr = updateErr
-					if !errors.IsConflict(updateErr) {
-						return updateErr
-					}
-					time.Sleep(saturationConfigRestoreRetryDelay)
-				}
-				return lastErr
-			}()
-			if restoreErr != nil {
-				GinkgoWriter.Printf("Warning: failed to restore saturation configmap %s: %v\n", cmName, restoreErr)
+			// Replace the object in two steps (delete + create) instead of updating in place.
+			// That avoids resourceVersion conflict retries; a brief gap without the ConfigMap
+			// during suite teardown is acceptable for e2e.
+			propagation := metav1.DeletePropagationBackground
+			if err := k8sClient.CoreV1().ConfigMaps(cmNamespace).Delete(ctx, cmName, metav1.DeleteOptions{
+				PropagationPolicy: &propagation,
+			}); err != nil && !errors.IsNotFound(err) {
+				GinkgoWriter.Printf("Warning: failed to delete saturation configmap %s before restore: %v\n", cmName, err)
+			}
+			toCreate := saturationConfigMapForRecreate(cmOriginal)
+			if _, err := k8sClient.CoreV1().ConfigMaps(cmNamespace).Create(ctx, toCreate, metav1.CreateOptions{}); err != nil {
+				GinkgoWriter.Printf("Warning: failed to recreate saturation configmap %s: %v\n", cmName, err)
 			}
 		} else {
 			_ = k8sClient.CoreV1().ConfigMaps(cmNamespace).Delete(ctx, cmName, metav1.DeleteOptions{})
@@ -522,7 +505,7 @@ var _ = Describe("Saturation analyzer path and status propagation", Label("full"
 			ObjectMeta: metav1.ObjectMeta{Name: smName, Namespace: cfg.MonitoringNS},
 		})
 		_ = k8sClient.CoreV1().Services(cfg.LLMDNamespace).Delete(ctx, serviceName, metav1.DeleteOptions{})
-		_ = k8sClient.AppsV1().Deployments(cfg.LLMDNamespace).Delete(ctx, modelSvcName+"-decode", metav1.DeleteOptions{})
+		_ = k8sClient.AppsV1().Deployments(cfg.LLMDNamespace).Delete(ctx, modelDecodeDeployment, metav1.DeleteOptions{})
 	})
 
 	It("uses V2 path when analyzerName is saturation", func() {
@@ -683,14 +666,17 @@ func upsertSaturationConfigEntry(ctx context.Context, cmNamespace, cmName, key, 
 	return err
 }
 
-// cloneStringMap returns a defensive copy of a string map.
-func cloneStringMap(src map[string]string) map[string]string {
-	if src == nil {
-		return nil
-	}
-	dst := make(map[string]string, len(src))
-	for k, v := range src {
-		dst[k] = v
-	}
-	return dst
+// saturationConfigMapForRecreate returns a copy of orig suitable for Create after Delete,
+// with apiserver-owned fields cleared so admission succeeds.
+func saturationConfigMapForRecreate(orig *corev1.ConfigMap) *corev1.ConfigMap {
+	cm := orig.DeepCopy()
+	cm.ResourceVersion = ""
+	cm.UID = ""
+	cm.Generation = 0
+	cm.CreationTimestamp = metav1.Time{}
+	cm.DeletionTimestamp = nil
+	cm.DeletionGracePeriodSeconds = nil
+	cm.ManagedFields = nil
+	cm.Finalizers = nil
+	return cm
 }
