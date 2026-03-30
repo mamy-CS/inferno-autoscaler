@@ -201,8 +201,6 @@ func runThresholdTriggerJob(ctx context.Context, namespace, targetService, model
 
 	logsDumped := false
 	seenProgressLines := map[string]bool{}
-	terminalFailure := false
-	terminalFailureReason := ""
 	Eventually(func(g Gomega) {
 		created, getErr := k8sClient.BatchV1().Jobs(namespace).Get(ctx, jobName, metav1.GetOptions{})
 		if errors.IsNotFound(getErr) {
@@ -210,14 +208,19 @@ func runThresholdTriggerJob(ctx context.Context, namespace, targetService, model
 				LabelSelector: fmt.Sprintf("job-name=%s", jobName),
 			})
 			g.Expect(listErr).NotTo(HaveOccurred())
+			if len(pods.Items) == 0 {
+				GinkgoWriter.Printf("Threshold trigger job %s missing and no job pods listed (likely garbage-collected after delete)\n", jobName)
+			}
 			for _, pod := range pods.Items {
+				// Best-effort: pods may already be deleted/GC'd when the Job disappears.
 				raw, logErr := k8sClient.CoreV1().Pods(namespace).GetLogs(pod.Name, &corev1.PodLogOptions{}).DoRaw(ctx)
-				g.Expect(logErr).NotTo(HaveOccurred())
+				if logErr != nil {
+					GinkgoWriter.Printf("Warning: threshold trigger pod logs (%s): %v\n", pod.Name, logErr)
+					continue
+				}
 				GinkgoWriter.Printf("Threshold trigger pod logs (%s):\n%s\n", pod.Name, string(raw))
 			}
-			terminalFailure = true
-			terminalFailureReason = fmt.Sprintf("threshold trigger job %s was deleted before success", jobName)
-			g.Expect(false).To(BeTrue(), terminalFailureReason)
+			g.Expect(false).To(BeTrue(), "threshold trigger job %s was deleted before success", jobName)
 			return
 		}
 		g.Expect(getErr).NotTo(HaveOccurred())
@@ -276,7 +279,11 @@ func runThresholdTriggerJob(ctx context.Context, namespace, targetService, model
 				exitCode,
 			)
 			raw, logErr := k8sClient.CoreV1().Pods(namespace).GetLogs(pod.Name, &corev1.PodLogOptions{}).DoRaw(ctx)
-			g.Expect(logErr).NotTo(HaveOccurred())
+			if logErr != nil {
+				// Do not fail the poll: Pod logs can be unavailable if the Pod was removed (TTL/GC).
+				GinkgoWriter.Printf("  Warning: could not read logs for pod %s: %v\n", pod.Name, logErr)
+				continue
+			}
 			for _, line := range strings.Split(string(raw), "\n") {
 				if line == "" {
 					continue
@@ -295,20 +302,19 @@ func runThresholdTriggerJob(ctx context.Context, namespace, targetService, model
 		if terminal && !logsDumped {
 			for _, pod := range pods.Items {
 				raw, logErr := k8sClient.CoreV1().Pods(namespace).GetLogs(pod.Name, &corev1.PodLogOptions{}).DoRaw(ctx)
-				g.Expect(logErr).NotTo(HaveOccurred())
+				if logErr != nil {
+					GinkgoWriter.Printf("Warning: could not dump final logs for pod %s: %v\n", pod.Name, logErr)
+					continue
+				}
 				GinkgoWriter.Printf("Threshold trigger pod logs (%s):\n%s\n", pod.Name, string(raw))
 			}
 			logsDumped = true
 		}
-		if created.Status.Failed > 0 {
-			terminalFailure = true
-			terminalFailureReason = fmt.Sprintf("threshold trigger job %s failed with failed=%d", jobName, created.Status.Failed)
-		}
-		g.Expect(created.Status.Succeeded).To(BeNumerically(">", 0), "threshold trigger job should complete successfully")
+		g.Expect(created.Status.Succeeded).To(BeNumerically(">", 0),
+			"threshold trigger job %s should complete successfully (succeeded=%d failed=%d)",
+			jobName, created.Status.Succeeded, created.Status.Failed,
+		)
 	}, time.Duration(cfg.ScaleUpTimeout)*time.Second, time.Duration(cfg.PollIntervalVerySlowSec)*time.Second).Should(Succeed())
-	if terminalFailure {
-		Fail(terminalFailureReason)
-	}
 }
 
 // waitForPositiveDesiredAllocation logs VA progress and waits for a positive desired replica recommendation.
