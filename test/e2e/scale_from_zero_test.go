@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -135,7 +136,7 @@ func cleanupScaleFromZeroResources() {
 
 // Scale-from-zero test validates that the WVA controller correctly detects pending requests
 // and scales up deployments from zero replicas. Requires GIE queuing (ENABLE_EXPERIMENTAL_FLOW_CONTROL_LAYER
-// on EPP and an InferenceObjective); deploy with E2E_TESTS_ENABLED=true or ENABLE_SCALE_TO_ZERO=true.
+// on EPP from install when E2E_TESTS_ENABLED=true) and an InferenceObjective (applied below in BeforeAll).
 // On platforms without the HPAScaleToZero feature gate (e.g. OpenShift), set SCALER_BACKEND=keda
 // so the test uses a KEDA ScaledObject (which supports minReplicas=0) instead of a native HPA.
 var _ = Describe("Scale-From-Zero Feature", Serial, Label("full"), Ordered, func() {
@@ -196,6 +197,20 @@ var _ = Describe("Scale-From-Zero Feature", Serial, Label("full"), Ordered, func
 			}
 			g.Expect(hasReadyPod).To(BeTrue(), "At least one EPP pod should be ready")
 		}).Should(Succeed(), "EPP pods should be ready")
+
+		By("Applying InferenceObjective e2e-default for GIE queuing (if API is available)")
+		poolRefName := cfg.PoolName
+		if poolRefName == "" {
+			poolRefName = strings.TrimSuffix(eppServiceName, "-epp")
+		}
+		ioApplied, errIO := fixtures.EnsureInferenceObjective(ctx, dynamicClient, cfg.LLMDNamespace, poolRefName)
+		Expect(errIO).NotTo(HaveOccurred(), "EnsureInferenceObjective should not return a hard error")
+		if !ioApplied {
+			Skip("InferenceObjective API not available on cluster; scale-from-zero requires inference.networking.x-k8s.io InferenceObjective")
+		}
+		DeferCleanup(func() {
+			_ = fixtures.DeleteInferenceObjective(context.Background(), dynamicClient, cfg.LLMDNamespace)
+		})
 
 		By("Creating model service deployment with 0 initial replicas")
 		// Create deployment with 0 replicas using the fixture

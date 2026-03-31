@@ -92,8 +92,10 @@ DEPLOY_PROMETHEUS=${DEPLOY_PROMETHEUS:-true}
 DEPLOY_WVA=${DEPLOY_WVA:-true}
 DEPLOY_LLM_D=${DEPLOY_LLM_D:-true}
 DEPLOY_PROMETHEUS_ADAPTER=${DEPLOY_PROMETHEUS_ADAPTER:-true}
-DEPLOY_VA=${DEPLOY_VA:-true}
-DEPLOY_HPA=${DEPLOY_HPA:-true}
+# Infra-first: chart-managed VariantAutoscaling / HPA are opt-in (e2e and operators
+# typically create their own CRs). Set DEPLOY_VA=true and DEPLOY_HPA=true for a demo stack.
+DEPLOY_VA=${DEPLOY_VA:-false}
+DEPLOY_HPA=${DEPLOY_HPA:-false}
 HPA_STABILIZATION_SECONDS=${HPA_STABILIZATION_SECONDS:-240}
 # HPA minReplicas: 0 enables scale-to-zero (requires HPAScaleToZero feature gate)
 # Default to 1 for safety; set to 0 for scale-to-zero testing
@@ -251,8 +253,8 @@ Environment Variables:
   DEPLOY_WVA                   Deploy WVA controller (default: true)
   DEPLOY_LLM_D                 Deploy llm-d infrastructure (default: true)
   DEPLOY_PROMETHEUS_ADAPTER    Deploy Prometheus Adapter (default: true)
-  DEPLOY_VA                    Deploy VariantAutoscaling (default: true)
-  DEPLOY_HPA                   Deploy HPA (default: true)
+  DEPLOY_VA                    Deploy VariantAutoscaling via chart (default: false)
+  DEPLOY_HPA                   Deploy HPA via chart (default: false)
   HPA_STABILIZATION_SECONDS    HPA stabilization window in seconds (default: 240)
   HPA_MIN_REPLICAS             HPA minReplicas (default: 1, set to 0 for scale-to-zero)
   INFRA_ONLY                   Deploy only infrastructure (default: false, same as --infra-only flag)
@@ -1067,9 +1069,9 @@ deploy_llm_d_infrastructure() {
         fi
     fi
 
-    # Deploy InferenceObjective for GIE queuing when flow control is enabled (scale-from-zero / e2e).
-    # Enables gateway-level queuing so inference_extension_flow_control_queue_size is populated.
-    if [ "$ENABLE_SCALE_TO_ZERO" == "true" ] || [ "$E2E_TESTS_ENABLED" == "true" ]; then
+    # Deploy InferenceObjective for GIE queuing when flow control is enabled (scale-from-zero).
+    # E2E applies e2e-default from Go (test/e2e/fixtures) so tests do not depend on install.sh for this CR.
+    if [ "$E2E_TESTS_ENABLED" != "true" ] && [ "$ENABLE_SCALE_TO_ZERO" == "true" ]; then
         if kubectl get crd inferenceobjectives.inference.networking.x-k8s.io &>/dev/null; then
             local infobj_file="${WVA_PROJECT}/deploy/inference-objective-e2e.yaml"
             if [ -f "$infobj_file" ]; then

@@ -27,6 +27,8 @@ E2E_MONITORING_NAMESPACE    ?= workload-variant-autoscaler-monitoring
 E2E_EMULATED_LLMD_NAMESPACE ?= llm-d-sim
 
 # Flags for deploy/install.sh installation script
+# Full e2e / CI-style cluster infra (WVA + llm-d, no chart VA/HPA): prefer `make deploy-e2e-infra`
+# (wraps ./deploy/install.sh with INFRA_ONLY=true; set ENVIRONMENT=kubernetes|openshift|kind-emulator).
 CREATE_CLUSTER ?= false
 DEPLOY_LLM_D ?= true
 DELETE_CLUSTER ?= false
