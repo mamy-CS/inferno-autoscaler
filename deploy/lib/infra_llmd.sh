@@ -369,12 +369,33 @@ deploy_llm_d_infrastructure() {
     # separately using the local chart (supports dev/test of chart changes).
     # The helmfile's WVA release uses the published OCI chart which may not
     # have the latest fixes and uses KIND-specific defaults (e.g. monitoringNamespace).
-    local helmfile_selector=""
+    local -a helmfile_selector_exprs=()
     if [ "$DEPLOY_WVA" == "true" ]; then
-      helmfile_selector="--selector kind!=autoscaling"
+      helmfile_selector_exprs+=("kind!=autoscaling")
       log_info "Skipping WVA in helmfile (will be deployed separately from local chart)"
     fi
-    helmfile apply -e $GATEWAY_PROVIDER -n ${LLMD_NS} $helmfile_selector
+    if [ "$E2E_TESTS_ENABLED" = "true" ] && [ "$INFRA_ONLY" = "true" ]; then
+      # E2E infra-only tests create scenario-specific modelservice workloads
+      # themselves. Skip the default llm-d-modelservice release so baseline
+      # infrastructure is clean and we avoid create-then-delete churn.
+      helmfile_selector_exprs+=("chart!=llm-d-modelservice")
+      log_info "E2E infra-only mode: skipping llm-d-modelservice release in helmfile"
+    fi
+    local selector_csv=""
+    if [ "${#helmfile_selector_exprs[@]}" -gt 0 ]; then
+      selector_csv=$(IFS=,; echo "${helmfile_selector_exprs[*]}")
+      log_info "helmfile selector: $selector_csv"
+      helmfile apply -e "$GATEWAY_PROVIDER" -n "${LLMD_NS}" --selector "$selector_csv"
+    else
+      log_info "helmfile selector: (none)"
+      helmfile apply -e "$GATEWAY_PROVIDER" -n "${LLMD_NS}"
+    fi
+
+    if [ "$E2E_TESTS_ENABLED" = "true" ] && [ "$INFRA_ONLY" = "true" ]; then
+      if helm list -n "$LLMD_NS" --short 2>/dev/null | grep -q '^ms-'; then
+        log_warning "Modelservice release still present in $LLMD_NS despite e2e selector; tests may need extra cleanup"
+      fi
+    fi
 
     # Post-deploy: align the WVA vllm-service selector and ServiceMonitor to match
     # the actual pod labels. The llm-d-modelservice chart sets pod labels from

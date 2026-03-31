@@ -218,6 +218,13 @@ source "${_wva_deploy_lib}/kube_like_adapter.sh"
 # Apply llm-d infrastructure fixes for Kind emulated clusters - e.g., remove prefill deployments, remove decode deployments if tests are enabled
 apply_llm_d_infrastructure_fixes() {
     log_info "Applying llm-d infrastructure fixes for KIND emulator..."
+    # Skip cleanup when modelservice release is not installed (e.g., e2e infra-only
+    # path now excludes it via helmfile selector).
+    if ! helm list -n "$LLMD_NS" --short 2>/dev/null | grep -q '^ms-'; then
+        log_info "No llm-d modelservice release detected in $LLMD_NS; skipping prefill/decode cleanup"
+        return
+    fi
+
     # Delete prefill deployment
     # TODO: remove once WVA supports both prefill and decode
     log_info "Deleting prefill deployments..."
