@@ -229,20 +229,20 @@ func (e *Engine) processInactiveVariant(ctx context.Context, deployments map[str
 		return nil
 	}
 
-	// Find target EPP for metrics collection
-	pool, err := e.Datastore.PoolGetFromLabels(labels)
+	// Find target EPP for metrics collection in the same namespace as the VA
+	pool, err := e.Datastore.PoolGetFromLabels(va.Namespace, labels)
 	if err != nil {
-		logger.Error(err, "Error finding target EPP", "variant", va.Name, "target VA model", va.Spec.ModelID)
+		logger.Error(err, "Error finding target EPP", "variant", va.Name, "namespace", va.Namespace, "target VA model", va.Spec.ModelID)
 		return err
 	}
 
 	// Use EPP source from registry
-	eppSource := e.Datastore.PoolGetMetricsSource(pool.Name)
+	eppSource := e.Datastore.PoolGetMetricsSource(pool.Namespace + "/" + pool.Name)
 	if eppSource == nil {
 		logger.Info("Scale-from-zero: skipping VA, EPP metrics source not found in datastore",
 			"va", va.Name,
 			"namespace", va.Namespace,
-			"pool", pool.Name)
+			"pool", pool.Namespace+"/"+pool.Name)
 		return errors.New("endpointpicker metrics source not found in datastore")
 	}
 
