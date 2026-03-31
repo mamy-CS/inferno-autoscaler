@@ -298,6 +298,19 @@ test-benchmark-with-setup: deploy-e2e-infra test-benchmark
 lint: golangci-lint ## Run golangci-lint linter
 	$(GOLANGCI_LINT) run
 
+.PHONY: lint-deploy-scripts
+lint-deploy-scripts: ## Run bash -n for deploy/install.sh and deploy/lib/*.sh
+	@echo "Syntax-checking deploy shell scripts..."
+	@bash -n deploy/install.sh
+	@for script in deploy/lib/*.sh; do bash -n "$$script"; done
+	@echo "deploy script syntax OK"
+
+.PHONY: smoke-deploy-scripts
+smoke-deploy-scripts: lint-deploy-scripts ## Non-interactive deploy script smoke check (source order + arg parsing)
+	@echo "Running deploy script smoke check..."
+	@SKIP_CHECKS=true E2E_TESTS_ENABLED=true INSTALL_GATEWAY_CTRLPLANE=true ENVIRONMENT=kubernetes ./deploy/install.sh --help >/dev/null
+	@echo "deploy script smoke OK"
+
 .PHONY: lint-fix
 lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
 	$(GOLANGCI_LINT) run --fix

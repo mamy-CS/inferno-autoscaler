@@ -92,7 +92,7 @@ check_specific_prerequisites() {
     
     # Check for required tools (including Kubernetes-specific ones)
     for tool in "${REQUIRED_TOOLS[@]}"; do
-        if ! command -v $tool &> /dev/null; then
+        if ! command -v "$tool" &> /dev/null; then
             missing_tools+=($tool)
         fi
     done
@@ -206,58 +206,13 @@ load_image() {
     log_success "Image '$WVA_IMAGE_REPO:$WVA_IMAGE_TAG' loaded into KIND cluster '$CLUSTER_NAME'"
 }
 
-materialize_namespace() {
-    kubectl create namespace "$1"
-}
-
-#### REQUIRED FUNCTION used by deploy/install.sh ####
-create_namespaces() {
-    local _deploy_lib_dir
-    _deploy_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib"
-    # shellcheck source=create_namespaces.sh
-    source "${_deploy_lib_dir}/create_namespaces.sh"
-    create_namespaces_shared_loop
-}
+KUBE_LIKE_VALUES_DEV_IF_PRESENT=true
 
 _wva_deploy_lib="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib"
 # shellcheck source=deploy_prometheus_kube_stack.sh
 source "${_wva_deploy_lib}/deploy_prometheus_kube_stack.sh"
-# shellcheck source=delete_namespaces_kube_like.sh
-source "${_wva_deploy_lib}/delete_namespaces_kube_like.sh"
-
-#### REQUIRED FUNCTION used by deploy/install.sh ####
-# Deploy Prometheus stack with TLS (shared with deploy/kubernetes/install.sh)
-deploy_prometheus_stack() {
-    deploy_prometheus_kube_stack
-}
-
-# REQUIRED FUNCTION - only for emulated environments ####
-# Deploy WVA prerequisites for Kubernetes
-deploy_wva_prerequisites() {
-    log_info "Deploying Workload-Variant-Autoscaler prerequisites for Kubernetes..."
-
-    # Extract Prometheus CA certificate
-    log_info "Extracting Prometheus TLS certificate"
-    kubectl get secret $PROMETHEUS_SECRET_NAME -n $MONITORING_NAMESPACE -o jsonpath='{.data.tls\.crt}' | base64 -d > $PROM_CA_CERT_PATH
-
-    if [ "$SKIP_TLS_VERIFY" = true ] ||  [ -f "$WVA_PROJECT/charts/workload-variant-autoscaler/values-dev.yaml" ]; then
-        log_warning "TLS verification NOT enabled: using values-dev.yaml for dev deployments"
-        VALUES_FILE="${WVA_PROJECT}/charts/workload-variant-autoscaler/values-dev.yaml"
-    else
-        log_info "TLS verification enabled: using values.yaml for production deployments"
-        VALUES_FILE="${WVA_PROJECT}/charts/workload-variant-autoscaler/values.yaml"
-    fi
-
-    CHART_VERSION=0.8.0
-    log_info "Installing LeaderWorkerSet version $CHART_VERSION into lws-system namespace"
-    helm upgrade -i lws oci://registry.k8s.io/lws/charts/lws \
-        --version=$CHART_VERSION \
-        --namespace lws-system \
-        --create-namespace \
-        --wait --timeout 300s
-
-    log_success "WVA prerequisites complete"
-}
+# shellcheck source=kube_like_adapter.sh
+source "${_wva_deploy_lib}/kube_like_adapter.sh"
 
 # REQUIRED FUNCTION - only for emulated environments ####
 # Apply llm-d infrastructure fixes for Kind emulated clusters - e.g., remove prefill deployments, remove decode deployments if tests are enabled
@@ -276,10 +231,6 @@ apply_llm_d_infrastructure_fixes() {
             $LLM_D_MODELSERVICE_NAME-decode \
             --ignore-not-found -n "$LLMD_NS"
     fi
-}
-
-undeploy_prometheus_stack() {
-    undeploy_prometheus_kube_stack
 }
 
 #### REQUIRED FUNCTION used by deploy/install.sh ####

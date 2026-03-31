@@ -2,8 +2,9 @@
 #
 # Shared kube-prometheus-stack install for Kubernetes-like environments
 # (vanilla Kubernetes, Kind emulator, etc.). Sourced by deploy/*/install.sh.
-# Requires log_* helpers, helm, kubectl, openssl, and:
-#   MONITORING_NAMESPACE, PROMETHEUS_SECRET_NAME, PROMETHEUS_PORT, PROMETHEUS_URL
+# Requires vars: MONITORING_NAMESPACE, PROMETHEUS_SECRET_NAME,
+# PROMETHEUS_PORT, PROMETHEUS_URL.
+# Requires funcs: log_info/log_warning/log_success.
 #
 
 deploy_prometheus_kube_stack() {
