@@ -24,10 +24,8 @@ import (
 	"sync"
 	"time"
 
-	appsv1 "k8s.io/api/apps/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -46,6 +44,7 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/logging"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils"
 	poolutil "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils/pool"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils/scaletarget"
 )
 
 // Constants for condition
@@ -123,7 +122,7 @@ func (e *Engine) optimize(ctx context.Context) error {
 	logger := log.FromContext(ctx)
 
 	// Get all inactive (replicas == 0) VAs
-	inactiveVAs, deployments, err := utils.InactiveVariantAutoscaling(ctx, e.client)
+	inactiveVAs, scaleTargets, err := utils.InactiveVariantAutoscaling(ctx, e.client)
 	if err != nil {
 		return err
 	}
@@ -166,7 +165,7 @@ variantLoop:
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			err := e.processInactiveVariant(ctx, deployments, variant, 1)
+			err := e.processInactiveVariant(ctx, scaleTargets, variant, 1)
 			if err != nil {
 				logger.V(logging.DEBUG).Error(err, "Error Processing variant", "name", variant.Name)
 				errorCh <- err
@@ -195,7 +194,7 @@ variantLoop:
 }
 
 // ProcessInactiveVariant processes a single inactive VariantAutoscaling resource.
-func (e *Engine) processInactiveVariant(ctx context.Context, deployments map[string]*appsv1.Deployment, va wvav1alpha1.VariantAutoscaling, targetWorkloadReplicas int) error {
+func (e *Engine) processInactiveVariant(ctx context.Context, scaleTargets map[string]scaletarget.ScaleTargetAccessor, va wvav1alpha1.VariantAutoscaling, targetWorkloadReplicas int) error {
 	logger := log.FromContext(ctx)
 	objAPI := va.GetScaleTargetAPI()
 	objKind := va.GetScaleTargetKind()
@@ -213,12 +212,22 @@ func (e *Engine) processInactiveVariant(ctx context.Context, deployments map[str
 	}
 
 	// Extract Labels for the pods created by the ScaleTarget object
-	labels, found, err := unstructured.NestedStringMap(unstructuredObj.Object, "spec", "template", "metadata", "labels")
-	if err != nil {
-		return err
-	}
-
+	// Use ScaleTargetAccessor to handle both Deployment and LeaderWorkerSet uniformly
+	key := utils.GetNamespacedKey(va.Namespace, objName)
+	scaleTarget, found := scaleTargets[key]
 	if !found {
+		// Fetch on-demand if not in the cache
+		scaleTarget, err = scaletarget.FetchScaleTarget(ctx, e.client, va.Name, objKind, objName, va.Namespace)
+		if err != nil {
+			return err
+		}
+	}
+	podTemplateSpec := scaleTarget.GetLeaderPodTemplateSpec()
+	if podTemplateSpec == nil {
+		return errors.New("pod template spec is missing for target workload object")
+	}
+	labels := podTemplateSpec.Labels
+	if labels == nil {
 		return errors.New("labels are missing for target workload object")
 	}
 
@@ -306,13 +315,13 @@ func (e *Engine) processInactiveVariant(ctx context.Context, deployments map[str
 	var accelerator string
 	accelerator = va.Status.DesiredOptimizedAlloc.Accelerator
 	if accelerator == "" {
-		// Try to get from deployment nodeSelector/nodeAffinity, or VA labels
-		deploymentKey := utils.GetNamespacedKey(va.Namespace, va.GetScaleTargetName())
-		if deployment, found := deployments[deploymentKey]; found {
-			accelerator = utils.GetAcceleratorNameFromDeployment(&va, deployment)
+		// Try to get from deployment/LWS nodeSelector/nodeAffinity, or VA labels
+		key := utils.GetNamespacedKey(va.Namespace, va.GetScaleTargetName())
+		if scaleTarget, found := scaleTargets[key]; found {
+			accelerator = utils.GetAcceleratorNameFromScaleTarget(&va, scaleTarget)
 		} else {
-			// Deployment not cached, fall back to VA label via nil deployment
-			accelerator = utils.GetAcceleratorNameFromDeployment(&va, nil)
+			// Deployment/LWS not cached, fall back to VA label via nil deployment/LWS
+			accelerator = utils.GetAcceleratorNameFromScaleTarget(&va, nil)
 		}
 	}
 
