@@ -473,13 +473,12 @@ func TestNamespacedMetricsSourceLookup(t *testing.T) {
 				maxConcurrency: 30,
 			}
 
-			// Get deployments map
-			deployments := map[string]scaletarget.ScaleTargetAccessor{
+			scaleTargets := map[string]scaletarget.ScaleTargetAccessor{
 				tt.vaNamespace + "/" + deploymentName: scaletarget.NewDeploymentAccessor(dp),
 			}
 
 			// Process the inactive variant
-			err := engine.processInactiveVariant(ctx, deployments, *va, 0)
+			err := engine.processInactiveVariant(ctx, scaleTargets, *va, 0)
 
 			if tt.expectSkip {
 				// When pool is not found (different namespace), we expect nil error (skip)
