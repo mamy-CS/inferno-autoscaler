@@ -54,7 +54,7 @@ main() {
     set_tls_verification
     set_wva_logging_level
 
-    if [[ "$CLUSTER_TYPE" == "kind" ]]; then
+    if [[ "${CLUSTER_TYPE:-}" == "kind" ]]; then
         log_info "Kind cluster detected - setting environment to kind-emulated"
         ENVIRONMENT="kind-emulator"
     fi
@@ -65,9 +65,8 @@ main() {
         source "$SCRIPT_DIR/$ENVIRONMENT/install.sh"
 
         # Run environment-specific prerequisite checks if function exists
-        if declare -f check_prerequisites > /dev/null; then
+        if declare -f check_specific_prerequisites > /dev/null; then
             if [ "$SKIP_CHECKS" != "true" ]; then
-                check_prerequisites
                 check_specific_prerequisites
             fi
         fi

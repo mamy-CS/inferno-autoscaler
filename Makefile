@@ -299,10 +299,12 @@ lint: golangci-lint ## Run golangci-lint linter
 	$(GOLANGCI_LINT) run
 
 .PHONY: lint-deploy-scripts
-lint-deploy-scripts: ## Run bash -n for deploy/install.sh and deploy/lib/*.sh
+lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and deploy plugins
 	@echo "Syntax-checking deploy shell scripts..."
 	@bash -n deploy/install.sh
 	@for script in deploy/lib/*.sh; do bash -n "$$script"; done
+	@for script in deploy/*/install.sh; do if [ -f "$$script" ]; then bash -n "$$script"; fi; done
+	@for script in deploy/kind-emulator/*.sh; do if [ -f "$$script" ]; then bash -n "$$script"; fi; done
 	@echo "deploy script syntax OK"
 
 .PHONY: smoke-deploy-scripts

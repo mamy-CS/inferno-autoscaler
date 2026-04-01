@@ -102,7 +102,11 @@ parse_args() {
         fi
         ;;
       -h|--help)              print_help; exit 0 ;;
-      *)                      log_error "Unknown option: $1"; print_help; exit 1 ;;
+      *)
+        echo "Error: Unknown option: $1" >&2
+        print_help
+        exit 1
+        ;;
     esac
   done
 }
