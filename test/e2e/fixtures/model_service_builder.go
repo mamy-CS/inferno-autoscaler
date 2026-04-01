@@ -83,11 +83,13 @@ func buildModelServiceDeployment(namespace, name, poolName, modelID string, useS
 	}
 	args := buildModelServerArgs(modelID, useSimulator, maxNumSeqs)
 	labels := map[string]string{
-		"app":                       appLabel,
-		"llm-d.ai/inferenceServing": "true",
-		"llm-d.ai/model":            "ms-sim-llm-d-modelservice",
-		"llm-d.ai/model-pool":       poolName,
-		"test-resource":             "true",
+		"app":                        appLabel,
+		"llm-d.ai/inferenceServing":  "true",
+		"llm-d.ai/model":             "ms-sim-llm-d-modelservice",
+		"llm-d.ai/model-pool":        poolName,
+		"test-resource":              "true",
+		"llm-d.ai/guide":             "workload-autoscaling",
+		"llm-d.ai/inference-serving": "true",
 	}
 
 	envVars := []corev1.EnvVar{
@@ -131,10 +133,12 @@ func buildModelServiceDeployment(namespace, name, poolName, modelID string, useS
 			Replicas: ptr.To(int32(1)),
 			Selector: &metav1.LabelSelector{
 				MatchLabels: map[string]string{
-					"app":                       appLabel,
-					"llm-d.ai/inferenceServing": "true",
-					"llm-d.ai/model":            "ms-sim-llm-d-modelservice",
-					"llm-d.ai/model-pool":       poolName,
+					"app":                        appLabel,
+					"llm-d.ai/inferenceServing":  "true",
+					"llm-d.ai/model":             "ms-sim-llm-d-modelservice",
+					"llm-d.ai/model-pool":        poolName,
+					"llm-d.ai/guide":             "workload-autoscaling",
+					"llm-d.ai/inference-serving": "true",
 				},
 			},
 			Template: corev1.PodTemplateSpec{

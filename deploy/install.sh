@@ -43,6 +43,10 @@ VALUES_FILE=${VALUES_FILE:-"$WVA_PROJECT/charts/workload-variant-autoscaler/valu
 # Controller instance identifier for multi-controller isolation (optional)
 # When set, adds controller_instance label to metrics and HPA selectors
 CONTROLLER_INSTANCE=${CONTROLLER_INSTANCE:-""}
+# InferencePool API group to watch (v1 is the default, auto-detected after llm-d deploy)
+# Track if user explicitly set POOL_GROUP to avoid overriding their choice
+POOL_GROUP_USER_SET=${POOL_GROUP:+true}
+POOL_GROUP=${POOL_GROUP:-"inference.networking.k8s.io"}
 
 # llm-d Configuration
 LLM_D_OWNER=${LLM_D_OWNER:-"llm-d"}
@@ -1120,17 +1124,28 @@ deploy_llm_d_infrastructure() {
     # Align WVA with the InferencePool API group in use (scale-from-zero requires WVA to watch the same group).
     # llm-d version determines whether pools are inference.networking.k8s.io (v1) or inference.networking.x-k8s.io (v1alpha2).
     if [ "$DEPLOY_WVA" == "true" ]; then
-        detect_inference_pool_api_group
-        if [ -n "$DETECTED_POOL_GROUP" ]; then
-            log_info "Detected InferencePool API group: $DETECTED_POOL_GROUP; upgrading WVA to watch it (scale-from-zero)"
-            if helm upgrade "$WVA_RELEASE_NAME" ${WVA_PROJECT}/charts/workload-variant-autoscaler \
-                -n $WVA_NS --reuse-values --set wva.poolGroup=$DETECTED_POOL_GROUP --wait --timeout=60s; then
-                log_success "WVA upgraded with wva.poolGroup=$DETECTED_POOL_GROUP"
-            else
-                log_warning "WVA upgrade with poolGroup failed - scale-from-zero may not see the InferencePool"
-            fi
+        # Only auto-detect and upgrade if user didn't explicitly set POOL_GROUP
+        if [ "$POOL_GROUP_USER_SET" == "true" ]; then
+            log_info "POOL_GROUP explicitly set by user to $POOL_GROUP - skipping auto-detection to respect user's choice"
         else
-            log_warning "Could not detect InferencePool API group - WVA may have empty datastore for scale-from-zero"
+            detect_inference_pool_api_group
+            if [ -n "$DETECTED_POOL_GROUP" ]; then
+                # Only upgrade if detected group differs from current POOL_GROUP
+                if [ "$DETECTED_POOL_GROUP" != "$POOL_GROUP" ]; then
+                    log_info "Detected InferencePool API group: $DETECTED_POOL_GROUP (differs from default $POOL_GROUP); upgrading WVA to watch it (scale-from-zero)"
+                    if helm upgrade "$WVA_RELEASE_NAME" ${WVA_PROJECT}/charts/workload-variant-autoscaler \
+                        -n $WVA_NS --reuse-values --set wva.poolGroup=$DETECTED_POOL_GROUP --wait --timeout=60s; then
+                        log_success "WVA upgraded with wva.poolGroup=$DETECTED_POOL_GROUP"
+                        POOL_GROUP=$DETECTED_POOL_GROUP
+                    else
+                        log_warning "WVA upgrade with poolGroup failed - scale-from-zero may not see the InferencePool"
+                    fi
+                else
+                    log_info "Detected InferencePool API group matches default ($POOL_GROUP) - no upgrade needed"
+                fi
+            else
+                log_warning "Could not detect InferencePool API group - using default POOL_GROUP=$POOL_GROUP (scale-from-zero may be misconfigured if cluster uses a different group)"
+            fi
         fi
     fi
 

@@ -18,6 +18,7 @@ package scalefromzero
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -91,12 +92,12 @@ func TestSingleInactiveVariant(t *testing.T) {
 			resourceReplicas: 1,
 		},
 		{
-			name:             "Error from labels of inferencePool and deployment not matched",
+			name:             "Skip variant when labels of inferencePool and deployment don't match",
 			pool:             pool1,
 			labels:           map[string]string{"vllm": "test"},
 			datastoreSize:    1,
 			resourceReplicas: 0,
-			wantErr:          true,
+			wantErr:          false, // Changed: now returns nil to avoid blocking retry loop
 		},
 	}
 
@@ -343,4 +344,261 @@ func TestEmptyInactiveVariants(t *testing.T) {
 	// Should complete without error when no inactive VAs exist
 	err := engine.optimize(ctx)
 	assert.NoError(t, err, "Should not error when no inactive VAs exist")
+}
+
+func TestNamespacedMetricsSourceLookup(t *testing.T) {
+	gvk := schema.GroupVersionKind{
+		Group:   v1.GroupVersion.Group,
+		Version: v1.GroupVersion.Version,
+		Kind:    "InferencePool",
+	}
+
+	tests := []struct {
+		name          string
+		poolNamespace string
+		poolName      string
+		vaNamespace   string
+		expectSkip    bool
+		skipReason    string
+	}{
+		{
+			name:          "pool found in same namespace - processes variant",
+			poolNamespace: "test-ns",
+			poolName:      "pool1",
+			vaNamespace:   "test-ns",
+			expectSkip:    false,
+		},
+		{
+			name:          "pool not found in different namespace - skips gracefully",
+			poolNamespace: "pool-ns",
+			poolName:      "pool1",
+			vaNamespace:   "different-ns",
+			expectSkip:    true,
+			skipReason:    "pool not found in VA's namespace",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create pool in its namespace
+			pool := utiltest.MakeInferencePool(tt.poolName).
+				Namespace(tt.poolNamespace).
+				Selector(selector_v1).
+				TargetPorts(8080).
+				EndpointPickerRef("epp-svc").ObjRef()
+			pool.SetGroupVersionKind(gvk)
+
+			// Create VA in its namespace (might be different)
+			va := unittestutil.CreateVariantAutoscalingResource(
+				tt.vaNamespace,
+				resourceName,
+				deploymentName,
+				modelId,
+				acceleratorName,
+				variantCost,
+			)
+
+			// Create deployment with matching labels in VA's namespace
+			dp := unittestutil.MakeDeployment(deploymentName, tt.vaNamespace, 0, selector_v1)
+
+			// Create service in pool's namespace
+			svc := unittestutil.MakeService("epp-svc", tt.poolNamespace)
+
+			scheme := runtime.NewScheme()
+			_ = clientgoscheme.AddToScheme(scheme)
+			_ = v1alpha2.Install(scheme)
+			_ = v1.Install(scheme)
+			_ = vav1alpha1.AddToScheme(scheme)
+			_ = appsV1.AddToScheme(scheme)
+			_ = corev1.AddToScheme(scheme)
+
+			fakeClientInitialObjs := []client.Object{pool, dp, va, svc}
+			fakeDynamicClientInitialObject := []runtime.Object{dp}
+
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(fakeClientInitialObjs...).
+				Build()
+
+			fakeDynamicClient := dynamicfake.NewSimpleDynamicClient(scheme, fakeDynamicClientInitialObject...)
+
+			ctx := context.Background()
+			ds := datastore.NewDatastore(nil)
+
+			// Reconcile the pool to add it to datastore
+			namespacedName := types.NamespacedName{Name: pool.Name, Namespace: pool.Namespace}
+			gknn := common.GKNN{
+				NamespacedName: namespacedName,
+				GroupKind: schema.GroupKind{
+					Group: pool.GroupVersionKind().Group,
+					Kind:  pool.GroupVersionKind().Kind,
+				},
+			}
+			req := ctrl.Request{NamespacedName: namespacedName}
+			inferencePoolReconciler := &poolreconciler.InferencePoolReconciler{
+				Client:    fakeClient,
+				Datastore: ds,
+				PoolGKNN:  gknn,
+			}
+
+			if _, err := inferencePoolReconciler.Reconcile(ctx, req); err != nil {
+				t.Fatalf("Unexpected InferencePool reconcile error: %v", err)
+			}
+
+			// Verify pool is in datastore
+			poolList := ds.PoolList()
+			require.Equal(t, 1, len(poolList), "Pool should be in datastore")
+
+			// Verify metrics source is registered under the namespaced key (namespace/name)
+			// This is critical for processInactiveVariant which calls PoolGetMetricsSource(namespace/name)
+			namespacedPoolName := tt.poolNamespace + "/" + tt.poolName
+			metricsSource := ds.PoolGetMetricsSource(namespacedPoolName)
+			if tt.expectSkip {
+				// For cross-namespace test, metrics source won't be found (different namespace)
+				// This is expected and will be handled gracefully
+			} else {
+				// For same-namespace test, metrics source must be registered
+				require.NotNil(t, metricsSource, "Metrics source should be registered under namespaced key %s", namespacedPoolName)
+			}
+
+			mapper := testrestmapper.TestOnlyStaticRESTMapper(scheme, schema.GroupVersion{Group: "apps", Version: "v1"})
+
+			engine := &Engine{
+				client:         fakeClient,
+				executor:       nil,
+				Datastore:      ds,
+				DynamicClient:  fakeDynamicClient,
+				Mapper:         mapper,
+				maxConcurrency: 30,
+			}
+
+			// Get deployments map
+			deployments := map[string]*appsV1.Deployment{
+				tt.vaNamespace + "/" + deploymentName: dp,
+			}
+
+			// Process the inactive variant
+			err := engine.processInactiveVariant(ctx, deployments, *va, 0)
+
+			if tt.expectSkip {
+				// When pool is not found (different namespace), we expect nil error (skip)
+				assert.NoError(t, err, "Expected no error (skip) for: %s, but got: %v", tt.skipReason, err)
+			} else {
+				// When pool is found, we expect it to proceed
+				// It may error on EPP metrics refresh (which is expected in test environment)
+				// but it should NOT error on "pool not found"
+				if err != nil && errors.Is(err, datastore.ErrPoolNotSynced) {
+					t.Errorf("Should have found pool in same namespace, but got: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestPoolGetFromLabelsWithNamespace(t *testing.T) {
+	tests := []struct {
+		name          string
+		poolNamespace string
+		poolName      string
+		poolSelector  map[string]string
+		queryNs       string
+		queryLabels   map[string]string
+		expectFound   bool
+	}{
+		{
+			name:          "finds pool in same namespace with matching labels",
+			poolNamespace: "ns1",
+			poolName:      "pool1",
+			poolSelector:  map[string]string{"app": "test"},
+			queryNs:       "ns1",
+			queryLabels:   map[string]string{"app": "test", "version": "v1"},
+			expectFound:   true,
+		},
+		{
+			name:          "does not find pool in different namespace even with matching labels",
+			poolNamespace: "ns1",
+			poolName:      "pool1",
+			poolSelector:  map[string]string{"app": "test"},
+			queryNs:       "ns2",
+			queryLabels:   map[string]string{"app": "test", "version": "v1"},
+			expectFound:   false,
+		},
+		{
+			name:          "does not find pool with non-matching labels in same namespace",
+			poolNamespace: "ns1",
+			poolName:      "pool1",
+			poolSelector:  map[string]string{"app": "test"},
+			queryNs:       "ns1",
+			queryLabels:   map[string]string{"app": "different"},
+			expectFound:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gvk := schema.GroupVersionKind{
+				Group:   v1.GroupVersion.Group,
+				Version: v1.GroupVersion.Version,
+				Kind:    "InferencePool",
+			}
+
+			pool := utiltest.MakeInferencePool(tt.poolName).
+				Namespace(tt.poolNamespace).
+				Selector(tt.poolSelector).
+				TargetPorts(8080).
+				EndpointPickerRef("epp-svc").ObjRef()
+			pool.SetGroupVersionKind(gvk)
+
+			svc := unittestutil.MakeService("epp-svc", tt.poolNamespace)
+
+			scheme := runtime.NewScheme()
+			_ = clientgoscheme.AddToScheme(scheme)
+			_ = v1alpha2.Install(scheme)
+			_ = v1.Install(scheme)
+			_ = vav1alpha1.AddToScheme(scheme)
+			_ = corev1.AddToScheme(scheme)
+
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(pool, svc).
+				Build()
+
+			ctx := context.Background()
+			ds := datastore.NewDatastore(nil)
+
+			// Reconcile pool to add to datastore
+			namespacedName := types.NamespacedName{Name: pool.Name, Namespace: pool.Namespace}
+			gknn := common.GKNN{
+				NamespacedName: namespacedName,
+				GroupKind: schema.GroupKind{
+					Group: pool.GroupVersionKind().Group,
+					Kind:  pool.GroupVersionKind().Kind,
+				},
+			}
+			req := ctrl.Request{NamespacedName: namespacedName}
+			inferencePoolReconciler := &poolreconciler.InferencePoolReconciler{
+				Client:    fakeClient,
+				Datastore: ds,
+				PoolGKNN:  gknn,
+			}
+
+			if _, err := inferencePoolReconciler.Reconcile(ctx, req); err != nil {
+				t.Fatalf("Unexpected InferencePool reconcile error: %v", err)
+			}
+
+			// Query with namespace
+			foundPool, err := ds.PoolGetFromLabels(tt.queryNs, tt.queryLabels)
+
+			if tt.expectFound {
+				require.NoError(t, err, "Expected to find pool but got error")
+				require.NotNil(t, foundPool, "Expected to find pool but got nil")
+				assert.Equal(t, tt.poolNamespace, foundPool.Namespace, "Pool namespace should match")
+				assert.Equal(t, tt.poolName, foundPool.Name, "Pool name should match")
+			} else {
+				require.Error(t, err, "Expected error (not found) but got none")
+				assert.ErrorIs(t, err, datastore.ErrPoolNotSynced, "Error should be ErrPoolNotSynced")
+				assert.Nil(t, foundPool, "Pool should be nil when not found")
+			}
+		})
+	}
 }

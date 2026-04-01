@@ -232,18 +232,33 @@ func (e *Engine) processInactiveVariant(ctx context.Context, deployments map[str
 	// Find target EPP for metrics collection in the same namespace as the VA
 	pool, err := e.Datastore.PoolGetFromLabels(va.Namespace, labels)
 	if err != nil {
-		logger.Error(err, "Error finding target EPP", "variant", va.Name, "namespace", va.Namespace, "target VA model", va.Spec.ModelID)
+		// Only skip on "not found" errors - return other errors to surface real datastore failures
+		if errors.Is(err, datastore.ErrPoolNotSynced) {
+			logger.V(logging.DEBUG).Info("Skipping variant, target EPP not found in datastore",
+				"variant", va.Name,
+				"namespace", va.Namespace,
+				"modelID", va.Spec.ModelID)
+			return nil
+		}
+		// Unexpected error - log and return to surface the issue
+		logger.Error(err, "Unexpected error finding target EPP",
+			"variant", va.Name,
+			"namespace", va.Namespace,
+			"modelID", va.Spec.ModelID)
 		return err
 	}
 
 	// Use EPP source from registry
-	eppSource := e.Datastore.PoolGetMetricsSource(pool.Namespace + "/" + pool.Name)
+	namespacedPoolName := pool.Namespace + "/" + pool.Name
+	eppSource := e.Datastore.PoolGetMetricsSource(namespacedPoolName)
 	if eppSource == nil {
-		logger.Info("Scale-from-zero: skipping VA, EPP metrics source not found in datastore",
-			"va", va.Name,
+		// This is unexpected - pool exists but metrics source is missing
+		err := fmt.Errorf("EPP metrics source not found in registry for pool %s", namespacedPoolName)
+		logger.Error(err, "Datastore inconsistency detected",
+			"variant", va.Name,
 			"namespace", va.Namespace,
-			"pool", pool.Namespace+"/"+pool.Name)
-		return errors.New("endpointpicker metrics source not found in datastore")
+			"pool", namespacedPoolName)
+		return err
 	}
 
 	results, err := eppSource.Refresh(ctx, source.RefreshSpec{})

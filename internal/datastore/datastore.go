@@ -34,7 +34,8 @@ import (
 )
 
 var (
-	errPoolNotSynced = errors.New("EndpointPool not found in datastore")
+	// ErrPoolNotSynced is returned when an EndpointPool is not found in the datastore
+	ErrPoolNotSynced = errors.New("EndpointPool not found in datastore")
 	errPoolIsNull    = errors.New("EndpointPool object is nil, does not exist")
 )
 
@@ -149,7 +150,7 @@ func (ds *datastore) PoolGet(namespacedName string) (*poolutil.EndpointPool, err
 
 	pool, exist := ds.pools.Load(namespacedName)
 	if !exist {
-		return nil, errPoolNotSynced
+		return nil, ErrPoolNotSynced
 	}
 
 	epp := pool.(*poolutil.EndpointPool)
@@ -182,7 +183,7 @@ func (ds *datastore) PoolGetFromLabels(namespace string, labels map[string]strin
 	})
 
 	if !exist {
-		return nil, errPoolNotSynced
+		return nil, ErrPoolNotSynced
 	}
 	return ep, nil
 }
