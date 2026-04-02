@@ -8,6 +8,14 @@
 #
 
 undeploy_keda() {
+    if [ "$ENVIRONMENT" = "openshift" ]; then
+        log_info "OpenShift: skipping KEDA uninstall (platform-managed)"
+        return
+    fi
+    if [ "$ENVIRONMENT" = "kubernetes" ] && [ "${KEDA_HELM_INSTALL:-false}" != "true" ]; then
+        log_info "Kubernetes: skipping KEDA uninstall (cluster-managed; set KEDA_HELM_INSTALL=true if this script installed KEDA)"
+        return
+    fi
     log_info "Uninstalling KEDA..."
     helm uninstall "$KEDA_RELEASE_NAME" -n "$KEDA_NAMESPACE" 2>/dev/null || \
         log_warning "KEDA not found or already uninstalled"

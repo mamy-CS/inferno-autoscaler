@@ -135,8 +135,12 @@ func cleanupScaleFromZeroResources() {
 }
 
 // Scale-from-zero test validates that the WVA controller correctly detects pending requests
-// and scales up deployments from zero replicas. Requires GIE queuing (ENABLE_EXPERIMENTAL_FLOW_CONTROL_LAYER
+// and scales up scale targets from zero replicas. Requires GIE queuing (ENABLE_EXPERIMENTAL_FLOW_CONTROL_LAYER
 // on EPP from install when E2E_TESTS_ENABLED=true) and an InferenceObjective (applied below in BeforeAll).
+// This suite needs a scaler that allows minReplicas=0 on the scaled workload: either
+// SCALE_TO_ZERO_ENABLED=true where native HPA supports it (HPAScaleToZero), or SCALER_BACKEND=keda
+// (ScaledObject). OpenShift usually lacks HPAScaleToZero; e2e config ignores SCALE_TO_ZERO_ENABLED there,
+// so use SCALER_BACKEND=keda for this Describe when running on OpenShift.
 // On platforms without the HPAScaleToZero feature gate (e.g. OpenShift), set SCALER_BACKEND=keda
 // so the test uses a KEDA ScaledObject (which supports minReplicas=0) instead of a native HPA.
 var _ = Describe("Scale-From-Zero Feature", Serial, Label("full"), Ordered, func() {
@@ -153,8 +157,9 @@ var _ = Describe("Scale-From-Zero Feature", Serial, Label("full"), Ordered, func
 		// HPAScaleToZero feature gate), SCALER_BACKEND=keda must be set so the
 		// test creates a KEDA ScaledObject instead of a native HPA.
 		if cfg.ScalerBackend != "keda" && !cfg.ScaleToZeroEnabled {
-			Skip("Scale-from-zero requires SCALER_BACKEND=\"keda\" or ENABLE_SCALE_TO_ZERO=true; " +
-				"current configuration does not support HPA minReplicas=0")
+			Skip("This suite needs minReplicas=0 on the scaler: set SCALER_BACKEND=\"keda\" " +
+				"or SCALE_TO_ZERO_ENABLED=true (ignored on OpenShift without HPAScaleToZero — use KEDA); " +
+				"current configuration does not support that scaler shape")
 		}
 
 		By("Cleaning up any existing scale-from-zero test resources")
@@ -619,8 +624,9 @@ var _ = Describe("Scale-From-Zero Feature with LeaderWorkerSet", Serial, Label("
 		// HPAScaleToZero feature gate), SCALER_BACKEND=keda must be set so the
 		// test creates a KEDA ScaledObject instead of a native HPA.
 		if cfg.ScalerBackend != "keda" && !cfg.ScaleToZeroEnabled {
-			Skip("Scale-from-zero requires SCALER_BACKEND=\"keda\" or ENABLE_SCALE_TO_ZERO=true; " +
-				"current configuration does not support HPA minReplicas=0")
+			Skip("This suite needs minReplicas=0 on the scaler: set SCALER_BACKEND=\"keda\" " +
+				"or SCALE_TO_ZERO_ENABLED=true (ignored on OpenShift without HPAScaleToZero — use KEDA); " +
+				"current configuration does not support that scaler shape")
 		}
 
 		By("Cleaning up any existing scale-from-zero test resources")
@@ -1039,8 +1045,9 @@ var _ = Describe("Scale-From-Zero Feature with LeaderWorkerSet (single-node)", S
 		// HPAScaleToZero feature gate), SCALER_BACKEND=keda must be set so the
 		// test creates a KEDA ScaledObject instead of a native HPA.
 		if cfg.ScalerBackend != "keda" && !cfg.ScaleToZeroEnabled {
-			Skip("Scale-from-zero requires SCALER_BACKEND=\"keda\" or ENABLE_SCALE_TO_ZERO=true; " +
-				"current configuration does not support HPA minReplicas=0")
+			Skip("This suite needs minReplicas=0 on the scaler: set SCALER_BACKEND=\"keda\" " +
+				"or SCALE_TO_ZERO_ENABLED=true (ignored on OpenShift without HPAScaleToZero — use KEDA); " +
+				"current configuration does not support that scaler shape")
 		}
 
 		By("Cleaning up any existing scale-from-zero test resources")

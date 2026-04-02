@@ -136,6 +136,7 @@ deploy_llm_d_infrastructure() {
         if [ "$DEPLOY_WVA" == "true" ] && [ "$VLLM_SVC_ENABLED" == "true" ]; then
           helm upgrade "$WVA_RELEASE_NAME" ${WVA_PROJECT}/charts/workload-variant-autoscaler \
             -n "$WVA_NS" --reuse-values \
+            --set wva.namespaceScoped="${NAMESPACE_SCOPED:-true}" \
             --set vllmService.port="$VLLM_SVC_PORT" \
             --set vllmService.targetPort="$VLLM_SVC_PORT"
         fi
@@ -325,7 +326,9 @@ deploy_llm_d_infrastructure() {
         if [ -n "$DETECTED_POOL_GROUP" ]; then
             log_info "Detected InferencePool API group: $DETECTED_POOL_GROUP; upgrading WVA to watch it (scale-from-zero)"
             if helm upgrade "$WVA_RELEASE_NAME" ${WVA_PROJECT}/charts/workload-variant-autoscaler \
-                -n "$WVA_NS" --reuse-values --set wva.poolGroup="$DETECTED_POOL_GROUP" --wait --timeout=60s; then
+                -n "$WVA_NS" --reuse-values \
+                --set wva.namespaceScoped="${NAMESPACE_SCOPED:-true}" \
+                --set wva.poolGroup="$DETECTED_POOL_GROUP" --wait --timeout=60s; then
                 log_success "WVA upgraded with wva.poolGroup=$DETECTED_POOL_GROUP"
             else
                 log_warning "WVA upgrade with poolGroup failed - scale-from-zero may not see the InferencePool"

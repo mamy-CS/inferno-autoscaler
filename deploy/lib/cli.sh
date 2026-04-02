@@ -38,9 +38,11 @@ Environment Variables:
   INFRA_ONLY                   Deploy only infrastructure (default: false, same as --infra-only flag)
   SCALER_BACKEND               Scaler backend: "prometheus-adapter" (default), "keda", or "none".
                                prometheus-adapter: installs Prometheus Adapter and patches the external metrics APIService.
-                               keda: installs KEDA (or detects pre-installed) and skips Prometheus Adapter.
+                               keda: skips Prometheus Adapter; on kubernetes assumes cluster-managed KEDA (KEDA_HELM_INSTALL=true for Helm);
+                                     kind-emulator installs KEDA via Helm when needed; OpenShift is platform-managed only.
                                none: skips all scaler backend deployment. Use this on clusters that already have
                                      KEDA or another external metrics API installed (e.g. llmd benchmark clusters).
+  KEDA_HELM_INSTALL            When true with ENVIRONMENT=kubernetes, install/upgrade KEDA via Helm (default: false)
   KEDA_NAMESPACE               Namespace for KEDA (default: keda-system)
   UNDEPLOY                     Undeploy mode (default: false)
   DELETE_NAMESPACES            Delete namespaces after undeploy (default: false)

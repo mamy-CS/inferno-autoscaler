@@ -113,13 +113,16 @@ QUEUE_SPARE_TRIGGER=${QUEUE_SPARE_TRIGGER:-""}
 
 # Scaler backend: "prometheus-adapter" (default), "keda", or "none"
 # prometheus-adapter: deploy Prometheus Adapter + patch external metrics APIService
-# keda:              deploy KEDA via Helm (or detect pre-installed) + configure ScaledObjects
+# keda:              on kubernetes assume cluster-managed KEDA (no Helm; set KEDA_HELM_INSTALL=true to install);
+#                    on kind-emulator install via Helm when needed; OpenShift is always platform-managed (no Helm)
 # none:              skip all scaler backend deployment; use when KEDA or another metrics API
 #                    is already installed on the cluster (e.g. llmd benchmark clusters)
 SCALER_BACKEND=${SCALER_BACKEND:-prometheus-adapter}
 KEDA_NAMESPACE=${KEDA_NAMESPACE:-keda-system}
 # Pin KEDA chart version for reproducible installs (only used when deploy_keda installs from helm)
 KEDA_CHART_VERSION=${KEDA_CHART_VERSION:-2.19.0}
+# kubernetes: default false (cluster-managed KEDA); set true to let this script install/upgrade KEDA via Helm
+KEDA_HELM_INSTALL=${KEDA_HELM_INSTALL:-false}
 
 # Environment-related variables
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
