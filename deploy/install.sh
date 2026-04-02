@@ -47,7 +47,9 @@ CONTROLLER_INSTANCE=${CONTROLLER_INSTANCE:-""}
 # llm-d Configuration
 LLM_D_OWNER=${LLM_D_OWNER:-"llm-d"}
 LLM_D_PROJECT=${LLM_D_PROJECT:-"llm-d"}
-LLM_D_RELEASE=${LLM_D_RELEASE:-"v0.3.0"}
+# Git ref for cloning llm-d (guides, Helmfile, chart pins). Use newest *tag* for llmd, check on github.com/llm-d/llm-d repo for the latest tag.
+# Default EPP/sidecar images below therefore track newer *published* containers while charts come from this ref;
+LLM_D_RELEASE=${LLM_D_RELEASE:-"v0.5.1"}
 LLM_D_MODELSERVICE_NAME=${LLM_D_MODELSERVICE_NAME:-"ms-$WELL_LIT_PATH_NAME-llm-d-modelservice"}
 LLM_D_EPP_NAME=${LLM_D_EPP_NAME:-"gaie-$WELL_LIT_PATH_NAME-epp"}
 CLIENT_PREREQ_DIR=${CLIENT_PREREQ_DIR:-"$WVA_PROJECT/$LLM_D_PROJECT/guides/prereq/client-setup"}
@@ -57,9 +59,10 @@ LLM_D_MODELSERVICE_VALUES=${LLM_D_MODELSERVICE_VALUES:-"$EXAMPLE_DIR/ms-$WELL_LI
 ITL_AVERAGE_LATENCY_MS=${ITL_AVERAGE_LATENCY_MS:-20}
 TTFT_AVERAGE_LATENCY_MS=${TTFT_AVERAGE_LATENCY_MS:-200}
 ENABLE_SCALE_TO_ZERO=${ENABLE_SCALE_TO_ZERO:-true}
-# llm-d-inference scheduler with image with flowcontrol support
-# TODO: update once the llm-d-inference-scheduler v0.5.0 is released
-LLM_D_INFERENCE_SCHEDULER_IMG=${LLM_D_INFERENCE_SCHEDULER_IMG:-"ghcr.io/llm-d/llm-d-inference-scheduler:v0.5.0-rc.1"}
+# llm-d-inference-scheduler (EPP) image patched onto the helm deployment when flow control / e2e is enabled.
+LLM_D_INFERENCE_SCHEDULER_IMG=${LLM_D_INFERENCE_SCHEDULER_IMG:-"ghcr.io/llm-d/llm-d-inference-scheduler:v0.7.0"}
+# Routing sidecar must stay on the same minor release as the inference scheduler (shared gRPC / gateway integration).
+LLM_D_ROUTING_SIDECAR_IMG=${LLM_D_ROUTING_SIDECAR_IMG:-"ghcr.io/llm-d/llm-d-routing-sidecar:v0.7.0"}
 
 # Gateway Configuration
 GATEWAY_PROVIDER=${GATEWAY_PROVIDER:-"istio"} # Options: kgateway, istio

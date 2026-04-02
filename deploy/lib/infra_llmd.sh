@@ -7,6 +7,140 @@
 # containsElement(), wait_deployment_available_nonfatal(), detect_inference_pool_api_group().
 #
 
+# Helm may reconcile the EPP Deployment before the inference-gateway-istio Deployment exists.
+# Without waiting, patch_llm_d_routing_sidecar_image runs once, finds nothing, and never retries.
+wait_for_inference_gateway_deployment() {
+    local ns="$1"
+    local max_sec="${2:-180}"
+    local interval="${3:-5}"
+    local elapsed=0
+    local gw_deploy=""
+    while [ "$elapsed" -lt "$max_sec" ]; do
+        gw_deploy=$(kubectl get deployment -n "$ns" -o name 2>/dev/null | grep "inference-gateway-istio" | head -1 || true)
+        if [ -n "$gw_deploy" ]; then
+            log_info "Gateway deployment visible: $gw_deploy (waited ${elapsed}s)"
+            return 0
+        fi
+        sleep "$interval"
+        elapsed=$((elapsed + interval))
+    done
+    log_warning "No inference-gateway-istio deployment in $ns after ${max_sec}s"
+    return 1
+}
+
+# Patch EPP (llm-d-inference-scheduler) image, strip deprecated metric CLI flags, and ensure flow-control env.
+# GIE/EPP v1.4+ (scheduler v0.7.x) errors on flags like --kv-cache-usage-percentage-metric; older inferencepool
+# Helm charts still inject them (see gateway-api-inference-extension runner flag validation).
+patch_llm_d_inference_scheduler_epp() {
+    local ns="$1"
+    local deploy_name="$2"
+    local img="$3"
+
+    if ! command -v jq &>/dev/null; then
+        log_error "jq is required to patch EPP args when using scheduler v0.7+ (deprecated metric flags must be stripped)."
+        return 1
+    fi
+
+    local dep_json
+    dep_json=$(kubectl get deployment "$deploy_name" -n "$ns" -o json) || return 1
+
+    local args_json env_json env_op patch_json
+    # Named list: flags that take a single following argument (AGENTS.md / GIE v1.4 deprecations).
+    args_json=$(echo "$dep_json" | jq -c '
+      ["--kv-cache-usage-percentage-metric","--total-queued-requests-metric","--total-running-requests-metric","--lora-info-metric","--cache-info-metric"] as $d |
+      (.spec.template.spec.containers[0].args // []) |
+      def walk($args; $i):
+        if ($i >= ($args|length)) then []
+        elif ($args[$i] as $f | ($d | index($f))) != null
+        then walk($args; $i+2)
+        else [$args[$i]] + walk($args; $i+1)
+        end;
+      walk(.; 0)
+    ') || return 1
+
+    env_json=$(echo "$dep_json" | jq -c '
+      (.spec.template.spec.containers[0].env // []) as $e |
+      if ($e | map(.name) | index("ENABLE_EXPERIMENTAL_FLOW_CONTROL_LAYER")) != null then
+        $e | map(if .name == "ENABLE_EXPERIMENTAL_FLOW_CONTROL_LAYER" then .value = "true" else . end)
+      else
+        $e + [{"name":"ENABLE_EXPERIMENTAL_FLOW_CONTROL_LAYER","value":"true"}]
+      end
+    ') || return 1
+
+    env_op=$(echo "$dep_json" | jq -r 'if (.spec.template.spec.containers[0].env // null) | type == "array" then "replace" else "add" end')
+
+    patch_json=$(jq -n \
+      --arg img "$img" \
+      --argjson args "$args_json" \
+      --argjson env "$env_json" \
+      --arg env_op "$env_op" \
+      '[{"op":"replace","path":"/spec/template/spec/containers/0/image","value":$img},
+        {"op":"replace","path":"/spec/template/spec/containers/0/args","value":$args},
+        {"op":$env_op,"path":"/spec/template/spec/containers/0/env","value":$env}]')
+
+    kubectl patch deployment "$deploy_name" -n "$ns" --type=json -p "$patch_json"
+}
+
+# Add feature gate "flowControl" to the EPP plugins ConfigMap (default-plugins.yaml).
+# GIE v1.4+ sets admission mode from r.featureGates in parseConfigurationPhaseOne; ENABLE_EXPERIMENTAL_FLOW_CONTROL_LAYER
+# only mutates rawConfig in phase two and does not refresh r.featureGates, so env alone leaves legacy admission on
+# (no inference_extension_flow_control_queue_size). See gateway-api-inference-extension cmd/epp/runner/runner.go.
+patch_epp_configmap_flow_control_feature_gate() {
+    local ns="$1"
+    local epp_name="$2"
+    local cm_key="default-plugins.yaml"
+
+    if ! command -v yq &>/dev/null; then
+        log_error "yq is required to patch EPP ConfigMap featureGates for flow control (scale-from-zero)."
+        return 1
+    fi
+    if ! kubectl get cm "$epp_name" -n "$ns" &>/dev/null; then
+        log_warning "ConfigMap $epp_name not found in $ns; skipping flow-control feature gate patch"
+        return 0
+    fi
+    if ! kubectl get cm "$epp_name" -n "$ns" -o json | jq -e --arg k "$cm_key" '.data[$k] | type == "string"' &>/dev/null; then
+        log_warning "ConfigMap $epp_name has no data key '$cm_key'; skipping flow-control feature gate patch"
+        return 0
+    fi
+
+    local original updated
+    original=$(kubectl get cm "$epp_name" -n "$ns" -o json | jq -r --arg k "$cm_key" '.data[$k]') || return 1
+    updated=$(echo "$original" | yq eval '.featureGates = ((.featureGates // []) + ["flowControl"] | unique)' -) || return 1
+
+    if [ "$original" = "$updated" ]; then
+        log_info "EPP ConfigMap $epp_name already includes flowControl feature gate"
+        return 0
+    fi
+
+    local merge_patch
+    merge_patch=$(jq -n --arg k "$cm_key" --arg v "$updated" '{data: {($k): $v}}') || return 1
+    kubectl patch configmap "$epp_name" -n "$ns" --type merge -p "$merge_patch"
+    log_success "Patched EPP ConfigMap $epp_name: featureGates += flowControl (GIE queue metrics for scale-from-zero)"
+}
+
+# Keep Istio inference-gateway routing sidecar aligned with the EPP image (llm-d-inference-scheduler release).
+patch_llm_d_routing_sidecar_image() {
+    local ns="$1"
+    local img="$2"
+    local gw_deploy
+    gw_deploy=$(kubectl get deployment -n "$ns" -o name 2>/dev/null | grep "inference-gateway-istio" | head -1 || true)
+    if [ -z "$gw_deploy" ]; then
+        log_warning "No inference-gateway-istio deployment found in $ns; skipping routing sidecar image patch"
+        return 0
+    fi
+    local patched=false
+    for cname in sidecar routing-sidecar; do
+        if kubectl set image "$gw_deploy" "${cname}=${img}" -n "$ns" &>/dev/null; then
+            log_info "Patched routing sidecar container '$cname' on $gw_deploy to $img"
+            patched=true
+            break
+        fi
+    done
+    if [ "$patched" = false ]; then
+        log_warning "Could not patch routing sidecar on $gw_deploy (expected container name sidecar or routing-sidecar)"
+    fi
+}
+
 deploy_llm_d_infrastructure() {
     log_info "Deploying llm-d infrastructure..."
 
@@ -44,7 +178,7 @@ deploy_llm_d_infrastructure() {
     # Only install Gateway API Inference Extension (GAIE) CRDs directly.
     if [[ "$ENVIRONMENT" == "openshift" ]]; then
         log_info "Skipping Gateway API base CRDs on OpenShift (managed by Ingress Operator)"
-        GAIE_CRD_REV=${GATEWAY_API_INFERENCE_EXTENSION_CRD_REVISION:-"v1.3.0"}
+        GAIE_CRD_REV=${GATEWAY_API_INFERENCE_EXTENSION_CRD_REVISION:-"v1.4.0"}
         log_info "Installing Gateway API Inference Extension CRDs (${GAIE_CRD_REV})"
         kubectl apply -k "https://github.com/kubernetes-sigs/gateway-api-inference-extension/config/crd/?ref=${GAIE_CRD_REV}" \
             && log_success "GAIE CRDs installed" \
@@ -243,23 +377,21 @@ deploy_llm_d_infrastructure() {
     # Patch llm-d-inference-scheduler deployment to enable GIE flow control when scale-to-zero
     # or e2e tests are enabled (required for scale-from-zero: queue metrics and queuing behavior).
     if [ "$ENABLE_SCALE_TO_ZERO" == "true" ] || [ "$E2E_TESTS_ENABLED" == "true" ]; then
-        log_info "Patching llm-d-inference-scheduler deployment to enable flowcontrol and use a new image"
+        log_info "Patching EPP ConfigMap + llm-d-inference-scheduler deployment for flow control (scale-from-zero)"
         if kubectl get deployment "$LLM_D_EPP_NAME" -n "$LLMD_NS" &> /dev/null; then
-            kubectl patch deployment "$LLM_D_EPP_NAME" -n "$LLMD_NS" --type='json' -p='[
-                {
-                    "op": "replace",
-                    "path": "/spec/template/spec/containers/0/image",
-                    "value": "'$LLM_D_INFERENCE_SCHEDULER_IMG'"
-                },
-                {
-                    "op": "add",
-                    "path": "/spec/template/spec/containers/0/env/-",
-                    "value": {
-                    "name": "ENABLE_EXPERIMENTAL_FLOW_CONTROL_LAYER",
-                    "value": "true"
-                    }
-                }
-            ]'
+            # Must run before deployment rollout so new pods load EndpointPickerConfig with featureGates (not env alone).
+            patch_epp_configmap_flow_control_feature_gate "$LLMD_NS" "$LLM_D_EPP_NAME" || {
+                log_error "Failed to patch EPP ConfigMap $LLM_D_EPP_NAME for flowControl feature gate"
+                exit 1
+            }
+            patch_llm_d_inference_scheduler_epp "$LLMD_NS" "$LLM_D_EPP_NAME" "$LLM_D_INFERENCE_SCHEDULER_IMG" || {
+                log_error "Failed to patch EPP deployment $LLM_D_EPP_NAME"
+                exit 1
+            }
+            # Sidecar must match scheduler; gateway object often appears shortly after EPP in the same apply.
+            local gw_wait_sec="${E2E_GATEWAY_APPEAR_WAIT_SEC:-180}"
+            wait_for_inference_gateway_deployment "$LLMD_NS" "$gw_wait_sec" 5 || true
+            patch_llm_d_routing_sidecar_image "$LLMD_NS" "$LLM_D_ROUTING_SIDECAR_IMG"
         else
             log_warning "Skipping inference-scheduler patch: Deployment $LLM_D_EPP_NAME not found in $LLMD_NS"
         fi
@@ -291,7 +423,8 @@ deploy_llm_d_infrastructure() {
     # The full wait often blocks on modelservice decode/prefill readiness, which is
     # unnecessary for the e2e suite because tests create/manage their own workloads.
     if [ "$E2E_TESTS_ENABLED" = "true" ] && [ "$INFRA_ONLY" = "true" ]; then
-        local E2E_DEPLOY_WAIT_TIMEOUT="${E2E_DEPLOY_WAIT_TIMEOUT:-120s}"
+        # EPP image overrides (e.g. v0.7.0) can trigger Recreate rollouts + large pulls; 120s is often too tight.
+        local E2E_DEPLOY_WAIT_TIMEOUT="${E2E_DEPLOY_WAIT_TIMEOUT:-300s}"
         log_info "E2E infra-only mode: waiting for essential llm-d components (timeout=${E2E_DEPLOY_WAIT_TIMEOUT})..."
 
         if kubectl get deployment "$LLM_D_EPP_NAME" -n "$LLMD_NS" &>/dev/null; then
