@@ -74,11 +74,6 @@ ACCELERATOR_TYPE=${ACCELERATOR_TYPE:-"H100"}
 SLO_TPOT=${SLO_TPOT:-10}  # Target time-per-output-token SLO (in ms)
 SLO_TTFT=${SLO_TTFT:-1000}  # Target time-to-first-token SLO (in ms)
 
-# Multi-model testing configuration (for limiter e2e tests)
-# When enabled, deploys a second InferencePool with a different model
-MULTI_MODEL_TESTING=${MULTI_MODEL_TESTING:-false}
-MODEL_ID_2=${MODEL_ID_2:-"unsloth/Llama-3.2-1B"}
-
 # Prometheus Configuration
 PROM_CA_CERT_PATH=${PROM_CA_CERT_PATH:-"/tmp/prometheus-ca.crt"}
 PROMETHEUS_SECRET_NAME=${PROMETHEUS_SECRET_NAME:-"prometheus-web-tls"}
