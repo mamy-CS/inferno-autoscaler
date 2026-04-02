@@ -228,7 +228,7 @@ ginkgo -v --label-filter="smoke" ./test/e2e/
 
 **Tests:**
 1. **Scale-From-Zero** (~7 min)
-   - Requires EPP flow control enabled so the metric `inference_extension_flow_control_queue_size` is populated (InferenceObjective is not required for this metric). When deploying infra with `E2E_TESTS_ENABLED=true` (or `ENABLE_SCALE_TO_ZERO=true`), the install script enables flow control on the EPP and optionally applies an InferenceObjective for e2e.
+   - Requires EPP flow control (`E2E_TESTS_ENABLED=true` or `ENABLE_SCALE_TO_ZERO=true` patches EPP). The scale-from-zero spec applies **InferenceObjective** `e2e-default` via `test/e2e/fixtures` when the CRD exists (install.sh no longer applies it for e2e).
    - Create HPA (or KEDA ScaledObject) with minReplicas=0
    - Verify deployment scales to 0 when idle
    - Generate first request, verify scale-up from 0 → 1

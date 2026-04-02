@@ -27,6 +27,8 @@ E2E_MONITORING_NAMESPACE    ?= workload-variant-autoscaler-monitoring
 E2E_EMULATED_LLMD_NAMESPACE ?= llm-d-sim
 
 # Flags for deploy/install.sh installation script
+# Full e2e / CI-style cluster infra (WVA + llm-d, no chart VA/HPA): prefer `make deploy-e2e-infra`
+# (wraps ./deploy/install.sh with INFRA_ONLY=true; set ENVIRONMENT=kubernetes|openshift|kind-emulator).
 CREATE_CLUSTER ?= false
 DEPLOY_LLM_D ?= true
 DELETE_CLUSTER ?= false
@@ -111,7 +113,7 @@ destroy-kind-cluster:
 .PHONY: deploy-wva-emulated-on-kind
 deploy-wva-emulated-on-kind: ## Deploy WVA + llm-d on Kind (Prometheus Adapter as scaler backend)
 	@echo ">>> Deploying workload-variant-autoscaler (cluster args: $(KIND_ARGS), image: $(IMG))"
-	KIND=$(KIND) KUBECTL=$(KUBECTL) IMG=$(IMG) DEPLOY_LLM_D=$(DEPLOY_LLM_D) ENVIRONMENT=kind-emulator CREATE_CLUSTER=$(CREATE_CLUSTER) CLUSTER_GPU_TYPE=$(CLUSTER_GPU_TYPE) CLUSTER_NODES=$(CLUSTER_NODES) CLUSTER_GPUS=$(CLUSTER_GPUS) MULTI_MODEL_TESTING=$(MULTI_MODEL_TESTING) NAMESPACE_SCOPED=false SCALER_BACKEND=$(SCALER_BACKEND) \
+	KIND=$(KIND) KUBECTL=$(KUBECTL) IMG=$(IMG) DEPLOY_LLM_D=$(DEPLOY_LLM_D) ENVIRONMENT=kind-emulator CREATE_CLUSTER=$(CREATE_CLUSTER) CLUSTER_GPU_TYPE=$(CLUSTER_GPU_TYPE) CLUSTER_NODES=$(CLUSTER_NODES) CLUSTER_GPUS=$(CLUSTER_GPUS) NAMESPACE_SCOPED=false SCALER_BACKEND=$(SCALER_BACKEND) \
 		deploy/install.sh
 
 ## Undeploy WVA from the emulated environment on Kind.
@@ -295,6 +297,21 @@ test-benchmark-with-setup: deploy-e2e-infra test-benchmark
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter
 	$(GOLANGCI_LINT) run
+
+.PHONY: lint-deploy-scripts
+lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and deploy plugins
+	@echo "Syntax-checking deploy shell scripts..."
+	@bash -n deploy/install.sh
+	@for script in deploy/lib/*.sh; do bash -n "$$script"; done
+	@for script in deploy/*/install.sh; do if [ -f "$$script" ]; then bash -n "$$script"; fi; done
+	@for script in deploy/kind-emulator/*.sh; do if [ -f "$$script" ]; then bash -n "$$script"; fi; done
+	@echo "deploy script syntax OK"
+
+.PHONY: smoke-deploy-scripts
+smoke-deploy-scripts: lint-deploy-scripts ## Non-interactive deploy script smoke check (source order + arg parsing)
+	@echo "Running deploy script smoke check..."
+	@SKIP_CHECKS=true E2E_TESTS_ENABLED=true INSTALL_GATEWAY_CTRLPLANE=true ENVIRONMENT=kubernetes ./deploy/install.sh --help >/dev/null
+	@echo "deploy script smoke OK"
 
 .PHONY: lint-fix
 lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
