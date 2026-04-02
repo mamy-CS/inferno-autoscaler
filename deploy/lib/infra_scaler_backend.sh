@@ -8,7 +8,7 @@
 
 deploy_scaler_backend() {
     # Deploy scaler backend: KEDA, Prometheus Adapter, or none.
-    # OpenShift: KEDA is never Helm-installed (platform-managed); see deploy_keda in scaler_runtime.sh.
+    # OpenShift: KEDA is Helm-installed only when KEDA_HELM_INSTALL=true and CRD is missing; else platform-managed.
     # Kubernetes: deploy_keda skips Helm by default (cluster-managed); KEDA_HELM_INSTALL=true enables Helm.
     # kind-emulator: Helm when needed; shared-cluster guard uses ClusterRole keda-operator when Helm is used.
     # Use SCALER_BACKEND=none on clusters that already have an external metrics API

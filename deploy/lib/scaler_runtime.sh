@@ -68,20 +68,27 @@ stop_apiservice_guard() {
 deploy_keda() {
     log_info "Deploying KEDA (scaler backend)..."
 
-    # OpenShift: KEDA is cluster-managed (OLM/operator); never Helm-install — avoids
-    # ClusterRole/release conflicts with an existing platform KEDA.
+    # OpenShift: prefer platform-managed KEDA (OLM/operator). Do not Helm-install by default — avoids
+    # ClusterRole/release conflicts when a cluster operator already owns KEDA.
+    # When the CRD is missing (e.g. dev/CI clusters without the operator), set KEDA_HELM_INSTALL=true
+    # to install the community chart (requires permissions to install CRDs; may need SCC-tuned values).
     if [ "$ENVIRONMENT" = "openshift" ]; then
-        log_info "OpenShift: assuming platform-managed KEDA — skipping Helm install"
         if kubectl get crd scaledobjects.keda.sh >/dev/null 2>&1; then
             log_success "KEDA ScaledObject CRD is available on the cluster"
+            return
+        fi
+        if [ "${KEDA_HELM_INSTALL:-false}" = "true" ]; then
+            log_info "OpenShift: scaledobjects.keda.sh not found — installing KEDA via Helm (KEDA_HELM_INSTALL=true)"
+            # Fall through to shared Helm path below.
         else
+            log_info "OpenShift: assuming platform-managed KEDA — skipping Helm install"
             if [ "$E2E_TESTS_ENABLED" = "true" ]; then
-                log_error "OpenShift: scaledobjects.keda.sh CRD not found — install cluster KEDA before E2E (SCALER_BACKEND=keda)"
+                log_error "OpenShift: scaledobjects.keda.sh CRD not found — install the KEDA operator on the cluster or set KEDA_HELM_INSTALL=true (SCALER_BACKEND=keda)"
                 exit 1
             fi
             log_warning "KEDA ScaledObject CRD not found — ScaledObject-based scaling will not work"
+            return
         fi
-        return
     fi
 
     # Kubernetes (e.g. CKS, shared clusters): assume cluster-managed KEDA; never Helm unless opted in.

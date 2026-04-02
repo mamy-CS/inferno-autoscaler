@@ -42,7 +42,8 @@ Environment Variables:
                                      kind-emulator installs KEDA via Helm when needed; OpenShift is platform-managed only.
                                none: skips all scaler backend deployment. Use this on clusters that already have
                                      KEDA or another external metrics API installed (e.g. llmd benchmark clusters).
-  KEDA_HELM_INSTALL            When true with ENVIRONMENT=kubernetes, install/upgrade KEDA via Helm (default: false)
+  KEDA_HELM_INSTALL            When true, install/upgrade KEDA via Helm if the CRD is missing: kubernetes (default off),
+                               or openshift when the cluster has no KEDA operator (default off; avoids conflicting with platform KEDA).
   KEDA_NAMESPACE               Namespace for KEDA (default: keda-system)
   UNDEPLOY                     Undeploy mode (default: false)
   DELETE_NAMESPACES            Delete namespaces after undeploy (default: false)

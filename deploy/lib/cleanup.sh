@@ -8,8 +8,8 @@
 #
 
 undeploy_keda() {
-    if [ "$ENVIRONMENT" = "openshift" ]; then
-        log_info "OpenShift: skipping KEDA uninstall (platform-managed)"
+    if [ "$ENVIRONMENT" = "openshift" ] && [ "${KEDA_HELM_INSTALL:-false}" != "true" ]; then
+        log_info "OpenShift: skipping KEDA uninstall (platform-managed; set KEDA_HELM_INSTALL=true if this script installed KEDA via Helm)"
         return
     fi
     if [ "$ENVIRONMENT" = "kubernetes" ] && [ "${KEDA_HELM_INSTALL:-false}" != "true" ]; then

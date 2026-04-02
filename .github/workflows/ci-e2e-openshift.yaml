@@ -695,6 +695,8 @@ jobs:
           # OpenShift typically lacks HPAScaleToZero; e2e forces SCALE_TO_ZERO_ENABLED off for openshift
           # (see test/e2e/config.go). KEDA ScaledObjects support minReplicas=0 for scale-from-zero tests.
           SCALER_BACKEND: keda
+          # cluster may not ship the KEDA operator; install community KEDA when CRD is missing.
+          KEDA_HELM_INSTALL: "true"
           NAMESPACE_SCOPED: "false"
           # Pass PR-specific namespaces to install script
           LLMD_NS: ${{ env.LLMD_NAMESPACE }}
@@ -801,6 +803,7 @@ jobs:
           INSTALL_GATEWAY_CTRLPLANE: "false"
           E2E_TESTS_ENABLED: "true"
           SCALER_BACKEND: keda
+          KEDA_HELM_INSTALL: "true"
           NAMESPACE_SCOPED: "false"
           # Override namespaces for Model B stack
           LLMD_NS: ${{ env.LLMD_NAMESPACE_B }}
