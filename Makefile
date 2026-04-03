@@ -257,6 +257,13 @@ test-e2e-full: ## Run full e2e test suite
 	echo "=========================================="; \
 	exit $$TEST_EXIT_CODE
 
+# Stub for llm-d nightly reusable workflows (test_target=test-llm-d-nightly)
+# No-op; temporarily satisfies nightly CI make invocation
+# TODO: add nightly guide tests here
+.PHONY: test-llm-d-nightly
+test-llm-d-nightly:
+	@:
+
 # Convenience targets for local e2e testing
 
 # Convenience target that deploys infra + runs smoke tests.
