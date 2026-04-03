@@ -257,13 +257,6 @@ test-e2e-full: ## Run full e2e test suite
 	echo "=========================================="; \
 	exit $$TEST_EXIT_CODE
 
-# Stub for llm-d nightly reusable workflows (test_target=test-llm-d-nightly)
-# No-op; temporarily satisfies nightly CI make invocation
-# TODO: add nightly guide tests here
-.PHONY: test-llm-d-nightly
-test-llm-d-nightly:
-	@:
-
 # Convenience targets for local e2e testing
 
 # Convenience target that deploys infra + runs smoke tests.
@@ -300,6 +293,24 @@ test-benchmark: manifests generate fmt vet ## Run benchmark tests (scale-up-late
 # Convenience target that deploys infra + runs benchmark tests.
 .PHONY: test-benchmark-with-setup
 test-benchmark-with-setup: deploy-e2e-infra test-benchmark
+
+# Stub for llm-d nightly reusable workflows (test_target=nightly-test-llm-d)
+# No-op; temporarily satisfies nightly CI make invocation
+# TODO: add nightly guide tests here
+.PHONY: nightly-test-llm-d
+nightly-test-llm-d: ## Nightly CI: noop; use as test_target instead of empty string
+	@:
+
+# Shared script: deploy/lib/llm_d_nightly_install.sh
+# Canonical target for llm-d-infra nightly reusables: ENVIRONMENT=openshift|kubernetes
+.PHONY: nightly-deploy-wva-guide
+nightly-deploy-wva-guide: ## Nightly: full WVA+llm-d stack from job env (WVA_NS <- WVA_NAMESPACE or CONTROLLER_NAMESPACE)
+	@export WVA_NS="$${WVA_NS:-$${WVA_NAMESPACE:-$${CONTROLLER_NAMESPACE:-}}}"; \
+	if [ "$${ENVIRONMENT:-}" = openshift ]; then \
+		LLM_D_NIGHTLY_PLATFORM=openshift bash "$(CURDIR)/deploy/lib/llm_d_nightly_install.sh" "$(CURDIR)"; \
+	else \
+		LLM_D_NIGHTLY_PLATFORM=cks bash "$(CURDIR)/deploy/lib/llm_d_nightly_install.sh" "$(CURDIR)"; \
+	fi
 
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter
