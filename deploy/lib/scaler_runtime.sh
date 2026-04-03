@@ -68,6 +68,12 @@ stop_apiservice_guard() {
 deploy_keda() {
     log_info "Deploying KEDA (scaler backend)..."
 
+    # OpenShift E2E clusters often have no operator-managed KEDA; default Helm install when unset.
+    # Explicit KEDA_HELM_INSTALL=false still skips Helm. (CI also sets KEDA_HELM_INSTALL=true in workflow.)
+    if [ "$ENVIRONMENT" = "openshift" ] && [ "$SCALER_BACKEND" = "keda" ] && [ "$E2E_TESTS_ENABLED" = "true" ]; then
+        KEDA_HELM_INSTALL=${KEDA_HELM_INSTALL:-true}
+    fi
+
     # OpenShift: prefer platform-managed KEDA (OLM/operator). Do not Helm-install by default — avoids
     # ClusterRole/release conflicts when a cluster operator already owns KEDA.
     # When the CRD is missing (e.g. dev/CI clusters without the operator), set KEDA_HELM_INSTALL=true

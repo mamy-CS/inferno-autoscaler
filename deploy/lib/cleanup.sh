@@ -8,6 +8,9 @@
 #
 
 undeploy_keda() {
+    if [ "$ENVIRONMENT" = "openshift" ] && [ "$SCALER_BACKEND" = "keda" ] && [ "$E2E_TESTS_ENABLED" = "true" ]; then
+        KEDA_HELM_INSTALL=${KEDA_HELM_INSTALL:-true}
+    fi
     if [ "$ENVIRONMENT" = "openshift" ] && [ "${KEDA_HELM_INSTALL:-false}" != "true" ]; then
         log_info "OpenShift: skipping KEDA uninstall (platform-managed; set KEDA_HELM_INSTALL=true if this script installed KEDA via Helm)"
         return

@@ -414,6 +414,8 @@ jobs:
       MODEL_B_RELEASE: model-b-${{ github.run_id }}
       # Use the image built in the previous job
       WVA_IMAGE_TAG: ${{ needs.build-image.outputs.image_tag }}
+      # CI OpenShift clusters may lack the KEDA operator; Helm install is required for SCALER_BACKEND=keda
+      KEDA_HELM_INSTALL: "true"
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
