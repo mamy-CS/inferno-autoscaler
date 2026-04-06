@@ -135,8 +135,8 @@ func cleanupScaleFromZeroResources() {
 }
 
 // Scale-from-zero test validates that the WVA controller correctly detects pending requests
-// and scales up scale targets from zero replicas. Requires GIE queuing (ENABLE_EXPERIMENTAL_FLOW_CONTROL_LAYER
-// on EPP from install when E2E_TESTS_ENABLED=true) and an InferenceObjective (applied below in BeforeAll).
+// and scales up scale targets from zero replicas. Requires GIE queuing (flowControl feature gate
+// enabled on EPP from install when E2E_TESTS_ENABLED=true) and an InferenceObjective (applied below in BeforeAll).
 // This suite needs a scaler that allows minReplicas=0 on the scaled workload: either
 // SCALE_TO_ZERO_ENABLED=true where native HPA supports it (HPAScaleToZero), or SCALER_BACKEND=keda
 // (ScaledObject). OpenShift usually lacks HPAScaleToZero; e2e config ignores SCALE_TO_ZERO_ENABLED there,
@@ -1448,4 +1448,3 @@ var _ = Describe("Scale-From-Zero Feature with LeaderWorkerSet (single-node)", S
 		})
 	})
 })
-

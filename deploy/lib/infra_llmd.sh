@@ -240,26 +240,63 @@ deploy_llm_d_infrastructure() {
         fi
     fi
 
-    # Patch llm-d-inference-scheduler deployment to enable GIE flow control when scale-to-zero
-    # or e2e tests are enabled (required for scale-from-zero: queue metrics and queuing behavior).
+    # Patch llm-d-inference-scheduler deployment image and enable flowControl when scale-to-zero or e2e tests are enabled
+    # (required for scale-from-zero: the image must support flow control for queue metrics).
     if [ "$ENABLE_SCALE_TO_ZERO" == "true" ] || [ "$E2E_TESTS_ENABLED" == "true" ]; then
-        log_info "Patching llm-d-inference-scheduler deployment to enable flowcontrol and use a new image"
         if kubectl get deployment "$LLM_D_EPP_NAME" -n "$LLMD_NS" &> /dev/null; then
-            kubectl patch deployment "$LLM_D_EPP_NAME" -n "$LLMD_NS" --type='json' -p='[
-                {
-                    "op": "replace",
-                    "path": "/spec/template/spec/containers/0/image",
-                    "value": "'$LLM_D_INFERENCE_SCHEDULER_IMG'"
-                },
-                {
-                    "op": "add",
-                    "path": "/spec/template/spec/containers/0/env/-",
-                    "value": {
-                    "name": "ENABLE_EXPERIMENTAL_FLOW_CONTROL_LAYER",
-                    "value": "true"
+            # Get the current image from the deployment
+            local CURRENT_IMAGE=$(kubectl get deployment "$LLM_D_EPP_NAME" -n "$LLMD_NS" -o jsonpath='{.spec.template.spec.containers[0].image}')
+            
+            # Only patch if the image is different
+            if [ "$CURRENT_IMAGE" != "$LLM_D_INFERENCE_SCHEDULER_IMG" ]; then
+                log_info "Patching llm-d-inference-scheduler deployment: updating image from $CURRENT_IMAGE to $LLM_D_INFERENCE_SCHEDULER_IMG"
+                kubectl patch deployment "$LLM_D_EPP_NAME" -n "$LLMD_NS" --type='json' -p='[
+                    {
+                        "op": "replace",
+                        "path": "/spec/template/spec/containers/0/image",
+                        "value": "'$LLM_D_INFERENCE_SCHEDULER_IMG'"
                     }
-                }
-            ]'
+                ]'
+            else
+                log_info "Skipping image patch: llm-d-inference-scheduler already using $LLM_D_INFERENCE_SCHEDULER_IMG"
+            fi
+
+            # Enable flowControl feature gate in the EPP ConfigMap
+            if kubectl get configmap "$LLM_D_EPP_NAME" -n "$LLMD_NS" &> /dev/null; then
+                # Check if flowControl is already enabled
+                local CURRENT_CONFIG=$(kubectl get configmap "$LLM_D_EPP_NAME" -n "$LLMD_NS" -o jsonpath='{.data.default-plugins\.yaml}')
+                
+                if echo "$CURRENT_CONFIG" | yq eval '.featureGates // [] | contains(["flowControl"])' - | grep -q 'true'; then
+                    log_info "flowControl feature gate already enabled in EPP ConfigMap"
+                else
+                    log_info "Enabling flowControl feature gate in EPP ConfigMap $LLM_D_EPP_NAME"
+                    
+                    # Use yq to properly add flowControl to featureGates array (creates array if missing, appends if exists)
+                    local UPDATED_CONFIG=$(echo "$CURRENT_CONFIG" | yq eval '.featureGates += ["flowControl"] | .featureGates |= unique' -)
+                    
+                    # Validate that flowControl was successfully added
+                    if echo "$UPDATED_CONFIG" | yq eval '.featureGates // [] | contains(["flowControl"])' - | grep -q 'true'; then
+                        # Apply the updated config
+                        kubectl patch configmap "$LLM_D_EPP_NAME" -n "$LLMD_NS" --type='json' -p='[
+                            {
+                                "op": "replace",
+                                "path": "/data/default-plugins.yaml",
+                                "value": "'"$(echo "$UPDATED_CONFIG" | sed 's/"/\\"/g' | tr '\n' '\r' | sed 's/\r/\\n/g')"'"
+                            }
+                        ]'
+                        
+                        # Restart deployment to pick up the config change
+                        log_info "Restarting $LLM_D_EPP_NAME deployment to apply flowControl feature gate"
+                        kubectl rollout restart deployment "$LLM_D_EPP_NAME" -n "$LLMD_NS"
+                    else
+                        log_error "Failed to add flowControl to featureGates in EPP ConfigMap - YAML structure may be invalid or unexpected"
+                        log_error "Current config structure: $(echo "$CURRENT_CONFIG" | yq eval '.' - 2>&1 | head -5)"
+                        exit 1
+                    fi
+                fi
+            else
+                log_warning "ConfigMap $LLM_D_EPP_NAME not found in $LLMD_NS"
+            fi
         else
             log_warning "Skipping inference-scheduler patch: Deployment $LLM_D_EPP_NAME not found in $LLMD_NS"
         fi
