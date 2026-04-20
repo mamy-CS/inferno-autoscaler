@@ -25,7 +25,7 @@ func EnsureModelServiceLWS(ctx context.Context, crClient client.Client, k8sClien
 	err := crClient.Get(ctx, client.ObjectKey{Name: lwsName, Namespace: namespace}, existingLWS)
 	if err == nil {
 		// LWS exists, check if it's ready
-		if existingLWS.Status.ReadyReplicas > 0 && modelServiceLWSMatchesDesired(existingLWS, desiredLWS) {
+		if existingLWS.Status.ReadyReplicas > 0 && modelServiceLWSMatchesDesired(*existingLWS, *desiredLWS) {
 			return nil
 		}
 		// Not ready, delete and recreate
@@ -65,10 +65,7 @@ func EnsureModelServiceLWS(ctx context.Context, crClient client.Client, k8sClien
 	return err
 }
 
-func modelServiceLWSMatchesDesired(existing, desired *lwsv1.LeaderWorkerSet) bool {
-	if existing == nil || desired == nil {
-		return false
-	}
+func modelServiceLWSMatchesDesired(existing, desired lwsv1.LeaderWorkerSet) bool {
 	return reflect.DeepEqual(existing.Spec, desired.Spec) &&
 		reflect.DeepEqual(existing.Labels, desired.Labels) &&
 		reflect.DeepEqual(existing.Annotations, desired.Annotations)

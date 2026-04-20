@@ -44,7 +44,7 @@ func EnsureModelService(ctx context.Context, k8sClient *kubernetes.Clientset, na
 
 	existingDeployment, err := k8sClient.AppsV1().Deployments(namespace).Get(ctx, deploymentName, metav1.GetOptions{})
 	if err == nil {
-		if existingDeployment.Status.ReadyReplicas > 0 && modelServiceDeploymentMatchesDesired(existingDeployment, desiredDeployment) {
+		if existingDeployment.Status.ReadyReplicas > 0 && modelServiceDeploymentMatchesDesired(*existingDeployment, *desiredDeployment) {
 			return nil
 		}
 		propagationPolicy := metav1.DeletePropagationForeground
@@ -75,10 +75,7 @@ func EnsureModelService(ctx context.Context, k8sClient *kubernetes.Clientset, na
 	return err
 }
 
-func modelServiceDeploymentMatchesDesired(existing, desired *appsv1.Deployment) bool {
-	if existing == nil || desired == nil {
-		return false
-	}
+func modelServiceDeploymentMatchesDesired(existing, desired appsv1.Deployment) bool {
 	return reflect.DeepEqual(existing.Spec.Selector, desired.Spec.Selector) &&
 		reflect.DeepEqual(existing.Spec.Template.Labels, desired.Spec.Template.Labels) &&
 		reflect.DeepEqual(existing.Spec.Template.Spec, desired.Spec.Template.Spec)
