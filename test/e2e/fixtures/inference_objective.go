@@ -21,25 +21,32 @@ var inferenceObjectiveGVR = schema.GroupVersionResource{
 	Resource: "inferenceobjectives",
 }
 
-// EnsureInferenceObjective creates the e2e-default InferenceObjective for GIE flow-control
+const defaultInferenceObjectiveName = "e2e-default"
+
+// EnsureInferenceObjective creates the default InferenceObjective for GIE flow-control
 // queuing when the CRD exists. poolName must match the InferencePool metadata.name (typically the
 // EPP Service name with an "-epp" suffix removed, e.g. gaie-sim-epp → gaie-sim).
 //
 // Returns applied=true if the object exists or was created. If the InferenceObjective API is not
 // available on the cluster, returns (false, nil).
 func EnsureInferenceObjective(ctx context.Context, dc dynamic.Interface, namespace, poolName string) (applied bool, err error) {
+	return EnsureInferenceObjectiveNamed(ctx, dc, namespace, defaultInferenceObjectiveName, poolName)
+}
+
+// EnsureInferenceObjectiveNamed creates or updates a named InferenceObjective when the CRD exists.
+func EnsureInferenceObjectiveNamed(ctx context.Context, dc dynamic.Interface, namespace, objectiveName, poolName string) (applied bool, err error) {
 	ri := dc.Resource(inferenceObjectiveGVR).Namespace(namespace)
 	poolGroup, gErr := resolveInferencePoolGroup(ctx, dc, namespace, poolName)
 	if gErr != nil {
 		return false, gErr
 	}
-	obj := buildInferenceObjective(namespace, poolName, poolGroup)
+	obj := buildInferenceObjective(namespace, objectiveName, poolName, poolGroup)
 
 	if _, cErr := ri.Create(ctx, obj, metav1.CreateOptions{}); cErr != nil {
 		if apierrors.IsAlreadyExists(cErr) {
-			current, getErr := ri.Get(ctx, "e2e-default", metav1.GetOptions{})
+			current, getErr := ri.Get(ctx, objectiveName, metav1.GetOptions{})
 			if getErr != nil {
-				return false, fmt.Errorf("get existing InferenceObjective e2e-default: %w", getErr)
+				return false, fmt.Errorf("get existing InferenceObjective %s: %w", objectiveName, getErr)
 			}
 
 			currentSpec, _, specErr := unstructured.NestedMap(current.Object, "spec")
@@ -58,34 +65,39 @@ func EnsureInferenceObjective(ctx context.Context, dc dynamic.Interface, namespa
 				return false, fmt.Errorf("set desired InferenceObjective spec: %w", setErr)
 			}
 			if _, uErr := ri.Update(ctx, current, metav1.UpdateOptions{}); uErr != nil {
-				return false, fmt.Errorf("update InferenceObjective e2e-default: %w", uErr)
+				return false, fmt.Errorf("update InferenceObjective %s: %w", objectiveName, uErr)
 			}
 			return true, nil
 		}
 		if inferenceObjectiveAPIMissing(cErr) {
 			return false, nil
 		}
-		return false, fmt.Errorf("create InferenceObjective e2e-default: %w", cErr)
+		return false, fmt.Errorf("create InferenceObjective %s: %w", objectiveName, cErr)
 	}
 	return true, nil
 }
 
-// DeleteInferenceObjective removes e2e-default InferenceObjective if present.
+// DeleteInferenceObjective removes the default InferenceObjective if present.
 func DeleteInferenceObjective(ctx context.Context, dc dynamic.Interface, namespace string) error {
-	err := dc.Resource(inferenceObjectiveGVR).Namespace(namespace).Delete(ctx, "e2e-default", metav1.DeleteOptions{})
+	return DeleteInferenceObjectiveNamed(ctx, dc, namespace, defaultInferenceObjectiveName)
+}
+
+// DeleteInferenceObjectiveNamed removes a named InferenceObjective if present.
+func DeleteInferenceObjectiveNamed(ctx context.Context, dc dynamic.Interface, namespace, objectiveName string) error {
+	err := dc.Resource(inferenceObjectiveGVR).Namespace(namespace).Delete(ctx, objectiveName, metav1.DeleteOptions{})
 	if apierrors.IsNotFound(err) || inferenceObjectiveAPIMissing(err) {
 		return nil
 	}
 	return err
 }
 
-func buildInferenceObjective(namespace, poolName, poolGroup string) *unstructured.Unstructured {
+func buildInferenceObjective(namespace, objectiveName, poolName, poolGroup string) *unstructured.Unstructured {
 	return &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "inference.networking.x-k8s.io/v1alpha2",
 			"kind":       "InferenceObjective",
 			"metadata": map[string]interface{}{
-				"name":      "e2e-default",
+				"name":      objectiveName,
 				"namespace": namespace,
 			},
 			"spec": map[string]interface{}{
@@ -145,6 +157,5 @@ func resolveInferencePoolGroup(ctx context.Context, dc dynamic.Interface, namesp
 		return "", fmt.Errorf("detect InferencePool API group for %q: %w", poolName, err)
 	}
 
-	// Default to the primary group used by llm-d charts.
-	return "inference.networking.k8s.io", nil
+	return "", fmt.Errorf("detect InferencePool API group for %q: no supported InferencePool resource found", poolName)
 }
