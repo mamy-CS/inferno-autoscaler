@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -103,15 +104,17 @@ func buildInferenceObjective(namespace, objectiveName, poolName, poolGroup strin
 
 // inferenceObjectiveSpecEqual compares spec semantically (priority unset vs 0 matches).
 func inferenceObjectiveSpecEqual(a, b infextv1alpha2.InferenceObjectiveSpec) bool {
-	ap := 0
-	if a.Priority != nil {
-		ap = *a.Priority
+	return apiequality.Semantic.DeepEqual(
+		normalizeInferenceObjectiveSpec(a),
+		normalizeInferenceObjectiveSpec(b),
+	)
+}
+
+func normalizeInferenceObjectiveSpec(spec infextv1alpha2.InferenceObjectiveSpec) infextv1alpha2.InferenceObjectiveSpec {
+	if spec.Priority == nil {
+		spec.Priority = ptr.To(0)
 	}
-	bp := 0
-	if b.Priority != nil {
-		bp = *b.Priority
-	}
-	return ap == bp && a.PoolRef == b.PoolRef
+	return spec
 }
 
 func inferenceObjectiveAPIMissing(err error) bool {
