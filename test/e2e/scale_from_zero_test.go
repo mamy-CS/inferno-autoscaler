@@ -208,13 +208,13 @@ var _ = Describe("Scale-From-Zero Feature", Serial, Label("full"), Ordered, func
 		if poolRefName == "" {
 			poolRefName = strings.TrimSuffix(eppServiceName, "-epp")
 		}
-		ioApplied, errIO := fixtures.EnsureInferenceObjective(ctx, dynamicClient, cfg.LLMDNamespace, poolRefName)
+		ioApplied, errIO := fixtures.EnsureInferenceObjective(ctx, crClient, cfg.LLMDNamespace, poolRefName)
 		Expect(errIO).NotTo(HaveOccurred(), "EnsureInferenceObjective should not return a hard error")
 		if !ioApplied {
 			Skip("InferenceObjective API not available on cluster; scale-from-zero requires inference.networking.x-k8s.io InferenceObjective")
 		}
 		DeferCleanup(func() {
-			_ = fixtures.DeleteInferenceObjective(context.Background(), dynamicClient, cfg.LLMDNamespace)
+			_ = fixtures.DeleteInferenceObjective(context.Background(), crClient, cfg.LLMDNamespace)
 		})
 
 		By("Creating model service deployment with 0 initial replicas")
