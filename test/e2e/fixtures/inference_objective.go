@@ -4,22 +4,18 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"reflect"
 	"strings"
 
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/client-go/dynamic"
+	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	infextv1alpha2 "sigs.k8s.io/gateway-api-inference-extension/apix/v1alpha2"
 )
-
-var inferenceObjectiveGVR = schema.GroupVersionResource{
-	Group:    "inference.networking.x-k8s.io",
-	Version:  "v1alpha2",
-	Resource: "inferenceobjectives",
-}
 
 const defaultInferenceObjectiveName = "e2e-default"
 
@@ -29,43 +25,32 @@ const defaultInferenceObjectiveName = "e2e-default"
 //
 // Returns applied=true if the object exists or was created. If the InferenceObjective API is not
 // available on the cluster, returns (false, nil).
-func EnsureInferenceObjective(ctx context.Context, dc dynamic.Interface, namespace, poolName string) (applied bool, err error) {
-	return EnsureInferenceObjectiveNamed(ctx, dc, namespace, defaultInferenceObjectiveName, poolName)
+func EnsureInferenceObjective(ctx context.Context, crClient client.Client, namespace, poolName string) (applied bool, err error) {
+	return EnsureInferenceObjectiveNamed(ctx, crClient, namespace, defaultInferenceObjectiveName, poolName)
 }
 
 // EnsureInferenceObjectiveNamed creates or updates a named InferenceObjective when the CRD exists.
-func EnsureInferenceObjectiveNamed(ctx context.Context, dc dynamic.Interface, namespace, objectiveName, poolName string) (applied bool, err error) {
-	ri := dc.Resource(inferenceObjectiveGVR).Namespace(namespace)
-	poolGroup, gErr := resolveInferencePoolGroup(ctx, dc, namespace, poolName)
+func EnsureInferenceObjectiveNamed(ctx context.Context, crClient client.Client, namespace, objectiveName, poolName string) (applied bool, err error) {
+	poolGroup, gErr := resolveInferencePoolGroup(ctx, crClient, namespace, poolName)
 	if gErr != nil {
 		return false, gErr
 	}
-	obj := buildInferenceObjective(namespace, objectiveName, poolName, poolGroup)
+	desired := buildInferenceObjective(namespace, objectiveName, poolName, poolGroup)
 
-	if _, cErr := ri.Create(ctx, obj, metav1.CreateOptions{}); cErr != nil {
+	if cErr := crClient.Create(ctx, desired); cErr != nil {
 		if apierrors.IsAlreadyExists(cErr) {
-			current, getErr := ri.Get(ctx, objectiveName, metav1.GetOptions{})
+			key := client.ObjectKey{Namespace: namespace, Name: objectiveName}
+			current := &infextv1alpha2.InferenceObjective{}
+			getErr := crClient.Get(ctx, key, current)
 			if getErr != nil {
 				return false, fmt.Errorf("get existing InferenceObjective %s: %w", objectiveName, getErr)
 			}
-
-			currentSpec, _, specErr := unstructured.NestedMap(current.Object, "spec")
-			if specErr != nil {
-				return false, fmt.Errorf("read existing InferenceObjective spec: %w", specErr)
-			}
-			desiredSpec, _, desiredErr := unstructured.NestedMap(obj.Object, "spec")
-			if desiredErr != nil {
-				return false, fmt.Errorf("read desired InferenceObjective spec: %w", desiredErr)
-			}
-			if reflect.DeepEqual(currentSpec, desiredSpec) {
+			if inferenceObjectiveSpecEqual(current.Spec, desired.Spec) {
 				return true, nil
 			}
-
-			if setErr := unstructured.SetNestedMap(current.Object, desiredSpec, "spec"); setErr != nil {
-				return false, fmt.Errorf("set desired InferenceObjective spec: %w", setErr)
-			}
-			if _, uErr := ri.Update(ctx, current, metav1.UpdateOptions{}); uErr != nil {
-				return false, fmt.Errorf("update InferenceObjective %s: %w", objectiveName, uErr)
+			current.Spec = desired.Spec
+			if upErr := crClient.Update(ctx, current); upErr != nil {
+				return false, fmt.Errorf("update InferenceObjective %s: %w", objectiveName, upErr)
 			}
 			return true, nil
 		}
@@ -78,38 +63,58 @@ func EnsureInferenceObjectiveNamed(ctx context.Context, dc dynamic.Interface, na
 }
 
 // DeleteInferenceObjective removes the default InferenceObjective if present.
-func DeleteInferenceObjective(ctx context.Context, dc dynamic.Interface, namespace string) error {
-	return DeleteInferenceObjectiveNamed(ctx, dc, namespace, defaultInferenceObjectiveName)
+func DeleteInferenceObjective(ctx context.Context, crClient client.Client, namespace string) error {
+	return DeleteInferenceObjectiveNamed(ctx, crClient, namespace, defaultInferenceObjectiveName)
 }
 
 // DeleteInferenceObjectiveNamed removes a named InferenceObjective if present.
-func DeleteInferenceObjectiveNamed(ctx context.Context, dc dynamic.Interface, namespace, objectiveName string) error {
-	err := dc.Resource(inferenceObjectiveGVR).Namespace(namespace).Delete(ctx, objectiveName, metav1.DeleteOptions{})
+func DeleteInferenceObjectiveNamed(ctx context.Context, crClient client.Client, namespace, objectiveName string) error {
+	err := crClient.Delete(ctx, &infextv1alpha2.InferenceObjective{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      objectiveName,
+			Namespace: namespace,
+		},
+	})
 	if apierrors.IsNotFound(err) || inferenceObjectiveAPIMissing(err) {
 		return nil
 	}
 	return err
 }
 
-func buildInferenceObjective(namespace, objectiveName, poolName, poolGroup string) *unstructured.Unstructured {
-	return &unstructured.Unstructured{
-		Object: map[string]interface{}{
-			"apiVersion": "inference.networking.x-k8s.io/v1alpha2",
-			"kind":       "InferenceObjective",
-			"metadata": map[string]interface{}{
-				"name":      objectiveName,
-				"namespace": namespace,
-			},
-			"spec": map[string]interface{}{
-				"priority": int64(0),
-				"poolRef": map[string]interface{}{
-					"name":  poolName,
-					"kind":  "InferencePool",
-					"group": poolGroup,
-				},
+func buildInferenceObjective(namespace, objectiveName, poolName, poolGroup string) *infextv1alpha2.InferenceObjective {
+	return &infextv1alpha2.InferenceObjective{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: infextv1alpha2.SchemeGroupVersion.String(),
+			Kind:       "InferenceObjective",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      objectiveName,
+			Namespace: namespace,
+		},
+		Spec: infextv1alpha2.InferenceObjectiveSpec{
+			Priority: ptr.To(0),
+			PoolRef: infextv1alpha2.PoolObjectReference{
+				Group: infextv1alpha2.Group(poolGroup),
+				Kind:  infextv1alpha2.Kind("InferencePool"),
+				Name:  infextv1alpha2.ObjectName(poolName),
 			},
 		},
 	}
+}
+
+// inferenceObjectiveSpecEqual compares spec semantically (priority unset vs 0 matches).
+func inferenceObjectiveSpecEqual(a, b infextv1alpha2.InferenceObjectiveSpec) bool {
+	return apiequality.Semantic.DeepEqual(
+		normalizeInferenceObjectiveSpec(a),
+		normalizeInferenceObjectiveSpec(b),
+	)
+}
+
+func normalizeInferenceObjectiveSpec(spec infextv1alpha2.InferenceObjectiveSpec) infextv1alpha2.InferenceObjectiveSpec {
+	if spec.Priority == nil {
+		spec.Priority = ptr.To(0)
+	}
+	return spec
 }
 
 func inferenceObjectiveAPIMissing(err error) bool {
@@ -133,10 +138,10 @@ func inferenceObjectiveAPIMissing(err error) bool {
 	if details == nil {
 		return false
 	}
-	return details.Group == inferenceObjectiveGVR.Group && details.Kind == inferenceObjectiveGVR.Resource
+	return details.Group == infextv1alpha2.GroupName && details.Kind == "inferenceobjectives"
 }
 
-func resolveInferencePoolGroup(ctx context.Context, dc dynamic.Interface, namespace, poolName string) (string, error) {
+func resolveInferencePoolGroup(ctx context.Context, crClient client.Client, namespace, poolName string) (string, error) {
 	if envPoolGroup := os.Getenv("POOL_GROUP"); envPoolGroup != "" {
 		return envPoolGroup, nil
 	}
@@ -147,7 +152,10 @@ func resolveInferencePoolGroup(ctx context.Context, dc dynamic.Interface, namesp
 	}
 
 	for _, gvr := range inferencePoolCandidates {
-		_, err := dc.Resource(gvr).Namespace(namespace).Get(ctx, poolName, metav1.GetOptions{})
+		pool := &unstructured.Unstructured{}
+		pool.SetAPIVersion(gvr.Group + "/" + gvr.Version)
+		pool.SetKind("InferencePool")
+		err := crClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: poolName}, pool)
 		if err == nil {
 			return gvr.Group, nil
 		}
