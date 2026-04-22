@@ -241,8 +241,8 @@ var _ = Describe("Smoke Tests - Infrastructure Readiness", Label("smoke", "full"
 
 	Context("External metrics namespace isolation", Serial, Ordered, func() {
 		var (
-			primaryNamespace   = cfg.LLMDNamespace
-			secondaryNamespace = cfg.LLMDNamespace + "-mt"
+			primaryNamespace   = "llm-d-sim"
+			secondaryNamespace = "llm-d-sim-mt"
 			sharedVAName       = "smoke-test-mt-shared-va"
 			primaryModelName   = "smoke-test-mt-primary-ms"
 			secondaryModelName = "smoke-test-mt-secondary-ms"
@@ -252,16 +252,6 @@ var _ = Describe("Smoke Tests - Infrastructure Readiness", Label("smoke", "full"
 		BeforeAll(func() {
 			if cfg.ScalerBackend == scalerBackendKeda {
 				Skip("Namespace-isolation external metrics check is specific to Prometheus Adapter backend")
-			}
-			if primaryNamespace == "" {
-				primaryNamespace = cfg.LLMDNamespace
-			}
-			if primaryNamespace == "" {
-				// SharedConfig normally sets LLMD namespace, but keep a defensive default to avoid invalid names.
-				primaryNamespace = "llm-d-sim"
-			}
-			if secondaryNamespace == "-mt" {
-				secondaryNamespace = primaryNamespace + "-mt"
 			}
 
 			By("Creating secondary namespace for isolation test")
@@ -340,9 +330,9 @@ var _ = Describe("Smoke Tests - Infrastructure Readiness", Label("smoke", "full"
 
 	Context("Dual namespace-scoped controllers isolation", Serial, Ordered, func() {
 		var (
-			primaryNamespace     = cfg.LLMDNamespace
-			secondaryNamespace   = cfg.LLMDNamespace + "-dual"
-			secondaryController  = cfg.WVANamespace + "-dual"
+			primaryNamespace     = "llm-d-sim"
+			secondaryNamespace   = "llm-d-sim-dual"
+			secondaryController  = "workload-variant-autoscaler-system-dual"
 			secondaryReleaseName = "wva-dual-secondary"
 			primaryModelName     = "smoke-test-dual-primary-ms"
 			secondaryModelName   = "smoke-test-dual-secondary-ms"
@@ -357,21 +347,6 @@ var _ = Describe("Smoke Tests - Infrastructure Readiness", Label("smoke", "full"
 			}
 			if cfg.Environment != envKindEmulator {
 				Skip("Dual-controller smoke scenario currently targets kind-emulator setup")
-			}
-			if primaryNamespace == "" {
-				primaryNamespace = cfg.LLMDNamespace
-			}
-			if primaryNamespace == "" {
-				primaryNamespace = "llm-d-sim"
-			}
-			if secondaryNamespace == "-dual" {
-				secondaryNamespace = primaryNamespace + "-dual"
-			}
-			if secondaryController == "" {
-				secondaryController = cfg.WVANamespace
-			}
-			if secondaryController == "" || secondaryController == "-dual" {
-				secondaryController = "workload-variant-autoscaler-system-dual"
 			}
 
 			By("Creating secondary workload namespace")
