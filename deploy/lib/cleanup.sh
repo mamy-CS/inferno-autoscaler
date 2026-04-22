@@ -29,12 +29,6 @@ undeploy_prometheus_adapter() {
     # Stop the APIService guard if running
     stop_apiservice_guard
 
-    if [ "${ALLOW_SHARED_METRICS_MUTATION:-false}" != "true" ]; then
-        log_warning "Skipping Prometheus Adapter uninstall for shared-cluster safety (ALLOW_SHARED_METRICS_MUTATION=false)"
-        log_warning "Set ALLOW_SHARED_METRICS_MUTATION=true only when this script owns the shared adapter release"
-        return
-    fi
-
     helm uninstall "$PROMETHEUS_ADAPTER_RELEASE_NAME" -n "$MONITORING_NAMESPACE" 2>/dev/null || \
         log_warning "Prometheus Adapter not found or already uninstalled"
 

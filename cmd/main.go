@@ -25,7 +25,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
@@ -345,7 +344,6 @@ func main() {
 	}
 
 	watchNS := cfg.WatchNamespace()
-	clusterScoped := watchNS == ""
 	if watchNS != "" {
 		setupLog.Info("Watching single namespace", "namespace", watchNS)
 		mgrOptions.Cache = cache.Options{
@@ -373,28 +371,6 @@ func main() {
 					Label:      wvaConfigSelector,
 				},
 			},
-		}
-	}
-
-	controllerInstance := os.Getenv(metrics.ControllerInstanceEnvVar)
-	if clusterScoped && controllerInstance == "" {
-		setupLog.Info(
-			"Running cluster-scoped without CONTROLLER_INSTANCE; this can cause multi-tenant interference when multiple WVA controllers coexist",
-			"recommendedAction", "Set watch-namespace or CONTROLLER_INSTANCE for isolation",
-		)
-		if strictRaw := os.Getenv("WVA_STRICT_MULTI_TENANCY"); strictRaw != "" {
-			strict, parseErr := strconv.ParseBool(strictRaw)
-			if parseErr != nil {
-				setupLog.Error(parseErr, "invalid WVA_STRICT_MULTI_TENANCY value", "value", strictRaw)
-				os.Exit(1)
-			}
-			if strict {
-				setupLog.Error(
-					errors.New("unsafe multi-tenancy topology"),
-					"Refusing to start: cluster-scoped controller requires CONTROLLER_INSTANCE when WVA_STRICT_MULTI_TENANCY is true",
-				)
-				os.Exit(1)
-			}
 		}
 	}
 

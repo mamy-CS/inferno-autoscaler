@@ -662,7 +662,6 @@ Each guide includes platform-specific examples, troubleshooting, and quick start
 | `DEPLOY_WVA` | Deploy WVA controller | `true` |
 | `DEPLOY_LLM_D` | Deploy llm-d infrastructure | `true` |
 | `DEPLOY_PROMETHEUS_ADAPTER` | Deploy Prometheus Adapter | `true` |
-| `ALLOW_SHARED_METRICS_MUTATION` | Allow patch/uninstall of shared external metrics resources (`external.metrics.k8s.io` / Prometheus Adapter) | `false` |
 | `DEPLOY_VA` | Deploy VariantAutoscaling CR via WVA Helm chart | `false` |
 | `DEPLOY_HPA` | Deploy HPA via WVA Helm chart | `false` |
 | `INFRA_ONLY` | Deploy only infrastructure (skip VA/HPA) | `false` |

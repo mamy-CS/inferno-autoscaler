@@ -262,33 +262,24 @@ deploy_prometheus_adapter() {
             log_info "external.metrics.k8s.io APIService already points to $PROMETHEUS_ADAPTER_SERVICE_NAME in $MONITORING_NAMESPACE"
         else
             log_warning "external.metrics.k8s.io APIService points to '$current_svc' in '$current_ns'"
-            if [ "${ALLOW_SHARED_METRICS_MUTATION:-false}" != "true" ]; then
-                log_warning "Skipping APIService patch for shared-cluster safety (ALLOW_SHARED_METRICS_MUTATION=false)"
-                log_warning "Set ALLOW_SHARED_METRICS_MUTATION=true only when this install owns external.metrics.k8s.io"
-            else
-                log_info "Patching APIService to point to Prometheus Adapter in $MONITORING_NAMESPACE"
-                kubectl patch apiservice "$EXTERNAL_METRICS_APISERVICE_NAME" --type=merge -p "{
-                    \"spec\": {
-                        \"insecureSkipTLSVerify\": true,
-                        \"service\": {
-                            \"name\": \"$PROMETHEUS_ADAPTER_SERVICE_NAME\",
-                            \"namespace\": \"$MONITORING_NAMESPACE\"
-                        }
+            log_info "Patching APIService to point to Prometheus Adapter in $MONITORING_NAMESPACE"
+            kubectl patch apiservice "$EXTERNAL_METRICS_APISERVICE_NAME" --type=merge -p "{
+                \"spec\": {
+                    \"insecureSkipTLSVerify\": true,
+                    \"service\": {
+                        \"name\": \"$PROMETHEUS_ADAPTER_SERVICE_NAME\",
+                        \"namespace\": \"$MONITORING_NAMESPACE\"
                     }
-                }" && log_success "APIService patched to use Prometheus Adapter" \
-                   || log_warning "Failed to patch external.metrics.k8s.io APIService — HPA may not work"
-            fi
+                }
+            }" && log_success "APIService patched to use Prometheus Adapter" \
+               || log_warning "Failed to patch external.metrics.k8s.io APIService — HPA may not work"
         fi
 
         # Start background guard to prevent KEDA from reclaiming the APIService.
         # KEDA's operator continuously reconciles the APIService back to its own
         # metrics server within ~2 minutes of any patch. The guard re-patches it
         # every 10 seconds without modifying KEDA itself.
-        if [ "${ALLOW_SHARED_METRICS_MUTATION:-false}" = "true" ]; then
-            start_apiservice_guard "$MONITORING_NAMESPACE"
-        else
-            log_info "Skipping APIService guard (ALLOW_SHARED_METRICS_MUTATION=false)"
-        fi
+        start_apiservice_guard "$MONITORING_NAMESPACE"
     else
         log_warning "external.metrics.k8s.io APIService not found — skipping patch"
     fi
