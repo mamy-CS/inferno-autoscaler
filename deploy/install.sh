@@ -122,6 +122,9 @@ KEDA_NAMESPACE=${KEDA_NAMESPACE:-keda-system}
 KEDA_CHART_VERSION=${KEDA_CHART_VERSION:-2.19.0}
 # kubernetes: default false (cluster-managed KEDA); set true to let this script install/upgrade KEDA via Helm
 KEDA_HELM_INSTALL=${KEDA_HELM_INSTALL:-false}
+# Shared-cluster safety: by default, do not mutate or uninstall shared external metrics plumbing.
+# Set true only for dedicated clusters where this installer owns the metrics adapter/APIService.
+ALLOW_SHARED_METRICS_MUTATION=${ALLOW_SHARED_METRICS_MUTATION:-false}
 
 # Environment-related variables
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

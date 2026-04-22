@@ -153,6 +153,9 @@ spec:
           value: "my-instance-id"
 ```
 
+For stricter safety on shared clusters, set `WVA_STRICT_MULTI_TENANCY=true`. With this
+enabled, WVA refuses to start when running cluster-scoped without a `CONTROLLER_INSTANCE`.
+
 ### VariantAutoscaling Labels
 
 When `controllerInstance` is set, the Helm chart automatically adds the label to VA resources:
@@ -219,6 +222,7 @@ spec:
         selector:
           matchLabels:
             variant_name: "llama-8b"
+            exported_namespace: "llm-d"
             controller_instance: "my-instance-id"
 ```
 

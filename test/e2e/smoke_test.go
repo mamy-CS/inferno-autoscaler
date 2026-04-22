@@ -1,7 +1,11 @@
 package e2e
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -19,6 +23,38 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/constants"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/test/e2e/fixtures"
 )
+
+type externalMetricValueList struct {
+	Items []struct {
+		MetricLabels map[string]string `json:"metricLabels"`
+	} `json:"items"`
+}
+
+func splitImage(image string) (string, string) {
+	lastColon := strings.LastIndex(image, ":")
+	lastSlash := strings.LastIndex(image, "/")
+	if lastColon == -1 || lastColon < lastSlash {
+		return image, "latest"
+	}
+	return image[:lastColon], image[lastColon+1:]
+}
+
+func resolveWVAChartPath() (string, error) {
+	candidates := []string{
+		"./charts/workload-variant-autoscaler",
+		"../../charts/workload-variant-autoscaler",
+	}
+	for _, p := range candidates {
+		if _, err := os.Stat(p); err == nil {
+			abs, absErr := filepath.Abs(p)
+			if absErr != nil {
+				return "", absErr
+			}
+			return abs, nil
+		}
+	}
+	return "", fmt.Errorf("unable to locate workload-variant-autoscaler chart path (tried %v)", candidates)
+}
 
 // cleanupSmokeTestResources deletes all resources created by smoke tests to ensure clean state
 func cleanupSmokeTestResources() {
@@ -200,6 +236,277 @@ var _ = Describe("Smoke Tests - Infrastructure Readiness", Label("smoke", "full"
 					g.Expect(ready).To(BeNumerically(">", 0), "At least one KEDA operator pod should be ready")
 				}).Should(Succeed())
 			})
+		})
+	})
+
+	Context("External metrics namespace isolation", Serial, Ordered, func() {
+		var (
+			primaryNamespace   = cfg.LLMDNamespace
+			secondaryNamespace = cfg.LLMDNamespace + "-mt"
+			sharedVAName       = "smoke-test-mt-shared-va"
+			primaryModelName   = "smoke-test-mt-primary-ms"
+			secondaryModelName = "smoke-test-mt-secondary-ms"
+			poolName           = "smoke-test-mt-pool"
+		)
+
+		BeforeAll(func() {
+			if cfg.ScalerBackend == scalerBackendKeda {
+				Skip("Namespace-isolation external metrics check is specific to Prometheus Adapter backend")
+			}
+			if primaryNamespace == "" {
+				primaryNamespace = cfg.LLMDNamespace
+			}
+			if primaryNamespace == "" {
+				// SharedConfig normally sets LLMD namespace, but keep a defensive default to avoid invalid names.
+				primaryNamespace = "llm-d-sim"
+			}
+			if secondaryNamespace == "-mt" {
+				secondaryNamespace = primaryNamespace + "-mt"
+			}
+
+			By("Creating secondary namespace for isolation test")
+			_, err := k8sClient.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: secondaryNamespace,
+				},
+			}, metav1.CreateOptions{})
+			if err != nil && !errors.IsAlreadyExists(err) {
+				Expect(err).NotTo(HaveOccurred(), "Failed to create secondary namespace")
+			}
+
+			DeferCleanup(func() {
+				propagation := metav1.DeletePropagationBackground
+				_ = k8sClient.CoreV1().Namespaces().Delete(ctx, secondaryNamespace, metav1.DeleteOptions{
+					PropagationPolicy: &propagation,
+				})
+			})
+
+			By("Creating model services in both namespaces with overlapping VA name")
+			err = fixtures.EnsureModelService(ctx, k8sClient, primaryNamespace, primaryModelName, poolName, cfg.ModelID, cfg.UseSimulator, cfg.MaxNumSeqs)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create primary model service")
+			err = fixtures.EnsureService(ctx, k8sClient, primaryNamespace, primaryModelName, primaryModelName+"-decode", 8000)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create primary model service Service")
+			err = fixtures.EnsureServiceMonitor(ctx, crClient, cfg.MonitoringNS, primaryNamespace, primaryModelName, primaryModelName+"-decode")
+			Expect(err).NotTo(HaveOccurred(), "Failed to create primary ServiceMonitor")
+
+			err = fixtures.EnsureModelService(ctx, k8sClient, secondaryNamespace, secondaryModelName, poolName, cfg.ModelID, cfg.UseSimulator, cfg.MaxNumSeqs)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create secondary model service")
+			err = fixtures.EnsureService(ctx, k8sClient, secondaryNamespace, secondaryModelName, secondaryModelName+"-decode", 8000)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create secondary model service Service")
+			err = fixtures.EnsureServiceMonitor(ctx, crClient, cfg.MonitoringNS, secondaryNamespace, secondaryModelName, secondaryModelName+"-decode")
+			Expect(err).NotTo(HaveOccurred(), "Failed to create secondary ServiceMonitor")
+
+			By("Creating overlapping VariantAutoscaling names in both namespaces")
+			err = fixtures.EnsureVariantAutoscalingWithDefaults(ctx, crClient, primaryNamespace, sharedVAName, primaryModelName+"-decode", cfg.ModelID, "H100", "")
+			Expect(err).NotTo(HaveOccurred(), "Failed to create primary VariantAutoscaling")
+			err = fixtures.EnsureVariantAutoscalingWithDefaults(ctx, crClient, secondaryNamespace, sharedVAName, secondaryModelName+"-decode", cfg.ModelID, "H100", "")
+			Expect(err).NotTo(HaveOccurred(), "Failed to create secondary VariantAutoscaling")
+		})
+
+		It("should return exactly one external metric item when exported_namespace is selected", func() {
+			By("Waiting for both VAs to be reconciled")
+			Eventually(func(g Gomega) {
+				primaryVA := &variantautoscalingv1alpha1.VariantAutoscaling{}
+				err := crClient.Get(ctx, client.ObjectKey{Name: sharedVAName, Namespace: primaryNamespace}, primaryVA)
+				g.Expect(err).NotTo(HaveOccurred())
+				primaryCondition := variantautoscalingv1alpha1.GetCondition(primaryVA, variantautoscalingv1alpha1.TypeTargetResolved)
+				g.Expect(primaryCondition).NotTo(BeNil())
+				g.Expect(primaryCondition.Status).To(Equal(metav1.ConditionTrue))
+
+				secondaryVA := &variantautoscalingv1alpha1.VariantAutoscaling{}
+				err = crClient.Get(ctx, client.ObjectKey{Name: sharedVAName, Namespace: secondaryNamespace}, secondaryVA)
+				g.Expect(err).NotTo(HaveOccurred())
+				secondaryCondition := variantautoscalingv1alpha1.GetCondition(secondaryVA, variantautoscalingv1alpha1.TypeTargetResolved)
+				g.Expect(secondaryCondition).NotTo(BeNil())
+				g.Expect(secondaryCondition.Status).To(Equal(metav1.ConditionTrue))
+			}, time.Duration(cfg.EventuallyLongSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
+
+			By("Querying external metrics API with explicit namespace-aware label selector")
+			var metricList externalMetricValueList
+			Eventually(func(g Gomega) {
+				raw, err := k8sClient.RESTClient().
+					Get().
+					AbsPath("/apis/external.metrics.k8s.io/v1beta1/namespaces/"+primaryNamespace+"/"+constants.WVADesiredReplicas).
+					Param("labelSelector", "variant_name="+sharedVAName+",exported_namespace="+primaryNamespace).
+					DoRaw(ctx)
+				g.Expect(err).NotTo(HaveOccurred(), "External metrics API query should succeed")
+				g.Expect(json.Unmarshal(raw, &metricList)).To(Succeed(), "Should decode external metric response")
+				g.Expect(metricList.Items).To(HaveLen(1), "Expected exactly one metric series for selected namespace and variant")
+				g.Expect(metricList.Items[0].MetricLabels["exported_namespace"]).To(Equal(primaryNamespace))
+				g.Expect(metricList.Items[0].MetricLabels["variant_name"]).To(Equal(sharedVAName))
+			}, time.Duration(cfg.EventuallyLongSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
+		})
+	})
+
+	Context("Dual namespace-scoped controllers isolation", Serial, Ordered, func() {
+		var (
+			primaryNamespace     = cfg.LLMDNamespace
+			secondaryNamespace   = cfg.LLMDNamespace + "-dual"
+			secondaryController  = cfg.WVANamespace + "-dual"
+			secondaryReleaseName = "wva-dual-secondary"
+			primaryModelName     = "smoke-test-dual-primary-ms"
+			secondaryModelName   = "smoke-test-dual-secondary-ms"
+			poolName             = "smoke-test-dual-pool"
+			sharedVAName         = "smoke-test-dual-shared-va"
+			controllerInstance   = "dual-secondary"
+		)
+
+		BeforeAll(func() {
+			if cfg.ScalerBackend == scalerBackendKeda {
+				Skip("Dual-controller external metrics check is specific to Prometheus Adapter backend")
+			}
+			if cfg.Environment != envKindEmulator {
+				Skip("Dual-controller smoke scenario currently targets kind-emulator setup")
+			}
+			if primaryNamespace == "" {
+				primaryNamespace = cfg.LLMDNamespace
+			}
+			if primaryNamespace == "" {
+				primaryNamespace = "llm-d-sim"
+			}
+			if secondaryNamespace == "-dual" {
+				secondaryNamespace = primaryNamespace + "-dual"
+			}
+			if secondaryController == "" {
+				secondaryController = cfg.WVANamespace
+			}
+			if secondaryController == "" || secondaryController == "-dual" {
+				secondaryController = "workload-variant-autoscaler-system-dual"
+			}
+
+			By("Creating secondary workload namespace")
+			_, err := k8sClient.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{Name: secondaryNamespace},
+			}, metav1.CreateOptions{})
+			if err != nil && !errors.IsAlreadyExists(err) {
+				Expect(err).NotTo(HaveOccurred(), "Failed to create secondary workload namespace")
+			}
+
+			By("Installing secondary namespace-scoped controller via Helm")
+			primaryController, err := k8sClient.AppsV1().Deployments(cfg.WVANamespace).Get(ctx, "workload-variant-autoscaler-controller-manager", metav1.GetOptions{})
+			Expect(err).NotTo(HaveOccurred(), "Failed to read primary controller deployment image")
+			Expect(primaryController.Spec.Template.Spec.Containers).NotTo(BeEmpty(), "Primary controller deployment should contain containers")
+			imageRepo, imageTag := splitImage(primaryController.Spec.Template.Spec.Containers[0].Image)
+			chartPath, chartErr := resolveWVAChartPath()
+			Expect(chartErr).NotTo(HaveOccurred(), "Failed to resolve WVA chart path")
+
+			helmArgs := []string{
+				"upgrade", "-i", secondaryReleaseName, chartPath,
+				"-n", secondaryController, "--create-namespace",
+				"--set", "controller.enabled=true",
+				"--set", "va.enabled=false",
+				"--set", "hpa.enabled=false",
+				"--set", "vllmService.enabled=false",
+				"--set", "wva.namespaceScoped=true",
+				"--set", "wva.controllerInstance=" + controllerInstance,
+				"--set", "llmd.namespace=" + secondaryNamespace,
+				"--set", "wva.image.repository=" + imageRepo,
+				"--set", "wva.image.tag=" + imageTag,
+				"--set", "wva.imagePullPolicy=IfNotPresent",
+				"--set", "wva.prometheus.baseURL=https://kube-prometheus-stack-prometheus." + cfg.MonitoringNS + ".svc.cluster.local:9090",
+				"--set", "wva.prometheus.tls.insecureSkipVerify=true",
+			}
+			cmd := exec.Command("helm", helmArgs...)
+			out, err := cmd.CombinedOutput()
+			Expect(err).NotTo(HaveOccurred(), "Secondary controller helm install failed: %s", string(out))
+
+			DeferCleanup(func() {
+				uninstall := exec.Command("helm", "uninstall", secondaryReleaseName, "-n", secondaryController)
+				_, _ = uninstall.CombinedOutput()
+			})
+
+			By("Waiting for secondary controller to be ready")
+			Eventually(func(g Gomega) {
+				pods, listErr := k8sClient.CoreV1().Pods(secondaryController).List(ctx, metav1.ListOptions{
+					LabelSelector: "control-plane=controller-manager",
+				})
+				g.Expect(listErr).NotTo(HaveOccurred())
+				g.Expect(pods.Items).NotTo(BeEmpty(), "Expected secondary controller pod")
+				ready := 0
+				for _, pod := range pods.Items {
+					if pod.Status.Phase != corev1.PodRunning {
+						continue
+					}
+					for _, condition := range pod.Status.Conditions {
+						if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
+							ready++
+							break
+						}
+					}
+				}
+				g.Expect(ready).To(BeNumerically(">", 0), "Expected at least one ready secondary controller pod")
+			}, time.Duration(cfg.EventuallyLongSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
+
+			By("Creating model services in both namespaces")
+			err = fixtures.EnsureModelService(ctx, k8sClient, primaryNamespace, primaryModelName, poolName, cfg.ModelID, cfg.UseSimulator, cfg.MaxNumSeqs)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create primary model service")
+			err = fixtures.EnsureService(ctx, k8sClient, primaryNamespace, primaryModelName, primaryModelName+"-decode", 8000)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create primary service")
+			err = fixtures.EnsureServiceMonitor(ctx, crClient, cfg.MonitoringNS, primaryNamespace, primaryModelName, primaryModelName+"-decode")
+			Expect(err).NotTo(HaveOccurred(), "Failed to create primary ServiceMonitor")
+
+			err = fixtures.EnsureModelService(ctx, k8sClient, secondaryNamespace, secondaryModelName, poolName, cfg.ModelID, cfg.UseSimulator, cfg.MaxNumSeqs)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create secondary model service")
+			err = fixtures.EnsureService(ctx, k8sClient, secondaryNamespace, secondaryModelName, secondaryModelName+"-decode", 8000)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create secondary service")
+			err = fixtures.EnsureServiceMonitor(ctx, crClient, cfg.MonitoringNS, secondaryNamespace, secondaryModelName, secondaryModelName+"-decode")
+			Expect(err).NotTo(HaveOccurred(), "Failed to create secondary ServiceMonitor")
+
+			By("Creating overlapping VA names for each controller namespace")
+			err = fixtures.EnsureVariantAutoscalingWithDefaults(ctx, crClient, primaryNamespace, sharedVAName, primaryModelName+"-decode", cfg.ModelID, "H100", "")
+			Expect(err).NotTo(HaveOccurred(), "Failed to create primary VA")
+			err = fixtures.EnsureVariantAutoscalingWithDefaults(ctx, crClient, secondaryNamespace, sharedVAName, secondaryModelName+"-decode", cfg.ModelID, "H100", controllerInstance)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create secondary VA")
+		})
+
+		It("should expose isolated external metrics for each namespace-scoped controller", func() {
+			By("Waiting for both VAs to be reconciled")
+			Eventually(func(g Gomega) {
+				primaryVA := &variantautoscalingv1alpha1.VariantAutoscaling{}
+				err := crClient.Get(ctx, client.ObjectKey{Name: sharedVAName, Namespace: primaryNamespace}, primaryVA)
+				g.Expect(err).NotTo(HaveOccurred())
+				c := variantautoscalingv1alpha1.GetCondition(primaryVA, variantautoscalingv1alpha1.TypeTargetResolved)
+				g.Expect(c).NotTo(BeNil())
+				g.Expect(c.Status).To(Equal(metav1.ConditionTrue))
+
+				secondaryVA := &variantautoscalingv1alpha1.VariantAutoscaling{}
+				err = crClient.Get(ctx, client.ObjectKey{Name: sharedVAName, Namespace: secondaryNamespace}, secondaryVA)
+				g.Expect(err).NotTo(HaveOccurred())
+				c = variantautoscalingv1alpha1.GetCondition(secondaryVA, variantautoscalingv1alpha1.TypeTargetResolved)
+				g.Expect(c).NotTo(BeNil())
+				g.Expect(c.Status).To(Equal(metav1.ConditionTrue))
+			}, time.Duration(cfg.EventuallyLongSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
+
+			By("Querying external metrics for primary namespace")
+			Eventually(func(g Gomega) {
+				raw, err := k8sClient.RESTClient().
+					Get().
+					AbsPath("/apis/external.metrics.k8s.io/v1beta1/namespaces/"+primaryNamespace+"/"+constants.WVADesiredReplicas).
+					Param("labelSelector", "variant_name="+sharedVAName+",exported_namespace="+primaryNamespace).
+					DoRaw(ctx)
+				g.Expect(err).NotTo(HaveOccurred())
+				var metricList externalMetricValueList
+				g.Expect(json.Unmarshal(raw, &metricList)).To(Succeed())
+				g.Expect(metricList.Items).To(HaveLen(1))
+				g.Expect(metricList.Items[0].MetricLabels["exported_namespace"]).To(Equal(primaryNamespace))
+			}, time.Duration(cfg.EventuallyLongSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
+
+			By("Querying external metrics for secondary controller namespace")
+			Eventually(func(g Gomega) {
+				raw, err := k8sClient.RESTClient().
+					Get().
+					AbsPath("/apis/external.metrics.k8s.io/v1beta1/namespaces/"+secondaryNamespace+"/"+constants.WVADesiredReplicas).
+					Param("labelSelector", "variant_name="+sharedVAName+",exported_namespace="+secondaryNamespace).
+					DoRaw(ctx)
+				g.Expect(err).NotTo(HaveOccurred())
+				var metricList externalMetricValueList
+				g.Expect(json.Unmarshal(raw, &metricList)).To(Succeed())
+				g.Expect(metricList.Items).To(HaveLen(1))
+				g.Expect(metricList.Items[0].MetricLabels["exported_namespace"]).To(Equal(secondaryNamespace))
+				if ci, ok := metricList.Items[0].MetricLabels["controller_instance"]; ok {
+					g.Expect(ci).To(Equal(controllerInstance))
+				}
+			}, time.Duration(cfg.EventuallyLongSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
 		})
 	})
 

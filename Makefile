@@ -44,7 +44,7 @@ DELETE_NAMESPACES ?= false
 
 # Multi-model deployment configuration (used by deploy-multi-model-infra)
 MODELS           ?= Qwen/Qwen3-0.6B,unsloth/Meta-Llama-3.1-8B
-NAMESPACE_SCOPED ?= false
+NAMESPACE_SCOPED ?= true
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
