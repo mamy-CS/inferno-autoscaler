@@ -586,6 +586,7 @@ spec:
         selector:
           matchLabels:
             variant_name: my-vllm-deployment-decode
+            exported_namespace: $NAMESPACE
       target:
         type: AverageValue
         averageValue: "1"
