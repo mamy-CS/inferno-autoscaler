@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -30,6 +29,8 @@ type externalMetricValueList struct {
 	} `json:"items"`
 }
 
+const secondaryControllerChartPathEnv = "WVA_E2E_CHART_PATH"
+
 func splitImage(image string) (string, string) {
 	lastColon := strings.LastIndex(image, ":")
 	lastSlash := strings.LastIndex(image, "/")
@@ -37,23 +38,6 @@ func splitImage(image string) (string, string) {
 		return image, "latest"
 	}
 	return image[:lastColon], image[lastColon+1:]
-}
-
-func resolveWVAChartPath() (string, error) {
-	candidates := []string{
-		"./charts/workload-variant-autoscaler",
-		"../../charts/workload-variant-autoscaler",
-	}
-	for _, p := range candidates {
-		if _, err := os.Stat(p); err == nil {
-			abs, absErr := filepath.Abs(p)
-			if absErr != nil {
-				return "", absErr
-			}
-			return abs, nil
-		}
-	}
-	return "", fmt.Errorf("unable to locate workload-variant-autoscaler chart path (tried %v)", candidates)
 }
 
 // cleanupSmokeTestResources deletes all resources created by smoke tests to ensure clean state
@@ -244,6 +228,8 @@ var _ = Describe("Smoke Tests - Infrastructure Readiness", Label("smoke", "full"
 			primaryNamespace   = "llm-d-sim"
 			secondaryNamespace = "llm-d-sim-mt"
 			sharedVAName       = "smoke-test-mt-shared-va"
+			primaryHPAName     = "smoke-test-mt-primary-hpa"
+			secondaryHPAName   = "smoke-test-mt-secondary-hpa"
 			primaryModelName   = "smoke-test-mt-primary-ms"
 			secondaryModelName = "smoke-test-mt-secondary-ms"
 			poolName           = "smoke-test-mt-pool"
@@ -291,6 +277,12 @@ var _ = Describe("Smoke Tests - Infrastructure Readiness", Label("smoke", "full"
 			Expect(err).NotTo(HaveOccurred(), "Failed to create primary VariantAutoscaling")
 			err = fixtures.EnsureVariantAutoscalingWithDefaults(ctx, crClient, secondaryNamespace, sharedVAName, secondaryModelName+"-decode", cfg.ModelID, "H100", "")
 			Expect(err).NotTo(HaveOccurred(), "Failed to create secondary VariantAutoscaling")
+
+			By("Creating HPAs in both namespaces for the shared VA name")
+			err = fixtures.EnsureHPA(ctx, k8sClient, primaryNamespace, primaryHPAName, primaryModelName+"-decode", sharedVAName, 1, 10)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create primary HPA")
+			err = fixtures.EnsureHPA(ctx, k8sClient, secondaryNamespace, secondaryHPAName, secondaryModelName+"-decode", sharedVAName, 1, 10)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create secondary HPA")
 		})
 
 		It("should return exactly one external metric item when exported_namespace is selected", func() {
@@ -325,6 +317,35 @@ var _ = Describe("Smoke Tests - Infrastructure Readiness", Label("smoke", "full"
 				g.Expect(metricList.Items[0].MetricLabels["exported_namespace"]).To(Equal(primaryNamespace))
 				g.Expect(metricList.Items[0].MetricLabels["variant_name"]).To(Equal(sharedVAName))
 			}, time.Duration(cfg.EventuallyLongSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
+
+			By("Verifying both HPAs report active metric scaling")
+			Eventually(func(g Gomega) {
+				hpa, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(primaryNamespace).Get(ctx, primaryHPAName+"-hpa", metav1.GetOptions{})
+				g.Expect(err).NotTo(HaveOccurred())
+				var scalingActive *autoscalingv2.HorizontalPodAutoscalerCondition
+				for i := range hpa.Status.Conditions {
+					if hpa.Status.Conditions[i].Type == autoscalingv2.ScalingActive {
+						scalingActive = &hpa.Status.Conditions[i]
+						break
+					}
+				}
+				g.Expect(scalingActive).NotTo(BeNil(), "Primary HPA should report ScalingActive condition")
+				g.Expect(scalingActive.Status).To(Equal(corev1.ConditionTrue), "Primary HPA should have external metric available")
+			}, time.Duration(cfg.EventuallyLongSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
+
+			Eventually(func(g Gomega) {
+				hpa, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(secondaryNamespace).Get(ctx, secondaryHPAName+"-hpa", metav1.GetOptions{})
+				g.Expect(err).NotTo(HaveOccurred())
+				var scalingActive *autoscalingv2.HorizontalPodAutoscalerCondition
+				for i := range hpa.Status.Conditions {
+					if hpa.Status.Conditions[i].Type == autoscalingv2.ScalingActive {
+						scalingActive = &hpa.Status.Conditions[i]
+						break
+					}
+				}
+				g.Expect(scalingActive).NotTo(BeNil(), "Secondary HPA should report ScalingActive condition")
+				g.Expect(scalingActive.Status).To(Equal(corev1.ConditionTrue), "Secondary HPA should have external metric available")
+			}, time.Duration(cfg.EventuallyLongSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
 		})
 	})
 
@@ -334,6 +355,8 @@ var _ = Describe("Smoke Tests - Infrastructure Readiness", Label("smoke", "full"
 			secondaryNamespace   = "llm-d-sim-dual"
 			secondaryController  = "workload-variant-autoscaler-system-dual"
 			secondaryReleaseName = "wva-dual-secondary"
+			primaryHPAName       = "smoke-test-dual-primary-hpa"
+			secondaryHPAName     = "smoke-test-dual-secondary-hpa"
 			primaryModelName     = "smoke-test-dual-primary-ms"
 			secondaryModelName   = "smoke-test-dual-secondary-ms"
 			poolName             = "smoke-test-dual-pool"
@@ -362,8 +385,11 @@ var _ = Describe("Smoke Tests - Infrastructure Readiness", Label("smoke", "full"
 			Expect(err).NotTo(HaveOccurred(), "Failed to read primary controller deployment image")
 			Expect(primaryController.Spec.Template.Spec.Containers).NotTo(BeEmpty(), "Primary controller deployment should contain containers")
 			imageRepo, imageTag := splitImage(primaryController.Spec.Template.Spec.Containers[0].Image)
-			chartPath, chartErr := resolveWVAChartPath()
-			Expect(chartErr).NotTo(HaveOccurred(), "Failed to resolve WVA chart path")
+			chartPath := os.Getenv(secondaryControllerChartPathEnv)
+			Expect(chartPath).NotTo(BeEmpty(),
+				"Missing %s; set it to the workload-variant-autoscaler chart path (for example ./charts/workload-variant-autoscaler)", secondaryControllerChartPathEnv)
+			_, statErr := os.Stat(chartPath)
+			Expect(statErr).NotTo(HaveOccurred(), "Invalid %s path: %s", secondaryControllerChartPathEnv, chartPath)
 
 			helmArgs := []string{
 				"upgrade", "-i", secondaryReleaseName, chartPath,
@@ -432,6 +458,12 @@ var _ = Describe("Smoke Tests - Infrastructure Readiness", Label("smoke", "full"
 			Expect(err).NotTo(HaveOccurred(), "Failed to create primary VA")
 			err = fixtures.EnsureVariantAutoscalingWithDefaults(ctx, crClient, secondaryNamespace, sharedVAName, secondaryModelName+"-decode", cfg.ModelID, "H100", controllerInstance)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create secondary VA")
+
+			By("Creating HPAs in both namespaces for the shared VA name")
+			err = fixtures.EnsureHPA(ctx, k8sClient, primaryNamespace, primaryHPAName, primaryModelName+"-decode", sharedVAName, 1, 10)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create primary HPA")
+			err = fixtures.EnsureHPA(ctx, k8sClient, secondaryNamespace, secondaryHPAName, secondaryModelName+"-decode", sharedVAName, 1, 10)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create secondary HPA")
 		})
 
 		It("should expose isolated external metrics for each namespace-scoped controller", func() {
@@ -481,6 +513,35 @@ var _ = Describe("Smoke Tests - Infrastructure Readiness", Label("smoke", "full"
 				if ci, ok := metricList.Items[0].MetricLabels["controller_instance"]; ok {
 					g.Expect(ci).To(Equal(controllerInstance))
 				}
+			}, time.Duration(cfg.EventuallyLongSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
+
+			By("Verifying both HPAs report active metric scaling")
+			Eventually(func(g Gomega) {
+				hpa, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(primaryNamespace).Get(ctx, primaryHPAName+"-hpa", metav1.GetOptions{})
+				g.Expect(err).NotTo(HaveOccurred())
+				var scalingActive *autoscalingv2.HorizontalPodAutoscalerCondition
+				for i := range hpa.Status.Conditions {
+					if hpa.Status.Conditions[i].Type == autoscalingv2.ScalingActive {
+						scalingActive = &hpa.Status.Conditions[i]
+						break
+					}
+				}
+				g.Expect(scalingActive).NotTo(BeNil(), "Primary HPA should report ScalingActive condition")
+				g.Expect(scalingActive.Status).To(Equal(corev1.ConditionTrue), "Primary HPA should have external metric available")
+			}, time.Duration(cfg.EventuallyLongSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
+
+			Eventually(func(g Gomega) {
+				hpa, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(secondaryNamespace).Get(ctx, secondaryHPAName+"-hpa", metav1.GetOptions{})
+				g.Expect(err).NotTo(HaveOccurred())
+				var scalingActive *autoscalingv2.HorizontalPodAutoscalerCondition
+				for i := range hpa.Status.Conditions {
+					if hpa.Status.Conditions[i].Type == autoscalingv2.ScalingActive {
+						scalingActive = &hpa.Status.Conditions[i]
+						break
+					}
+				}
+				g.Expect(scalingActive).NotTo(BeNil(), "Secondary HPA should report ScalingActive condition")
+				g.Expect(scalingActive.Status).To(Equal(corev1.ConditionTrue), "Secondary HPA should have external metric available")
 			}, time.Duration(cfg.EventuallyLongSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
 		})
 	})
