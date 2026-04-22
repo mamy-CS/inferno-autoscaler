@@ -303,6 +303,23 @@ var _ = Describe("Smoke Tests - Infrastructure Readiness", Label("smoke", "full"
 				g.Expect(secondaryCondition.Status).To(Equal(metav1.ConditionTrue))
 			}, time.Duration(cfg.EventuallyLongSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
 
+			By("Waiting for Prometheus-backed metrics on both VAs (HPA/external-metrics need this)")
+			Eventually(func(g Gomega) {
+				primaryVA := &variantautoscalingv1alpha1.VariantAutoscaling{}
+				err := crClient.Get(ctx, client.ObjectKey{Name: sharedVAName, Namespace: primaryNamespace}, primaryVA)
+				g.Expect(err).NotTo(HaveOccurred())
+				mc := variantautoscalingv1alpha1.GetCondition(primaryVA, variantautoscalingv1alpha1.TypeMetricsAvailable)
+				g.Expect(mc).NotTo(BeNil())
+				g.Expect(mc.Status).To(Equal(metav1.ConditionTrue))
+
+				secondaryVA := &variantautoscalingv1alpha1.VariantAutoscaling{}
+				err = crClient.Get(ctx, client.ObjectKey{Name: sharedVAName, Namespace: secondaryNamespace}, secondaryVA)
+				g.Expect(err).NotTo(HaveOccurred())
+				mc = variantautoscalingv1alpha1.GetCondition(secondaryVA, variantautoscalingv1alpha1.TypeMetricsAvailable)
+				g.Expect(mc).NotTo(BeNil())
+				g.Expect(mc.Status).To(Equal(metav1.ConditionTrue))
+			}, time.Duration(cfg.EventuallyExtendedSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
+
 			By("Querying external metrics API with explicit namespace-aware label selector")
 			var metricList externalMetricValueList
 			Eventually(func(g Gomega) {
@@ -329,9 +346,12 @@ var _ = Describe("Smoke Tests - Infrastructure Readiness", Label("smoke", "full"
 						break
 					}
 				}
+				if scalingActive == nil || scalingActive.Status != corev1.ConditionTrue {
+					GinkgoWriter.Printf("primary HPA %s/%s conditions: %+v\n", primaryNamespace, primaryHPAName+"-hpa", hpa.Status.Conditions)
+				}
 				g.Expect(scalingActive).NotTo(BeNil(), "Primary HPA should report ScalingActive condition")
 				g.Expect(scalingActive.Status).To(Equal(corev1.ConditionTrue), "Primary HPA should have external metric available")
-			}, time.Duration(cfg.EventuallyLongSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
+			}, time.Duration(cfg.EventuallyExtendedSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
 
 			Eventually(func(g Gomega) {
 				hpa, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(secondaryNamespace).Get(ctx, secondaryHPAName+"-hpa", metav1.GetOptions{})
@@ -343,9 +363,12 @@ var _ = Describe("Smoke Tests - Infrastructure Readiness", Label("smoke", "full"
 						break
 					}
 				}
+				if scalingActive == nil || scalingActive.Status != corev1.ConditionTrue {
+					GinkgoWriter.Printf("secondary HPA %s/%s conditions: %+v\n", secondaryNamespace, secondaryHPAName+"-hpa", hpa.Status.Conditions)
+				}
 				g.Expect(scalingActive).NotTo(BeNil(), "Secondary HPA should report ScalingActive condition")
 				g.Expect(scalingActive.Status).To(Equal(corev1.ConditionTrue), "Secondary HPA should have external metric available")
-			}, time.Duration(cfg.EventuallyLongSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
+			}, time.Duration(cfg.EventuallyExtendedSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
 		})
 	})
 
@@ -387,7 +410,7 @@ var _ = Describe("Smoke Tests - Infrastructure Readiness", Label("smoke", "full"
 			imageRepo, imageTag := splitImage(primaryController.Spec.Template.Spec.Containers[0].Image)
 			chartPath := os.Getenv(secondaryControllerChartPathEnv)
 			Expect(chartPath).NotTo(BeEmpty(),
-				"Missing %s; set it to the workload-variant-autoscaler chart path (for example ./charts/workload-variant-autoscaler)", secondaryControllerChartPathEnv)
+				"Missing %s; set it to the workload-variant-autoscaler chart directory (use an absolute path; go test cwd is the test package dir)", secondaryControllerChartPathEnv)
 			_, statErr := os.Stat(chartPath)
 			Expect(statErr).NotTo(HaveOccurred(), "Invalid %s path: %s", secondaryControllerChartPathEnv, chartPath)
 
@@ -484,6 +507,23 @@ var _ = Describe("Smoke Tests - Infrastructure Readiness", Label("smoke", "full"
 				g.Expect(c.Status).To(Equal(metav1.ConditionTrue))
 			}, time.Duration(cfg.EventuallyLongSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
 
+			By("Waiting for Prometheus-backed metrics on both VAs (HPA/external-metrics need this)")
+			Eventually(func(g Gomega) {
+				primaryVA := &variantautoscalingv1alpha1.VariantAutoscaling{}
+				err := crClient.Get(ctx, client.ObjectKey{Name: sharedVAName, Namespace: primaryNamespace}, primaryVA)
+				g.Expect(err).NotTo(HaveOccurred())
+				mc := variantautoscalingv1alpha1.GetCondition(primaryVA, variantautoscalingv1alpha1.TypeMetricsAvailable)
+				g.Expect(mc).NotTo(BeNil())
+				g.Expect(mc.Status).To(Equal(metav1.ConditionTrue))
+
+				secondaryVA := &variantautoscalingv1alpha1.VariantAutoscaling{}
+				err = crClient.Get(ctx, client.ObjectKey{Name: sharedVAName, Namespace: secondaryNamespace}, secondaryVA)
+				g.Expect(err).NotTo(HaveOccurred())
+				mc = variantautoscalingv1alpha1.GetCondition(secondaryVA, variantautoscalingv1alpha1.TypeMetricsAvailable)
+				g.Expect(mc).NotTo(BeNil())
+				g.Expect(mc.Status).To(Equal(metav1.ConditionTrue))
+			}, time.Duration(cfg.EventuallyExtendedSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
+
 			By("Querying external metrics for primary namespace")
 			Eventually(func(g Gomega) {
 				raw, err := k8sClient.RESTClient().
@@ -526,9 +566,12 @@ var _ = Describe("Smoke Tests - Infrastructure Readiness", Label("smoke", "full"
 						break
 					}
 				}
+				if scalingActive == nil || scalingActive.Status != corev1.ConditionTrue {
+					GinkgoWriter.Printf("primary HPA %s/%s conditions: %+v\n", primaryNamespace, primaryHPAName+"-hpa", hpa.Status.Conditions)
+				}
 				g.Expect(scalingActive).NotTo(BeNil(), "Primary HPA should report ScalingActive condition")
 				g.Expect(scalingActive.Status).To(Equal(corev1.ConditionTrue), "Primary HPA should have external metric available")
-			}, time.Duration(cfg.EventuallyLongSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
+			}, time.Duration(cfg.EventuallyExtendedSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
 
 			Eventually(func(g Gomega) {
 				hpa, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(secondaryNamespace).Get(ctx, secondaryHPAName+"-hpa", metav1.GetOptions{})
@@ -540,9 +583,12 @@ var _ = Describe("Smoke Tests - Infrastructure Readiness", Label("smoke", "full"
 						break
 					}
 				}
+				if scalingActive == nil || scalingActive.Status != corev1.ConditionTrue {
+					GinkgoWriter.Printf("secondary HPA %s/%s conditions: %+v\n", secondaryNamespace, secondaryHPAName+"-hpa", hpa.Status.Conditions)
+				}
 				g.Expect(scalingActive).NotTo(BeNil(), "Secondary HPA should report ScalingActive condition")
 				g.Expect(scalingActive.Status).To(Equal(corev1.ConditionTrue), "Secondary HPA should have external metric available")
-			}, time.Duration(cfg.EventuallyLongSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
+			}, time.Duration(cfg.EventuallyExtendedSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
 		})
 	})
 

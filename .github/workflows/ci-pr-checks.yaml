@@ -324,6 +324,8 @@ jobs:
           CREATE_CLUSTER: "true"
           INSTALL_GATEWAY_CTRLPLANE: "true"
           E2E_TESTS_ENABLED: "true"
+          # Dual-controller smoke installs a second Helm release; chart path must be explicit in CI.
+          WVA_E2E_CHART_PATH: ${{ github.workspace }}/charts/workload-variant-autoscaler
           IMG: ${{ steps.build-image.outputs.image }}
           SKIP_BUILD: "true"
           PROMETHEUS_ADAPTER_WAIT: "false"
