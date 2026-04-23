@@ -35,24 +35,9 @@ deploy_llm_d_infrastructure() {
         --namespace "${LLMD_NS}" \
         --dry-run=client -o yaml | kubectl apply -f -
 
-    # note: temporary solution until aligned
-    # Install dependencies. llm-d moved client setup from guides/prereq -> helpers.
-    # Support both layouts so pinned tags (e.g. v0.6.0) and main work.
+    # Install dependencies (pinned llm-d v0.6.0 layout)
     log_info "Installing llm-d dependencies"
-    local client_setup_script="${CLIENT_PREREQ_DIR}/install-deps.sh"
-    if [ ! -f "$client_setup_script" ]; then
-        local legacy_client_setup_dir="${WVA_PROJECT}/${LLM_D_PROJECT}/guides/prereq/client-setup"
-        local legacy_client_setup_script="${legacy_client_setup_dir}/install-deps.sh"
-        if [ -f "$legacy_client_setup_script" ]; then
-            log_info "Using legacy llm-d client setup path: $legacy_client_setup_dir"
-            client_setup_script="$legacy_client_setup_script"
-        fi
-    fi
-    if [ ! -f "$client_setup_script" ]; then
-        log_error "llm-d client setup script not found at '$CLIENT_PREREQ_DIR/install-deps.sh' or legacy guides path"
-        exit 1
-    fi
-    bash "$client_setup_script"
+    bash "$CLIENT_PREREQ_DIR/install-deps.sh"
 
     # On OpenShift, skip base Gateway API CRDs (managed by Ingress Operator via
     # ValidatingAdmissionPolicy "openshift-ingress-operator-gatewayapi-crd-admission").
