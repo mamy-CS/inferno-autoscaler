@@ -202,20 +202,28 @@ deploy_llm_d_infrastructure() {
     fi
     # Kind CI has limited allocatable resources; override upstream EPP defaults
     # (4 CPU / 8Gi requests in inferencepool chart) to avoid unschedulable pods.
+    # Derive gaie-* values dir from LLM_D_EPP_NAME (e.g. gaie-sim-epp -> gaie-sim)
+    # kind-emulator uses guides/simulated-accelerators but chart
+    # lives under gaie-sim/ (see llm-d guides layout).
     if [[ "$ENVIRONMENT" == "kind-emulator" ]] || [[ "$CLUSTER_TYPE" == "kind" ]]; then
-      local gaie_values_file="$EXAMPLE_DIR/gaie-$WELL_LIT_PATH_NAME/values.yaml"
-      local gaie_sglang_values_file="$EXAMPLE_DIR/gaie-$WELL_LIT_PATH_NAME/values_sglang.yaml"
+      local gaie_release_prefix="${LLM_D_EPP_NAME%-epp}"
+      local gaie_values_file="$EXAMPLE_DIR/${gaie_release_prefix}/values.yaml"
+      local gaie_sglang_values_file="$EXAMPLE_DIR/${gaie_release_prefix}/values_sglang.yaml"
       if [ -f "$gaie_values_file" ]; then
         yq eval '.inferenceExtension.resources.requests.cpu = "100m" |
-                 .inferenceExtension.resources.requests.memory = "256Mi"' \
+                 .inferenceExtension.resources.requests.memory = "256Mi" |
+                 .inferenceExtension.resources.limits.memory = "1Gi"' \
                  -i "$gaie_values_file"
-        log_info "Applied Kind EPP resource override in $(basename "$gaie_values_file")"
+        log_info "Applied Kind EPP resource override in ${gaie_release_prefix}/$(basename "$gaie_values_file")"
+      else
+        log_warning "Kind EPP values not found at $gaie_values_file (LLM_D_EPP_NAME=$LLM_D_EPP_NAME)"
       fi
       if [ -f "$gaie_sglang_values_file" ]; then
         yq eval '.inferenceExtension.resources.requests.cpu = "100m" |
-                 .inferenceExtension.resources.requests.memory = "256Mi"' \
+                 .inferenceExtension.resources.requests.memory = "256Mi" |
+                 .inferenceExtension.resources.limits.memory = "1Gi"' \
                  -i "$gaie_sglang_values_file"
-        log_info "Applied Kind EPP resource override in $(basename "$gaie_sglang_values_file")"
+        log_info "Applied Kind EPP resource override in ${gaie_release_prefix}/$(basename "$gaie_sglang_values_file")"
       fi
     fi
     local selector_csv=""
@@ -395,8 +403,9 @@ deploy_llm_d_infrastructure() {
     # The full wait often blocks on modelservice decode/prefill readiness, which is
     # unnecessary for the e2e suite because tests create/manage their own workloads.
     if [ "$E2E_TESTS_ENABLED" = "true" ] && [ "$INFRA_ONLY" = "true" ]; then
-        local E2E_DEPLOY_WAIT_TIMEOUT="${E2E_DEPLOY_WAIT_TIMEOUT:-300s}"
-        local E2E_FAIL_FAST_ON_INFRA_NOT_READY="${E2E_FAIL_FAST_ON_INFRA_NOT_READY:-true}"
+        local E2E_DEPLOY_WAIT_TIMEOUT="${E2E_DEPLOY_WAIT_TIMEOUT:-600s}"
+        # Default false: after fixes, prefer surfacing flake in tests with logs; set true to abort deploy early.
+        local E2E_FAIL_FAST_ON_INFRA_NOT_READY="${E2E_FAIL_FAST_ON_INFRA_NOT_READY:-false}"
         local infra_not_ready=false
         log_info "E2E infra-only mode: waiting for essential llm-d components (timeout=${E2E_DEPLOY_WAIT_TIMEOUT})..."
 
