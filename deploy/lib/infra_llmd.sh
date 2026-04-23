@@ -395,14 +395,17 @@ deploy_llm_d_infrastructure() {
     # The full wait often blocks on modelservice decode/prefill readiness, which is
     # unnecessary for the e2e suite because tests create/manage their own workloads.
     if [ "$E2E_TESTS_ENABLED" = "true" ] && [ "$INFRA_ONLY" = "true" ]; then
-        local E2E_DEPLOY_WAIT_TIMEOUT="${E2E_DEPLOY_WAIT_TIMEOUT:-120s}"
+        local E2E_DEPLOY_WAIT_TIMEOUT="${E2E_DEPLOY_WAIT_TIMEOUT:-300s}"
+        local E2E_FAIL_FAST_ON_INFRA_NOT_READY="${E2E_FAIL_FAST_ON_INFRA_NOT_READY:-true}"
+        local infra_not_ready=false
         log_info "E2E infra-only mode: waiting for essential llm-d components (timeout=${E2E_DEPLOY_WAIT_TIMEOUT})..."
 
         if kubectl get deployment "$LLM_D_EPP_NAME" -n "$LLMD_NS" &>/dev/null; then
             kubectl wait --for=condition=Available "deployment/$LLM_D_EPP_NAME" -n "$LLMD_NS" --timeout="$E2E_DEPLOY_WAIT_TIMEOUT" || \
-                log_warning "EPP deployment not ready yet: $LLM_D_EPP_NAME"
+                { log_warning "EPP deployment not ready yet: $LLM_D_EPP_NAME"; infra_not_ready=true; }
         else
             log_warning "EPP deployment not found: $LLM_D_EPP_NAME"
+            infra_not_ready=true
         fi
 
         # Gateway deployment name includes release prefix and can vary by environment.
@@ -411,7 +414,15 @@ deploy_llm_d_infrastructure() {
         gateway_deploy=$(kubectl get deployment -n "$LLMD_NS" -o name 2>/dev/null | grep "inference-gateway-istio" | head -1 || true)
         if [ -n "$gateway_deploy" ]; then
             kubectl wait --for=condition=Available "$gateway_deploy" -n "$LLMD_NS" --timeout="$E2E_DEPLOY_WAIT_TIMEOUT" || \
-                log_warning "Gateway deployment not ready yet: $gateway_deploy"
+                { log_warning "Gateway deployment not ready yet: $gateway_deploy"; infra_not_ready=true; }
+        else
+            log_warning "Gateway deployment not found in $LLMD_NS"
+            infra_not_ready=true
+        fi
+
+        if [ "$infra_not_ready" = "true" ] && [ "$E2E_FAIL_FAST_ON_INFRA_NOT_READY" = "true" ]; then
+            log_error "Essential llm-d infra is not ready in e2e infra-only mode; failing fast before tests"
+            return 1
         fi
     else
         # Model-serving pods (vLLM) can take several minutes to download and load
