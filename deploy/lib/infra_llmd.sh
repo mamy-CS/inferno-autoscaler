@@ -200,6 +200,24 @@ deploy_llm_d_infrastructure() {
       helmfile_selector_exprs+=("chart!=llm-d-modelservice")
       log_info "E2E infra-only mode: skipping llm-d-modelservice release in helmfile"
     fi
+    # Kind CI has limited allocatable resources; override upstream EPP defaults
+    # (4 CPU / 8Gi requests in inferencepool chart) to avoid unschedulable pods.
+    if [[ "$ENVIRONMENT" == "kind-emulator" ]] || [[ "$CLUSTER_TYPE" == "kind" ]]; then
+      local gaie_values_file="$EXAMPLE_DIR/gaie-$WELL_LIT_PATH_NAME/values.yaml"
+      local gaie_sglang_values_file="$EXAMPLE_DIR/gaie-$WELL_LIT_PATH_NAME/values_sglang.yaml"
+      if [ -f "$gaie_values_file" ]; then
+        yq eval '.inferenceExtension.resources.requests.cpu = "100m" |
+                 .inferenceExtension.resources.requests.memory = "256Mi"' \
+                 -i "$gaie_values_file"
+        log_info "Applied Kind EPP resource override in $(basename "$gaie_values_file")"
+      fi
+      if [ -f "$gaie_sglang_values_file" ]; then
+        yq eval '.inferenceExtension.resources.requests.cpu = "100m" |
+                 .inferenceExtension.resources.requests.memory = "256Mi"' \
+                 -i "$gaie_sglang_values_file"
+        log_info "Applied Kind EPP resource override in $(basename "$gaie_sglang_values_file")"
+      fi
+    fi
     local selector_csv=""
     if [ "${#helmfile_selector_exprs[@]}" -gt 0 ]; then
       selector_csv=$(IFS=,; echo "${helmfile_selector_exprs[*]}")
