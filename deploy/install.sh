@@ -47,6 +47,7 @@ CONTROLLER_INSTANCE=${CONTROLLER_INSTANCE:-""}
 # llm-d Configuration
 LLM_D_OWNER=${LLM_D_OWNER:-"llm-d"}
 LLM_D_PROJECT=${LLM_D_PROJECT:-"llm-d"}
+# TODO: Upgrade this default llm-d pin after validating OpenShift and Kind e2e compatibility.
 LLM_D_RELEASE=${LLM_D_RELEASE:-"v0.3.0"}
 LLM_D_MODELSERVICE_NAME=${LLM_D_MODELSERVICE_NAME:-"ms-$WELL_LIT_PATH_NAME-llm-d-modelservice"}
 LLM_D_EPP_NAME=${LLM_D_EPP_NAME:-"gaie-$WELL_LIT_PATH_NAME-epp"}
