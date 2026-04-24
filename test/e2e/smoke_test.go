@@ -239,6 +239,9 @@ var _ = Describe("Smoke Tests - Infrastructure Readiness", Label("smoke", "full"
 			if cfg.ScalerBackend == scalerBackendKeda {
 				Skip("Namespace-isolation external metrics check is specific to Prometheus Adapter backend")
 			}
+			if cfg.Environment != envKindEmulator {
+				Skip("Namespace-isolation smoke scenario currently targets kind-emulator setup")
+			}
 
 			By("Creating secondary namespace for isolation test")
 			_, err := k8sClient.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{
