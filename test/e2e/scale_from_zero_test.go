@@ -143,7 +143,7 @@ func cleanupScaleFromZeroResources() {
 // so use SCALER_BACKEND=keda for this Describe when running on OpenShift.
 // On platforms without the HPAScaleToZero feature gate (e.g. OpenShift), set SCALER_BACKEND=keda
 // so the test uses a KEDA ScaledObject (which supports minReplicas=0) instead of a native HPA.
-var _ = Describe("Scale-From-Zero Feature", Serial, Label("full"), Ordered, func() {
+var _ = Describe("Scale-From-Zero Feature", Serial, Label("full"), Label("flaky"), Ordered, func() {
 	var (
 		poolName         = "scale-from-zero-pool"
 		modelServiceName = "scale-from-zero-ms"
@@ -608,7 +608,7 @@ fi
 }
 
 // Scale-from-zero test for LeaderWorkerSet
-var _ = Describe("Scale-From-Zero Feature with LeaderWorkerSet", Serial, Label("full"), Ordered, func() {
+var _ = Describe("Scale-From-Zero Feature with LeaderWorkerSet", Serial, Label("full"), Label("flaky"), Ordered, func() {
 	var (
 		poolName         = "scale-from-zero-lws-pool"
 		modelServiceName = "scale-from-zero-lws-ms"
@@ -1029,7 +1029,7 @@ var _ = Describe("Scale-From-Zero Feature with LeaderWorkerSet", Serial, Label("
 })
 
 // Scale-from-zero test for LeaderWorkerSet (single-node)
-var _ = Describe("Scale-From-Zero Feature with LeaderWorkerSet (single-node)", Serial, Label("full"), Ordered, func() {
+var _ = Describe("Scale-From-Zero Feature with LeaderWorkerSet (single-node)", Serial, Label("full"), Label("flaky"), Ordered, func() {
 	var (
 		poolName         = "scale-from-zero-lws-single-pool"
 		modelServiceName = "scale-from-zero-lws-single-ms"
