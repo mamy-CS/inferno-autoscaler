@@ -377,6 +377,24 @@ deploy_llm_d_infrastructure() {
         fi
     fi
 
+    # Reduce gateway
+    # resources to avoid readiness timeouts and downstream scale-from-zero flakes for kind e2es.
+    if [[ "$ENVIRONMENT" == "kind-emulator" ]] || [[ "$CLUSTER_TYPE" == "kind" ]]; then
+        local kind_gateway_deploy
+        kind_gateway_deploy=$(kubectl get deployment -n "$LLMD_NS" -o name 2>/dev/null | grep "inference-gateway-istio" | head -1 || true)
+        if [ -n "$kind_gateway_deploy" ]; then
+            log_info "Applying Kind gateway resource override on ${kind_gateway_deploy}"
+            if kubectl set resources "$kind_gateway_deploy" -n "$LLMD_NS" --containers='*' \
+                --requests=cpu=100m,memory=128Mi --limits=memory=512Mi >/dev/null; then
+                kubectl rollout restart "$kind_gateway_deploy" -n "$LLMD_NS" >/dev/null || true
+            else
+                log_warning "Failed to apply Kind gateway resource override on ${kind_gateway_deploy}"
+            fi
+        else
+            log_warning "Kind gateway deployment not found for resource override in $LLMD_NS"
+        fi
+    fi
+
     # Deploy InferenceObjective for GIE queuing when flow control is enabled (scale-from-zero).
     # E2E applies e2e-default from Go (test/e2e/fixtures) so tests do not depend on install.sh for this CR.
     if [ "$E2E_TESTS_ENABLED" != "true" ] && [ "$ENABLE_SCALE_TO_ZERO" == "true" ]; then
