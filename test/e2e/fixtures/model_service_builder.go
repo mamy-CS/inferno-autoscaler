@@ -84,18 +84,18 @@ func modelServiceDeploymentMatchesDesired(existing, desired appsv1.Deployment) b
 func buildModelServiceDeployment(namespace, name, poolName, modelID string, useSimulator bool, maxNumSeqs int, opts ...ModelServiceOption) *appsv1.Deployment {
 	cfg := resolveModelServiceFixtureConfig(opts...)
 	appLabel := name + decodeNameSuffix
-	image := cfg.simulatorImage
+	image := defaultModelServiceSimulatorImage
 	if !useSimulator {
-		image = cfg.runtimeImage
+		image = defaultModelServiceRuntimeImage
 	}
 	args := buildModelServerArgs(modelID, useSimulator, maxNumSeqs)
 	labels := map[string]string{
 		"app":                        appLabel,
 		"llm-d.ai/inferenceServing":  defaultInferenceServingLabelValue,
-		"llm-d.ai/model":             cfg.modelLabel,
+		"llm-d.ai/model":             defaultModelServiceLabelValue,
 		"llm-d.ai/model-pool":        poolName,
-		"test-resource":              cfg.testLabelValue,
-		"llm-d.ai/guide":             cfg.guideLabel,
+		"test-resource":              defaultTestResourceLabelValue,
+		"llm-d.ai/guide":             defaultGuideLabelValue,
 		"llm-d.ai/inference-serving": defaultInferenceServingLabelValue,
 	}
 
@@ -142,9 +142,9 @@ func buildModelServiceDeployment(namespace, name, poolName, modelID string, useS
 				MatchLabels: map[string]string{
 					"app":                        appLabel,
 					"llm-d.ai/inferenceServing":  defaultInferenceServingLabelValue,
-					"llm-d.ai/model":             cfg.modelLabel,
+					"llm-d.ai/model":             defaultModelServiceLabelValue,
 					"llm-d.ai/model-pool":        poolName,
-					"llm-d.ai/guide":             cfg.guideLabel,
+					"llm-d.ai/guide":             defaultGuideLabelValue,
 					"llm-d.ai/inference-serving": defaultInferenceServingLabelValue,
 				},
 			},
@@ -158,7 +158,7 @@ func buildModelServiceDeployment(namespace, name, poolName, modelID string, useS
 							ImagePullPolicy: corev1.PullIfNotPresent,
 							Args:            args,
 							Ports: []corev1.ContainerPort{
-								{Name: defaultServicePortName, ContainerPort: cfg.containerPort, Protocol: corev1.ProtocolTCP},
+								{Name: defaultServicePortName, ContainerPort: defaultModelServiceContainerPort, Protocol: corev1.ProtocolTCP},
 							},
 							Env:          envVars,
 							Resources:    buildModelServiceResources(useSimulator),

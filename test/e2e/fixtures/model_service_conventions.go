@@ -28,39 +28,12 @@ const (
 )
 
 type modelServiceFixtureConfig struct {
-	simulatorImage string
-	runtimeImage   string
-	containerPort  int32
-	hfTokenSecret  string
-	hfTokenKey     string
-	modelLabel     string
-	guideLabel     string
-	testLabelValue string
+	hfTokenSecret string
+	hfTokenKey    string
 }
 
 // ModelServiceOption overrides fixture conventions used by model-service resources.
 type ModelServiceOption func(*modelServiceFixtureConfig)
-
-// WithModelServiceImages overrides simulator/runtime container images.
-func WithModelServiceImages(simulatorImage, runtimeImage string) ModelServiceOption {
-	return func(cfg *modelServiceFixtureConfig) {
-		if simulatorImage != "" {
-			cfg.simulatorImage = simulatorImage
-		}
-		if runtimeImage != "" {
-			cfg.runtimeImage = runtimeImage
-		}
-	}
-}
-
-// WithModelServiceContainerPort overrides the model server container port.
-func WithModelServiceContainerPort(port int32) ModelServiceOption {
-	return func(cfg *modelServiceFixtureConfig) {
-		if port > 0 {
-			cfg.containerPort = port
-		}
-	}
-}
 
 // WithModelServiceHFTokenSecret overrides the Hugging Face token secret reference.
 func WithModelServiceHFTokenSecret(secretName, secretKey string) ModelServiceOption {
@@ -74,31 +47,10 @@ func WithModelServiceHFTokenSecret(secretName, secretKey string) ModelServiceOpt
 	}
 }
 
-// WithModelServiceLabelValues overrides convention label values used by fixtures.
-func WithModelServiceLabelValues(modelLabel, guideLabel, testLabelValue string) ModelServiceOption {
-	return func(cfg *modelServiceFixtureConfig) {
-		if modelLabel != "" {
-			cfg.modelLabel = modelLabel
-		}
-		if guideLabel != "" {
-			cfg.guideLabel = guideLabel
-		}
-		if testLabelValue != "" {
-			cfg.testLabelValue = testLabelValue
-		}
-	}
-}
-
 func defaultModelServiceFixtureConfig() modelServiceFixtureConfig {
 	return modelServiceFixtureConfig{
-		simulatorImage: defaultModelServiceSimulatorImage,
-		runtimeImage:   defaultModelServiceRuntimeImage,
-		containerPort:  defaultModelServiceContainerPort,
-		hfTokenSecret:  defaultHFTokenSecretName,
-		hfTokenKey:     defaultHFTokenSecretKey,
-		modelLabel:     defaultModelServiceLabelValue,
-		guideLabel:     defaultGuideLabelValue,
-		testLabelValue: defaultTestResourceLabelValue,
+		hfTokenSecret: defaultHFTokenSecretName,
+		hfTokenKey:    defaultHFTokenSecretKey,
 	}
 }
 

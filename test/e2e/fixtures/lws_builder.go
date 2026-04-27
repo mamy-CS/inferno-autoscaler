@@ -9,14 +9,13 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	lwsv1 "sigs.k8s.io/lws/api/leaderworkerset/v1"
 )
 
 // EnsureModelServiceLWS creates or replaces a LeaderWorkerSet for model service (idempotent for test setup).
-func EnsureModelServiceLWS(ctx context.Context, crClient client.Client, k8sClient *kubernetes.Clientset, namespace, name, poolName, modelID string, useSimulator bool, maxNumSeqs int, groupSize int32, opts ...ModelServiceOption) error {
+func EnsureModelServiceLWS(ctx context.Context, crClient client.Client, namespace, name, poolName, modelID string, useSimulator bool, maxNumSeqs int, groupSize int32, opts ...ModelServiceOption) error {
 	lwsName := name + decodeNameSuffix
 	desiredLWS := buildModelServiceLWS(namespace, name, poolName, modelID, useSimulator, maxNumSeqs, groupSize, opts...)
 
@@ -90,17 +89,17 @@ func DeleteModelServiceLWS(ctx context.Context, crClient client.Client, namespac
 func buildModelServiceLWS(namespace, name, poolName, modelID string, useSimulator bool, maxNumSeqs int, groupSize int32, opts ...ModelServiceOption) *lwsv1.LeaderWorkerSet {
 	cfg := resolveModelServiceFixtureConfig(opts...)
 	appLabel := name + decodeNameSuffix
-	image := cfg.simulatorImage
+	image := defaultModelServiceSimulatorImage
 	if !useSimulator {
-		image = cfg.runtimeImage
+		image = defaultModelServiceRuntimeImage
 	}
 	args := buildModelServerArgs(modelID, useSimulator, maxNumSeqs)
 	labels := map[string]string{
 		"app":                       appLabel,
 		"llm-d.ai/inferenceServing": defaultInferenceServingLabelValue,
-		"llm-d.ai/model":            cfg.modelLabel,
+		"llm-d.ai/model":            defaultModelServiceLabelValue,
 		"llm-d.ai/model-pool":       poolName,
-		"test-resource":             cfg.testLabelValue,
+		"test-resource":             defaultTestResourceLabelValue,
 	}
 
 	envVars := []corev1.EnvVar{
@@ -146,7 +145,7 @@ func buildModelServiceLWS(namespace, name, poolName, modelID string, useSimulato
 					ImagePullPolicy: corev1.PullIfNotPresent,
 					Args:            args,
 					Ports: []corev1.ContainerPort{
-						{Name: defaultServicePortName, ContainerPort: cfg.containerPort, Protocol: corev1.ProtocolTCP},
+						{Name: defaultServicePortName, ContainerPort: defaultModelServiceContainerPort, Protocol: corev1.ProtocolTCP},
 					},
 					Env:          envVars,
 					Resources:    buildModelServiceResources(useSimulator),

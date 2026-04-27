@@ -14,34 +14,11 @@ import (
 )
 
 type infraFixtureConfig struct {
-	serviceSuffix             string
-	serviceMonitorSuffix      string
-	servicePortName           string
-	serviceMonitorMetricsPath string
-	releaseLabelValue         string
-	testLabelValue            string
+	servicePortName string
 }
 
 // InfraOption overrides fixture conventions used by Service and ServiceMonitor helpers.
 type InfraOption func(*infraFixtureConfig)
-
-// WithServiceSuffix overrides the generated Service name suffix.
-func WithServiceSuffix(suffix string) InfraOption {
-	return func(cfg *infraFixtureConfig) {
-		if suffix != "" {
-			cfg.serviceSuffix = suffix
-		}
-	}
-}
-
-// WithServiceMonitorSuffix overrides the generated ServiceMonitor name suffix.
-func WithServiceMonitorSuffix(suffix string) InfraOption {
-	return func(cfg *infraFixtureConfig) {
-		if suffix != "" {
-			cfg.serviceMonitorSuffix = suffix
-		}
-	}
-}
 
 // WithServicePortName overrides the Service port name used by ServiceMonitor endpoints.
 func WithServicePortName(portName string) InfraOption {
@@ -52,26 +29,9 @@ func WithServicePortName(portName string) InfraOption {
 	}
 }
 
-// WithServiceMonitorDefaults overrides monitor-specific convention values.
-func WithServiceMonitorDefaults(metricsPath, releaseLabelValue string) InfraOption {
-	return func(cfg *infraFixtureConfig) {
-		if metricsPath != "" {
-			cfg.serviceMonitorMetricsPath = metricsPath
-		}
-		if releaseLabelValue != "" {
-			cfg.releaseLabelValue = releaseLabelValue
-		}
-	}
-}
-
 func defaultInfraFixtureConfig() infraFixtureConfig {
 	return infraFixtureConfig{
-		serviceSuffix:             serviceNameSuffix,
-		serviceMonitorSuffix:      serviceMonitorNameSuffix,
-		servicePortName:           defaultServicePortName,
-		serviceMonitorMetricsPath: defaultServiceMonitorMetricsPath,
-		releaseLabelValue:         kubePrometheusStackReleaseLabelValue,
-		testLabelValue:            defaultTestResourceLabelValue,
+		servicePortName: defaultServicePortName,
 	}
 }
 
@@ -92,8 +52,7 @@ func CreateService(ctx context.Context, k8sClient *kubernetes.Clientset, namespa
 
 // DeleteService deletes the Kubernetes Service. Idempotent; ignores NotFound.
 func DeleteService(ctx context.Context, k8sClient *kubernetes.Clientset, namespace, name string, opts ...InfraOption) error {
-	cfg := resolveInfraFixtureConfig(opts...)
-	serviceName := name + cfg.serviceSuffix
+	serviceName := name + serviceNameSuffix
 	err := k8sClient.CoreV1().Services(namespace).Delete(ctx, serviceName, metav1.DeleteOptions{})
 	if err != nil && !errors.IsNotFound(err) {
 		return fmt.Errorf("delete service %s: %w", serviceName, err)
@@ -103,8 +62,7 @@ func DeleteService(ctx context.Context, k8sClient *kubernetes.Clientset, namespa
 
 // EnsureService creates or replaces the Service (idempotent for test setup).
 func EnsureService(ctx context.Context, k8sClient *kubernetes.Clientset, namespace, name, appLabel string, port int, opts ...InfraOption) error {
-	cfg := resolveInfraFixtureConfig(opts...)
-	serviceName := name + cfg.serviceSuffix
+	serviceName := name + serviceNameSuffix
 	_, err := k8sClient.CoreV1().Services(namespace).Get(ctx, serviceName, metav1.GetOptions{})
 	if err == nil {
 		deleteErr := k8sClient.CoreV1().Services(namespace).Delete(ctx, serviceName, metav1.DeleteOptions{})
@@ -131,7 +89,7 @@ func EnsureService(ctx context.Context, k8sClient *kubernetes.Clientset, namespa
 
 func buildService(namespace, name, appLabel string, port int, opts ...InfraOption) *corev1.Service {
 	cfg := resolveInfraFixtureConfig(opts...)
-	serviceName := name + cfg.serviceSuffix
+	serviceName := name + serviceNameSuffix
 	return &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      serviceName,
@@ -139,7 +97,7 @@ func buildService(namespace, name, appLabel string, port int, opts ...InfraOptio
 			Labels: map[string]string{
 				"app":                       appLabel,
 				"llm-d.ai/inferenceServing": defaultInferenceServingLabelValue,
-				"test-resource":             cfg.testLabelValue,
+				"test-resource":             defaultTestResourceLabelValue,
 			},
 		},
 		Spec: corev1.ServiceSpec{
@@ -163,8 +121,7 @@ func CreateServiceMonitor(ctx context.Context, crClient client.Client, monitorin
 
 // DeleteServiceMonitor deletes the ServiceMonitor. Idempotent; ignores NotFound.
 func DeleteServiceMonitor(ctx context.Context, crClient client.Client, monitoringNamespace, name string, opts ...InfraOption) error {
-	cfg := resolveInfraFixtureConfig(opts...)
-	serviceMonitorName := name + cfg.serviceMonitorSuffix
+	serviceMonitorName := name + serviceMonitorNameSuffix
 	sm := &promoperator.ServiceMonitor{
 		ObjectMeta: metav1.ObjectMeta{Name: serviceMonitorName, Namespace: monitoringNamespace},
 	}
@@ -177,8 +134,7 @@ func DeleteServiceMonitor(ctx context.Context, crClient client.Client, monitorin
 
 // EnsureServiceMonitor creates or replaces the ServiceMonitor (idempotent for test setup).
 func EnsureServiceMonitor(ctx context.Context, crClient client.Client, monitoringNamespace, targetNamespace, name, appLabel string, opts ...InfraOption) error {
-	cfg := resolveInfraFixtureConfig(opts...)
-	serviceMonitorName := name + cfg.serviceMonitorSuffix
+	serviceMonitorName := name + serviceMonitorNameSuffix
 	existingSM := &promoperator.ServiceMonitor{
 		ObjectMeta: metav1.ObjectMeta{Name: serviceMonitorName, Namespace: monitoringNamespace},
 	}
@@ -200,21 +156,21 @@ func EnsureServiceMonitor(ctx context.Context, crClient client.Client, monitorin
 
 func buildServiceMonitor(monitoringNamespace, targetNamespace, name, appLabel string, opts ...InfraOption) *promoperator.ServiceMonitor {
 	cfg := resolveInfraFixtureConfig(opts...)
-	serviceMonitorName := name + cfg.serviceMonitorSuffix
+	serviceMonitorName := name + serviceMonitorNameSuffix
 	return &promoperator.ServiceMonitor{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      serviceMonitorName,
 			Namespace: monitoringNamespace,
 			Labels: map[string]string{
 				"app":           appLabel,
-				"release":       cfg.releaseLabelValue,
-				"test-resource": cfg.testLabelValue,
+				"release":       kubePrometheusStackReleaseLabelValue,
+				"test-resource": defaultTestResourceLabelValue,
 			},
 		},
 		Spec: promoperator.ServiceMonitorSpec{
 			Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": appLabel}},
 			Endpoints: []promoperator.Endpoint{
-				{Port: cfg.servicePortName, Path: cfg.serviceMonitorMetricsPath, Interval: promoperator.Duration("15s")},
+				{Port: cfg.servicePortName, Path: defaultServiceMonitorMetricsPath, Interval: promoperator.Duration("15s")},
 			},
 			NamespaceSelector: promoperator.NamespaceSelector{MatchNames: []string{targetNamespace}},
 		},
