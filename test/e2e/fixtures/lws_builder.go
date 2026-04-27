@@ -3,12 +3,13 @@ package fixtures
 import (
 	"context"
 	"fmt"
-	"reflect"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	lwsv1 "sigs.k8s.io/lws/api/leaderworkerset/v1"
@@ -35,18 +36,18 @@ func EnsureModelServiceLWS(ctx context.Context, crClient client.Client, namespac
 		if deleteErr != nil && !errors.IsNotFound(deleteErr) && !errors.IsConflict(deleteErr) {
 			return fmt.Errorf("delete existing LWS %s: %w", lwsName, deleteErr)
 		}
-		// Wait for deletion
-		waitCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-		defer cancel()
-		for {
-			checkErr := crClient.Get(waitCtx, client.ObjectKey{Name: lwsName, Namespace: namespace}, &lwsv1.LeaderWorkerSet{})
+		waitErr := wait.PollUntilContextTimeout(ctx, 2*time.Second, 2*time.Minute, true, func(ctx context.Context) (bool, error) {
+			checkErr := crClient.Get(ctx, client.ObjectKey{Name: lwsName, Namespace: namespace}, &lwsv1.LeaderWorkerSet{})
 			if errors.IsNotFound(checkErr) {
-				break
+				return true, nil
 			}
-			if waitCtx.Err() != nil {
-				return fmt.Errorf("timeout waiting for LWS %s to be deleted", lwsName)
+			if checkErr != nil {
+				return false, checkErr
 			}
-			time.Sleep(2 * time.Second)
+			return false, nil
+		})
+		if waitErr != nil {
+			return fmt.Errorf("timeout waiting for LWS %s to be deleted: %w", lwsName, waitErr)
 		}
 	} else if !errors.IsNotFound(err) {
 		return fmt.Errorf("check existing LWS %s: %w", lwsName, err)
@@ -65,9 +66,9 @@ func EnsureModelServiceLWS(ctx context.Context, crClient client.Client, namespac
 }
 
 func modelServiceLWSMatchesDesired(existing, desired lwsv1.LeaderWorkerSet) bool {
-	return reflect.DeepEqual(existing.Spec, desired.Spec) &&
-		reflect.DeepEqual(existing.Labels, desired.Labels) &&
-		reflect.DeepEqual(existing.Annotations, desired.Annotations)
+	return apiequality.Semantic.DeepEqual(existing.Spec, desired.Spec) &&
+		apiequality.Semantic.DeepEqual(existing.Labels, desired.Labels) &&
+		apiequality.Semantic.DeepEqual(existing.Annotations, desired.Annotations)
 }
 
 // DeleteModelServiceLWS deletes the LeaderWorkerSet for model service. Idempotent; ignores NotFound.

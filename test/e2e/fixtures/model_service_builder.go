@@ -3,12 +3,12 @@ package fixtures
 import (
 	"context"
 	"fmt"
-	"reflect"
 	"strconv"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -76,9 +76,9 @@ func EnsureModelService(ctx context.Context, k8sClient *kubernetes.Clientset, na
 }
 
 func modelServiceDeploymentMatchesDesired(existing, desired appsv1.Deployment) bool {
-	return reflect.DeepEqual(existing.Spec.Selector, desired.Spec.Selector) &&
-		reflect.DeepEqual(existing.Spec.Template.Labels, desired.Spec.Template.Labels) &&
-		reflect.DeepEqual(existing.Spec.Template.Spec, desired.Spec.Template.Spec)
+	return apiequality.Semantic.DeepEqual(existing.Spec.Selector, desired.Spec.Selector) &&
+		apiequality.Semantic.DeepEqual(existing.Spec.Template.Labels, desired.Spec.Template.Labels) &&
+		apiequality.Semantic.DeepEqual(existing.Spec.Template.Spec, desired.Spec.Template.Spec)
 }
 
 func buildModelServiceDeployment(namespace, name, poolName, modelID string, useSimulator bool, maxNumSeqs int, opts ...ModelServiceOption) *appsv1.Deployment {
