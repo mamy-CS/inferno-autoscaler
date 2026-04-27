@@ -19,15 +19,15 @@ import (
 // CreateModelService creates the model-server Deployment only (name + "-decode").
 // It does not create a Kubernetes Service; callers must use CreateService or EnsureService
 // (typically naming the Service name + "-service") to expose the deployment.
-func CreateModelService(ctx context.Context, k8sClient *kubernetes.Clientset, namespace, name, poolName, modelID string, useSimulator bool, maxNumSeqs int) error {
-	deployment := buildModelServiceDeployment(namespace, name, poolName, modelID, useSimulator, maxNumSeqs)
+func CreateModelService(ctx context.Context, k8sClient *kubernetes.Clientset, namespace, name, poolName, modelID string, useSimulator bool, maxNumSeqs int, opts ...ModelServiceOption) error {
+	deployment := buildModelServiceDeployment(namespace, name, poolName, modelID, useSimulator, maxNumSeqs, opts...)
 	_, err := k8sClient.AppsV1().Deployments(namespace).Create(ctx, deployment, metav1.CreateOptions{})
 	return err
 }
 
 // DeleteModelService deletes the model service deployment. Idempotent; ignores NotFound.
 func DeleteModelService(ctx context.Context, k8sClient *kubernetes.Clientset, namespace, name string) error {
-	deploymentName := name + "-decode"
+	deploymentName := name + decodeNameSuffix
 	err := k8sClient.AppsV1().Deployments(namespace).Delete(ctx, deploymentName, metav1.DeleteOptions{})
 	if err != nil && !errors.IsNotFound(err) {
 		return fmt.Errorf("delete model service deployment %s: %w", deploymentName, err)
@@ -37,10 +37,10 @@ func DeleteModelService(ctx context.Context, k8sClient *kubernetes.Clientset, na
 
 // EnsureModelService creates or replaces the model-server Deployment only (name + "-decode").
 // It does not create a Kubernetes Service; pair with EnsureService for a ClusterIP Service.
-func EnsureModelService(ctx context.Context, k8sClient *kubernetes.Clientset, namespace, name, poolName, modelID string, useSimulator bool, maxNumSeqs int) error {
-	appLabel := name + "-decode"
+func EnsureModelService(ctx context.Context, k8sClient *kubernetes.Clientset, namespace, name, poolName, modelID string, useSimulator bool, maxNumSeqs int, opts ...ModelServiceOption) error {
+	appLabel := name + decodeNameSuffix
 	deploymentName := appLabel
-	desiredDeployment := buildModelServiceDeployment(namespace, name, poolName, modelID, useSimulator, maxNumSeqs)
+	desiredDeployment := buildModelServiceDeployment(namespace, name, poolName, modelID, useSimulator, maxNumSeqs, opts...)
 
 	existingDeployment, err := k8sClient.AppsV1().Deployments(namespace).Get(ctx, deploymentName, metav1.GetOptions{})
 	if err == nil {
@@ -81,21 +81,22 @@ func modelServiceDeploymentMatchesDesired(existing, desired appsv1.Deployment) b
 		reflect.DeepEqual(existing.Spec.Template.Spec, desired.Spec.Template.Spec)
 }
 
-func buildModelServiceDeployment(namespace, name, poolName, modelID string, useSimulator bool, maxNumSeqs int) *appsv1.Deployment {
-	appLabel := name + "-decode"
-	image := "ghcr.io/llm-d/llm-d-inference-sim:v0.7.1"
+func buildModelServiceDeployment(namespace, name, poolName, modelID string, useSimulator bool, maxNumSeqs int, opts ...ModelServiceOption) *appsv1.Deployment {
+	cfg := resolveModelServiceFixtureConfig(opts...)
+	appLabel := name + decodeNameSuffix
+	image := cfg.simulatorImage
 	if !useSimulator {
-		image = "ghcr.io/llm-d/llm-d-cuda-dev:latest"
+		image = cfg.runtimeImage
 	}
 	args := buildModelServerArgs(modelID, useSimulator, maxNumSeqs)
 	labels := map[string]string{
 		"app":                        appLabel,
-		"llm-d.ai/inferenceServing":  "true",
-		"llm-d.ai/model":             "ms-sim-llm-d-modelservice",
+		"llm-d.ai/inferenceServing":  defaultInferenceServingLabelValue,
+		"llm-d.ai/model":             cfg.modelLabel,
 		"llm-d.ai/model-pool":        poolName,
-		"test-resource":              "true",
-		"llm-d.ai/guide":             "workload-autoscaling",
-		"llm-d.ai/inference-serving": "true",
+		"test-resource":              cfg.testLabelValue,
+		"llm-d.ai/guide":             cfg.guideLabel,
+		"llm-d.ai/inference-serving": defaultInferenceServingLabelValue,
 	}
 
 	envVars := []corev1.EnvVar{
@@ -111,8 +112,8 @@ func buildModelServiceDeployment(namespace, name, poolName, modelID string, useS
 			corev1.EnvVar{Name: "HF_HOME", Value: "/model-cache"},
 			corev1.EnvVar{Name: "HF_TOKEN", ValueFrom: &corev1.EnvVarSource{
 				SecretKeyRef: &corev1.SecretKeySelector{
-					LocalObjectReference: corev1.LocalObjectReference{Name: "llm-d-hf-token"},
-					Key:                  "HF_TOKEN",
+					LocalObjectReference: corev1.LocalObjectReference{Name: cfg.hfTokenSecret},
+					Key:                  cfg.hfTokenKey,
 				},
 			}},
 		)
@@ -140,11 +141,11 @@ func buildModelServiceDeployment(namespace, name, poolName, modelID string, useS
 			Selector: &metav1.LabelSelector{
 				MatchLabels: map[string]string{
 					"app":                        appLabel,
-					"llm-d.ai/inferenceServing":  "true",
-					"llm-d.ai/model":             "ms-sim-llm-d-modelservice",
+					"llm-d.ai/inferenceServing":  defaultInferenceServingLabelValue,
+					"llm-d.ai/model":             cfg.modelLabel,
 					"llm-d.ai/model-pool":        poolName,
-					"llm-d.ai/guide":             "workload-autoscaling",
-					"llm-d.ai/inference-serving": "true",
+					"llm-d.ai/guide":             cfg.guideLabel,
+					"llm-d.ai/inference-serving": defaultInferenceServingLabelValue,
 				},
 			},
 			Template: corev1.PodTemplateSpec{
@@ -157,7 +158,7 @@ func buildModelServiceDeployment(namespace, name, poolName, modelID string, useS
 							ImagePullPolicy: corev1.PullIfNotPresent,
 							Args:            args,
 							Ports: []corev1.ContainerPort{
-								{Name: "http", ContainerPort: 8000, Protocol: corev1.ProtocolTCP},
+								{Name: defaultServicePortName, ContainerPort: cfg.containerPort, Protocol: corev1.ProtocolTCP},
 							},
 							Env:          envVars,
 							Resources:    buildModelServiceResources(useSimulator),

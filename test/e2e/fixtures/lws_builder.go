@@ -16,9 +16,9 @@ import (
 )
 
 // EnsureModelServiceLWS creates or replaces a LeaderWorkerSet for model service (idempotent for test setup).
-func EnsureModelServiceLWS(ctx context.Context, crClient client.Client, k8sClient *kubernetes.Clientset, namespace, name, poolName, modelID string, useSimulator bool, maxNumSeqs int, groupSize int32) error {
-	lwsName := name + "-decode"
-	desiredLWS := buildModelServiceLWS(namespace, name, poolName, modelID, useSimulator, maxNumSeqs, groupSize)
+func EnsureModelServiceLWS(ctx context.Context, crClient client.Client, k8sClient *kubernetes.Clientset, namespace, name, poolName, modelID string, useSimulator bool, maxNumSeqs int, groupSize int32, opts ...ModelServiceOption) error {
+	lwsName := name + decodeNameSuffix
+	desiredLWS := buildModelServiceLWS(namespace, name, poolName, modelID, useSimulator, maxNumSeqs, groupSize, opts...)
 
 	// Check if LWS already exists
 	existingLWS := &lwsv1.LeaderWorkerSet{}
@@ -73,7 +73,7 @@ func modelServiceLWSMatchesDesired(existing, desired lwsv1.LeaderWorkerSet) bool
 
 // DeleteModelServiceLWS deletes the LeaderWorkerSet for model service. Idempotent; ignores NotFound.
 func DeleteModelServiceLWS(ctx context.Context, crClient client.Client, namespace, name string) error {
-	lwsName := name + "-decode"
+	lwsName := name + decodeNameSuffix
 	lws := &lwsv1.LeaderWorkerSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      lwsName,
@@ -87,19 +87,20 @@ func DeleteModelServiceLWS(ctx context.Context, crClient client.Client, namespac
 	return nil
 }
 
-func buildModelServiceLWS(namespace, name, poolName, modelID string, useSimulator bool, maxNumSeqs int, groupSize int32) *lwsv1.LeaderWorkerSet {
-	appLabel := name + "-decode"
-	image := "ghcr.io/llm-d/llm-d-inference-sim:v0.7.1"
+func buildModelServiceLWS(namespace, name, poolName, modelID string, useSimulator bool, maxNumSeqs int, groupSize int32, opts ...ModelServiceOption) *lwsv1.LeaderWorkerSet {
+	cfg := resolveModelServiceFixtureConfig(opts...)
+	appLabel := name + decodeNameSuffix
+	image := cfg.simulatorImage
 	if !useSimulator {
-		image = "ghcr.io/llm-d/llm-d-cuda-dev:latest"
+		image = cfg.runtimeImage
 	}
 	args := buildModelServerArgs(modelID, useSimulator, maxNumSeqs)
 	labels := map[string]string{
 		"app":                       appLabel,
-		"llm-d.ai/inferenceServing": "true",
-		"llm-d.ai/model":            "ms-sim-llm-d-modelservice",
+		"llm-d.ai/inferenceServing": defaultInferenceServingLabelValue,
+		"llm-d.ai/model":            cfg.modelLabel,
 		"llm-d.ai/model-pool":       poolName,
-		"test-resource":             "true",
+		"test-resource":             cfg.testLabelValue,
 	}
 
 	envVars := []corev1.EnvVar{
@@ -115,8 +116,8 @@ func buildModelServiceLWS(namespace, name, poolName, modelID string, useSimulato
 			corev1.EnvVar{Name: "HF_HOME", Value: "/model-cache"},
 			corev1.EnvVar{Name: "HF_TOKEN", ValueFrom: &corev1.EnvVarSource{
 				SecretKeyRef: &corev1.SecretKeySelector{
-					LocalObjectReference: corev1.LocalObjectReference{Name: "llm-d-hf-token"},
-					Key:                  "HF_TOKEN",
+					LocalObjectReference: corev1.LocalObjectReference{Name: cfg.hfTokenSecret},
+					Key:                  cfg.hfTokenKey,
 				},
 			}},
 		)
@@ -145,7 +146,7 @@ func buildModelServiceLWS(namespace, name, poolName, modelID string, useSimulato
 					ImagePullPolicy: corev1.PullIfNotPresent,
 					Args:            args,
 					Ports: []corev1.ContainerPort{
-						{Name: "http", ContainerPort: 8000, Protocol: corev1.ProtocolTCP},
+						{Name: defaultServicePortName, ContainerPort: cfg.containerPort, Protocol: corev1.ProtocolTCP},
 					},
 					Env:          envVars,
 					Resources:    buildModelServiceResources(useSimulator),
