@@ -14,15 +14,15 @@ import (
 )
 
 // CreateService creates a Kubernetes Service for the model server. Fails if the service already exists.
-func CreateService(ctx context.Context, k8sClient *kubernetes.Clientset, namespace, name, appLabel string, port int) error {
-	service := buildService(namespace, name, appLabel, port)
+func CreateService(ctx context.Context, k8sClient *kubernetes.Clientset, namespace, baseName, appLabel string, port int) error {
+	service := buildService(namespace, baseName, appLabel, port)
 	_, err := k8sClient.CoreV1().Services(namespace).Create(ctx, service, metav1.CreateOptions{})
 	return err
 }
 
 // DeleteService deletes the Kubernetes Service. Idempotent; ignores NotFound.
-func DeleteService(ctx context.Context, k8sClient *kubernetes.Clientset, namespace, name string) error {
-	serviceName := name + serviceNameSuffix
+func DeleteService(ctx context.Context, k8sClient *kubernetes.Clientset, namespace, baseName string) error {
+	serviceName := baseName + serviceNameSuffix
 	err := k8sClient.CoreV1().Services(namespace).Delete(ctx, serviceName, metav1.DeleteOptions{})
 	if err != nil && !errors.IsNotFound(err) {
 		return fmt.Errorf("delete service %s: %w", serviceName, err)
@@ -31,8 +31,8 @@ func DeleteService(ctx context.Context, k8sClient *kubernetes.Clientset, namespa
 }
 
 // EnsureService creates or replaces the Service (idempotent for test setup).
-func EnsureService(ctx context.Context, k8sClient *kubernetes.Clientset, namespace, name, appLabel string, port int) error {
-	serviceName := name + serviceNameSuffix
+func EnsureService(ctx context.Context, k8sClient *kubernetes.Clientset, namespace, baseName, appLabel string, port int) error {
+	serviceName := baseName + serviceNameSuffix
 	_, err := k8sClient.CoreV1().Services(namespace).Get(ctx, serviceName, metav1.GetOptions{})
 	if err == nil {
 		deleteErr := k8sClient.CoreV1().Services(namespace).Delete(ctx, serviceName, metav1.DeleteOptions{})
@@ -45,7 +45,7 @@ func EnsureService(ctx context.Context, k8sClient *kubernetes.Clientset, namespa
 	} else if !errors.IsNotFound(err) {
 		return fmt.Errorf("check existing service %s: %w", serviceName, err)
 	}
-	service := buildService(namespace, name, appLabel, port)
+	service := buildService(namespace, baseName, appLabel, port)
 	_, err = k8sClient.CoreV1().Services(namespace).Create(ctx, service, metav1.CreateOptions{})
 	if err != nil && errors.IsAlreadyExists(err) {
 		_ = k8sClient.CoreV1().Services(namespace).Delete(ctx, serviceName, metav1.DeleteOptions{})
@@ -57,8 +57,8 @@ func EnsureService(ctx context.Context, k8sClient *kubernetes.Clientset, namespa
 	return err
 }
 
-func buildService(namespace, name, appLabel string, port int) *corev1.Service {
-	serviceName := name + serviceNameSuffix
+func buildService(namespace, baseName, appLabel string, port int) *corev1.Service {
+	serviceName := baseName + serviceNameSuffix
 	return &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      serviceName,
@@ -83,14 +83,14 @@ func buildService(namespace, name, appLabel string, port int) *corev1.Service {
 }
 
 // CreateServiceMonitor creates a ServiceMonitor for Prometheus. Fails if it already exists.
-func CreateServiceMonitor(ctx context.Context, crClient client.Client, monitoringNamespace, targetNamespace, name, appLabel string) error {
-	serviceMonitor := buildServiceMonitor(monitoringNamespace, targetNamespace, name, appLabel)
+func CreateServiceMonitor(ctx context.Context, crClient client.Client, monitoringNamespace, targetNamespace, baseName, appLabel string) error {
+	serviceMonitor := buildServiceMonitor(monitoringNamespace, targetNamespace, baseName, appLabel)
 	return crClient.Create(ctx, serviceMonitor)
 }
 
 // DeleteServiceMonitor deletes the ServiceMonitor. Idempotent; ignores NotFound.
-func DeleteServiceMonitor(ctx context.Context, crClient client.Client, monitoringNamespace, name string) error {
-	serviceMonitorName := name + serviceMonitorNameSuffix
+func DeleteServiceMonitor(ctx context.Context, crClient client.Client, monitoringNamespace, baseName string) error {
+	serviceMonitorName := baseName + serviceMonitorNameSuffix
 	sm := &promoperator.ServiceMonitor{
 		ObjectMeta: metav1.ObjectMeta{Name: serviceMonitorName, Namespace: monitoringNamespace},
 	}
@@ -102,8 +102,8 @@ func DeleteServiceMonitor(ctx context.Context, crClient client.Client, monitorin
 }
 
 // EnsureServiceMonitor creates or replaces the ServiceMonitor (idempotent for test setup).
-func EnsureServiceMonitor(ctx context.Context, crClient client.Client, monitoringNamespace, targetNamespace, name, appLabel string) error {
-	serviceMonitorName := name + serviceMonitorNameSuffix
+func EnsureServiceMonitor(ctx context.Context, crClient client.Client, monitoringNamespace, targetNamespace, baseName, appLabel string) error {
+	serviceMonitorName := baseName + serviceMonitorNameSuffix
 	existingSM := &promoperator.ServiceMonitor{
 		ObjectMeta: metav1.ObjectMeta{Name: serviceMonitorName, Namespace: monitoringNamespace},
 	}
@@ -119,12 +119,12 @@ func EnsureServiceMonitor(ctx context.Context, crClient client.Client, monitorin
 	} else if !errors.IsNotFound(err) {
 		return fmt.Errorf("check existing ServiceMonitor %s: %w", serviceMonitorName, err)
 	}
-	serviceMonitor := buildServiceMonitor(monitoringNamespace, targetNamespace, name, appLabel)
+	serviceMonitor := buildServiceMonitor(monitoringNamespace, targetNamespace, baseName, appLabel)
 	return crClient.Create(ctx, serviceMonitor)
 }
 
-func buildServiceMonitor(monitoringNamespace, targetNamespace, name, appLabel string) *promoperator.ServiceMonitor {
-	serviceMonitorName := name + serviceMonitorNameSuffix
+func buildServiceMonitor(monitoringNamespace, targetNamespace, baseName, appLabel string) *promoperator.ServiceMonitor {
+	serviceMonitorName := baseName + serviceMonitorNameSuffix
 	return &promoperator.ServiceMonitor{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      serviceMonitorName,
