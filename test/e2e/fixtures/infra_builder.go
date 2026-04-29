@@ -65,14 +65,14 @@ func buildService(namespace, name, appLabel string, port int) *corev1.Service {
 			Namespace: namespace,
 			Labels: map[string]string{
 				"app":                       appLabel,
-				"llm-d.ai/inferenceServing": defaultInferenceServingLabelValue,
+				"llm-d.ai/inferenceServing": defaultLabelValueTrue,
 				"test-resource":             defaultTestResourceLabelValue,
 			},
 		},
 		Spec: corev1.ServiceSpec{
 			Selector: map[string]string{
 				"app":                       appLabel,
-				"llm-d.ai/inferenceServing": defaultInferenceServingLabelValue,
+				"llm-d.ai/inferenceServing": defaultLabelValueTrue,
 			},
 			Ports: []corev1.ServicePort{
 				{Name: defaultServicePortName, Port: int32(port), Protocol: corev1.ProtocolTCP},

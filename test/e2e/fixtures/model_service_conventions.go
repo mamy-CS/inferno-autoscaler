@@ -18,11 +18,11 @@ const (
 
 	defaultModelServiceSimulatorImage = "ghcr.io/llm-d/llm-d-inference-sim:v0.7.1"
 	defaultModelServiceRuntimeImage   = "ghcr.io/llm-d/llm-d-cuda-dev:latest"
-	defaultModelServiceContainerPort  = int32(8000)
+	defaultModelServiceContainerPort  = 8000
 	defaultHFTokenSecretName          = "llm-d-hf-token"
 	defaultHFTokenSecretKey           = "HF_TOKEN"
 	defaultModelServiceLabelValue     = "ms-sim-llm-d-modelservice"
-	defaultInferenceServingLabelValue = "true"
+	defaultLabelValueTrue             = "true"
 	defaultGuideLabelValue            = "workload-autoscaling"
-	defaultTestResourceLabelValue     = "true"
+	defaultTestResourceLabelValue     = defaultLabelValueTrue
 )
