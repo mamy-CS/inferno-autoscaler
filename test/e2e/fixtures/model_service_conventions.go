@@ -26,38 +26,3 @@ const (
 	defaultGuideLabelValue            = "workload-autoscaling"
 	defaultTestResourceLabelValue     = "true"
 )
-
-type modelServiceFixtureConfig struct {
-	hfTokenSecret string
-	hfTokenKey    string
-}
-
-// ModelServiceOption overrides fixture conventions used by model-service resources.
-type ModelServiceOption func(*modelServiceFixtureConfig)
-
-// WithModelServiceHFTokenSecret overrides the Hugging Face token secret reference.
-func WithModelServiceHFTokenSecret(secretName, secretKey string) ModelServiceOption {
-	return func(cfg *modelServiceFixtureConfig) {
-		if secretName != "" {
-			cfg.hfTokenSecret = secretName
-		}
-		if secretKey != "" {
-			cfg.hfTokenKey = secretKey
-		}
-	}
-}
-
-func defaultModelServiceFixtureConfig() modelServiceFixtureConfig {
-	return modelServiceFixtureConfig{
-		hfTokenSecret: defaultHFTokenSecretName,
-		hfTokenKey:    defaultHFTokenSecretKey,
-	}
-}
-
-func resolveModelServiceFixtureConfig(opts ...ModelServiceOption) modelServiceFixtureConfig {
-	cfg := defaultModelServiceFixtureConfig()
-	for _, opt := range opts {
-		opt(&cfg)
-	}
-	return cfg
-}

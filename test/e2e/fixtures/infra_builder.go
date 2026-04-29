@@ -13,45 +13,15 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-type infraFixtureConfig struct {
-	servicePortName string
-}
-
-// InfraOption overrides fixture conventions used by Service and ServiceMonitor helpers.
-type InfraOption func(*infraFixtureConfig)
-
-// WithServicePortName overrides the Service port name used by ServiceMonitor endpoints.
-func WithServicePortName(portName string) InfraOption {
-	return func(cfg *infraFixtureConfig) {
-		if portName != "" {
-			cfg.servicePortName = portName
-		}
-	}
-}
-
-func defaultInfraFixtureConfig() infraFixtureConfig {
-	return infraFixtureConfig{
-		servicePortName: defaultServicePortName,
-	}
-}
-
-func resolveInfraFixtureConfig(opts ...InfraOption) infraFixtureConfig {
-	cfg := defaultInfraFixtureConfig()
-	for _, opt := range opts {
-		opt(&cfg)
-	}
-	return cfg
-}
-
 // CreateService creates a Kubernetes Service for the model server. Fails if the service already exists.
-func CreateService(ctx context.Context, k8sClient *kubernetes.Clientset, namespace, name, appLabel string, port int, opts ...InfraOption) error {
-	service := buildService(namespace, name, appLabel, port, opts...)
+func CreateService(ctx context.Context, k8sClient *kubernetes.Clientset, namespace, name, appLabel string, port int) error {
+	service := buildService(namespace, name, appLabel, port)
 	_, err := k8sClient.CoreV1().Services(namespace).Create(ctx, service, metav1.CreateOptions{})
 	return err
 }
 
 // DeleteService deletes the Kubernetes Service. Idempotent; ignores NotFound.
-func DeleteService(ctx context.Context, k8sClient *kubernetes.Clientset, namespace, name string, opts ...InfraOption) error {
+func DeleteService(ctx context.Context, k8sClient *kubernetes.Clientset, namespace, name string) error {
 	serviceName := name + serviceNameSuffix
 	err := k8sClient.CoreV1().Services(namespace).Delete(ctx, serviceName, metav1.DeleteOptions{})
 	if err != nil && !errors.IsNotFound(err) {
@@ -61,7 +31,7 @@ func DeleteService(ctx context.Context, k8sClient *kubernetes.Clientset, namespa
 }
 
 // EnsureService creates or replaces the Service (idempotent for test setup).
-func EnsureService(ctx context.Context, k8sClient *kubernetes.Clientset, namespace, name, appLabel string, port int, opts ...InfraOption) error {
+func EnsureService(ctx context.Context, k8sClient *kubernetes.Clientset, namespace, name, appLabel string, port int) error {
 	serviceName := name + serviceNameSuffix
 	_, err := k8sClient.CoreV1().Services(namespace).Get(ctx, serviceName, metav1.GetOptions{})
 	if err == nil {
@@ -75,7 +45,7 @@ func EnsureService(ctx context.Context, k8sClient *kubernetes.Clientset, namespa
 	} else if !errors.IsNotFound(err) {
 		return fmt.Errorf("check existing service %s: %w", serviceName, err)
 	}
-	service := buildService(namespace, name, appLabel, port, opts...)
+	service := buildService(namespace, name, appLabel, port)
 	_, err = k8sClient.CoreV1().Services(namespace).Create(ctx, service, metav1.CreateOptions{})
 	if err != nil && errors.IsAlreadyExists(err) {
 		_ = k8sClient.CoreV1().Services(namespace).Delete(ctx, serviceName, metav1.DeleteOptions{})
@@ -87,8 +57,7 @@ func EnsureService(ctx context.Context, k8sClient *kubernetes.Clientset, namespa
 	return err
 }
 
-func buildService(namespace, name, appLabel string, port int, opts ...InfraOption) *corev1.Service {
-	cfg := resolveInfraFixtureConfig(opts...)
+func buildService(namespace, name, appLabel string, port int) *corev1.Service {
 	serviceName := name + serviceNameSuffix
 	return &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
@@ -106,7 +75,7 @@ func buildService(namespace, name, appLabel string, port int, opts ...InfraOptio
 				"llm-d.ai/inferenceServing": defaultInferenceServingLabelValue,
 			},
 			Ports: []corev1.ServicePort{
-				{Name: cfg.servicePortName, Port: int32(port), Protocol: corev1.ProtocolTCP},
+				{Name: defaultServicePortName, Port: int32(port), Protocol: corev1.ProtocolTCP},
 			},
 			Type: corev1.ServiceTypeClusterIP,
 		},
@@ -114,13 +83,13 @@ func buildService(namespace, name, appLabel string, port int, opts ...InfraOptio
 }
 
 // CreateServiceMonitor creates a ServiceMonitor for Prometheus. Fails if it already exists.
-func CreateServiceMonitor(ctx context.Context, crClient client.Client, monitoringNamespace, targetNamespace, name, appLabel string, opts ...InfraOption) error {
-	serviceMonitor := buildServiceMonitor(monitoringNamespace, targetNamespace, name, appLabel, opts...)
+func CreateServiceMonitor(ctx context.Context, crClient client.Client, monitoringNamespace, targetNamespace, name, appLabel string) error {
+	serviceMonitor := buildServiceMonitor(monitoringNamespace, targetNamespace, name, appLabel)
 	return crClient.Create(ctx, serviceMonitor)
 }
 
 // DeleteServiceMonitor deletes the ServiceMonitor. Idempotent; ignores NotFound.
-func DeleteServiceMonitor(ctx context.Context, crClient client.Client, monitoringNamespace, name string, opts ...InfraOption) error {
+func DeleteServiceMonitor(ctx context.Context, crClient client.Client, monitoringNamespace, name string) error {
 	serviceMonitorName := name + serviceMonitorNameSuffix
 	sm := &promoperator.ServiceMonitor{
 		ObjectMeta: metav1.ObjectMeta{Name: serviceMonitorName, Namespace: monitoringNamespace},
@@ -133,7 +102,7 @@ func DeleteServiceMonitor(ctx context.Context, crClient client.Client, monitorin
 }
 
 // EnsureServiceMonitor creates or replaces the ServiceMonitor (idempotent for test setup).
-func EnsureServiceMonitor(ctx context.Context, crClient client.Client, monitoringNamespace, targetNamespace, name, appLabel string, opts ...InfraOption) error {
+func EnsureServiceMonitor(ctx context.Context, crClient client.Client, monitoringNamespace, targetNamespace, name, appLabel string) error {
 	serviceMonitorName := name + serviceMonitorNameSuffix
 	existingSM := &promoperator.ServiceMonitor{
 		ObjectMeta: metav1.ObjectMeta{Name: serviceMonitorName, Namespace: monitoringNamespace},
@@ -150,12 +119,11 @@ func EnsureServiceMonitor(ctx context.Context, crClient client.Client, monitorin
 	} else if !errors.IsNotFound(err) {
 		return fmt.Errorf("check existing ServiceMonitor %s: %w", serviceMonitorName, err)
 	}
-	serviceMonitor := buildServiceMonitor(monitoringNamespace, targetNamespace, name, appLabel, opts...)
+	serviceMonitor := buildServiceMonitor(monitoringNamespace, targetNamespace, name, appLabel)
 	return crClient.Create(ctx, serviceMonitor)
 }
 
-func buildServiceMonitor(monitoringNamespace, targetNamespace, name, appLabel string, opts ...InfraOption) *promoperator.ServiceMonitor {
-	cfg := resolveInfraFixtureConfig(opts...)
+func buildServiceMonitor(monitoringNamespace, targetNamespace, name, appLabel string) *promoperator.ServiceMonitor {
 	serviceMonitorName := name + serviceMonitorNameSuffix
 	return &promoperator.ServiceMonitor{
 		ObjectMeta: metav1.ObjectMeta{
@@ -170,7 +138,7 @@ func buildServiceMonitor(monitoringNamespace, targetNamespace, name, appLabel st
 		Spec: promoperator.ServiceMonitorSpec{
 			Selector: metav1.LabelSelector{MatchLabels: map[string]string{"app": appLabel}},
 			Endpoints: []promoperator.Endpoint{
-				{Port: cfg.servicePortName, Path: defaultServiceMonitorMetricsPath, Interval: promoperator.Duration("15s")},
+				{Port: defaultServicePortName, Path: defaultServiceMonitorMetricsPath, Interval: promoperator.Duration("15s")},
 			},
 			NamespaceSelector: promoperator.NamespaceSelector{MatchNames: []string{targetNamespace}},
 		},

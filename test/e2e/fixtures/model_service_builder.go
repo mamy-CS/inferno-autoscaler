@@ -19,8 +19,8 @@ import (
 // CreateModelService creates the model-server Deployment only (name + "-decode").
 // It does not create a Kubernetes Service; callers must use CreateService or EnsureService
 // (typically naming the Service name + "-service") to expose the deployment.
-func CreateModelService(ctx context.Context, k8sClient *kubernetes.Clientset, namespace, name, poolName, modelID string, useSimulator bool, maxNumSeqs int, opts ...ModelServiceOption) error {
-	deployment := buildModelServiceDeployment(namespace, name, poolName, modelID, useSimulator, maxNumSeqs, opts...)
+func CreateModelService(ctx context.Context, k8sClient *kubernetes.Clientset, namespace, name, poolName, modelID string, useSimulator bool, maxNumSeqs int) error {
+	deployment := buildModelServiceDeployment(namespace, name, poolName, modelID, useSimulator, maxNumSeqs)
 	_, err := k8sClient.AppsV1().Deployments(namespace).Create(ctx, deployment, metav1.CreateOptions{})
 	return err
 }
@@ -37,10 +37,10 @@ func DeleteModelService(ctx context.Context, k8sClient *kubernetes.Clientset, na
 
 // EnsureModelService creates or replaces the model-server Deployment only (name + "-decode").
 // It does not create a Kubernetes Service; pair with EnsureService for a ClusterIP Service.
-func EnsureModelService(ctx context.Context, k8sClient *kubernetes.Clientset, namespace, name, poolName, modelID string, useSimulator bool, maxNumSeqs int, opts ...ModelServiceOption) error {
+func EnsureModelService(ctx context.Context, k8sClient *kubernetes.Clientset, namespace, name, poolName, modelID string, useSimulator bool, maxNumSeqs int) error {
 	appLabel := name + decodeNameSuffix
 	deploymentName := appLabel
-	desiredDeployment := buildModelServiceDeployment(namespace, name, poolName, modelID, useSimulator, maxNumSeqs, opts...)
+	desiredDeployment := buildModelServiceDeployment(namespace, name, poolName, modelID, useSimulator, maxNumSeqs)
 
 	existingDeployment, err := k8sClient.AppsV1().Deployments(namespace).Get(ctx, deploymentName, metav1.GetOptions{})
 	if err == nil {
@@ -81,8 +81,7 @@ func modelServiceDeploymentMatchesDesired(existing, desired appsv1.Deployment) b
 		apiequality.Semantic.DeepEqual(existing.Spec.Template.Spec, desired.Spec.Template.Spec)
 }
 
-func buildModelServiceDeployment(namespace, name, poolName, modelID string, useSimulator bool, maxNumSeqs int, opts ...ModelServiceOption) *appsv1.Deployment {
-	cfg := resolveModelServiceFixtureConfig(opts...)
+func buildModelServiceDeployment(namespace, name, poolName, modelID string, useSimulator bool, maxNumSeqs int) *appsv1.Deployment {
 	appLabel := name + decodeNameSuffix
 	image := defaultModelServiceSimulatorImage
 	if !useSimulator {
@@ -112,8 +111,8 @@ func buildModelServiceDeployment(namespace, name, poolName, modelID string, useS
 			corev1.EnvVar{Name: "HF_HOME", Value: "/model-cache"},
 			corev1.EnvVar{Name: "HF_TOKEN", ValueFrom: &corev1.EnvVarSource{
 				SecretKeyRef: &corev1.SecretKeySelector{
-					LocalObjectReference: corev1.LocalObjectReference{Name: cfg.hfTokenSecret},
-					Key:                  cfg.hfTokenKey,
+					LocalObjectReference: corev1.LocalObjectReference{Name: defaultHFTokenSecretName},
+					Key:                  defaultHFTokenSecretKey,
 				},
 			}},
 		)

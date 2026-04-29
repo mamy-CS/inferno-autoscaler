@@ -16,9 +16,9 @@ import (
 )
 
 // EnsureModelServiceLWS creates or replaces a LeaderWorkerSet for model service (idempotent for test setup).
-func EnsureModelServiceLWS(ctx context.Context, crClient client.Client, namespace, name, poolName, modelID string, useSimulator bool, maxNumSeqs int, groupSize int32, opts ...ModelServiceOption) error {
+func EnsureModelServiceLWS(ctx context.Context, crClient client.Client, namespace, name, poolName, modelID string, useSimulator bool, maxNumSeqs int, groupSize int32) error {
 	lwsName := name + decodeNameSuffix
-	desiredLWS := buildModelServiceLWS(namespace, name, poolName, modelID, useSimulator, maxNumSeqs, groupSize, opts...)
+	desiredLWS := buildModelServiceLWS(namespace, name, poolName, modelID, useSimulator, maxNumSeqs, groupSize)
 
 	// Check if LWS already exists
 	existingLWS := &lwsv1.LeaderWorkerSet{}
@@ -87,8 +87,7 @@ func DeleteModelServiceLWS(ctx context.Context, crClient client.Client, namespac
 	return nil
 }
 
-func buildModelServiceLWS(namespace, name, poolName, modelID string, useSimulator bool, maxNumSeqs int, groupSize int32, opts ...ModelServiceOption) *lwsv1.LeaderWorkerSet {
-	cfg := resolveModelServiceFixtureConfig(opts...)
+func buildModelServiceLWS(namespace, name, poolName, modelID string, useSimulator bool, maxNumSeqs int, groupSize int32) *lwsv1.LeaderWorkerSet {
 	appLabel := name + decodeNameSuffix
 	image := defaultModelServiceSimulatorImage
 	if !useSimulator {
@@ -116,8 +115,8 @@ func buildModelServiceLWS(namespace, name, poolName, modelID string, useSimulato
 			corev1.EnvVar{Name: "HF_HOME", Value: "/model-cache"},
 			corev1.EnvVar{Name: "HF_TOKEN", ValueFrom: &corev1.EnvVarSource{
 				SecretKeyRef: &corev1.SecretKeySelector{
-					LocalObjectReference: corev1.LocalObjectReference{Name: cfg.hfTokenSecret},
-					Key:                  cfg.hfTokenKey,
+					LocalObjectReference: corev1.LocalObjectReference{Name: defaultHFTokenSecretName},
+					Key:                  defaultHFTokenSecretKey,
 				},
 			}},
 		)
