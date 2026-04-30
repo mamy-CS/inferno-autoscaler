@@ -41,6 +41,7 @@ export POOL_GROUP="${POOL_GROUP:-inference.networking.k8s.io}"
 # Nightly CI should validate WVA against llm-d main by default.
 export LLM_D_RELEASE="${LLM_D_RELEASE:-main}"
 export LLM_D_PROJECT="${LLM_D_PROJECT:-llm-d}"
+export WVA_PROJECT="${WVA_PROJECT:-$ROOT}"
 export CLIENT_PREREQ_DIR="${CLIENT_PREREQ_DIR:-$WVA_PROJECT/$LLM_D_PROJECT/helpers/client-setup}"
 export GATEWAY_PREREQ_DIR="${GATEWAY_PREREQ_DIR:-$WVA_PROJECT/$LLM_D_PROJECT/helpers/gateway-provider}"
 
