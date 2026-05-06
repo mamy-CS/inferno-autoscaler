@@ -19,6 +19,10 @@ Options:
   -e, --environment            kubernetes | openshift | kind-emulator (default: kubernetes)
   -h, --help                   Show this help and exit
 
+Deprecated (ignored by install.sh for chart deploy; passed through for CI/scripts calling install-llmd-infra next):
+  --model MODEL_ID             Same as MODEL_ID env (llm-d / chart overrides use install-llmd-infra.sh)
+  --accelerator TYPE           Same as ACCELERATOR_TYPE env
+
 Environment Variables:
   IMG                          WVA image as repo:tag (alternative to -i)
   WVA_RELEASE_NAME             Helm release name (alternative to -r)
@@ -71,6 +75,15 @@ parse_args() {
         if ! containsElement "$ENVIRONMENT" "${COMPATIBLE_ENV_LIST[@]}"; then
           log_error "Invalid environment: $ENVIRONMENT. Valid options are: ${COMPATIBLE_ENV_LIST[*]}"
         fi
+        ;;
+      --model)
+        # Legacy CI/scripts — install.sh does not consume MODEL_ID; install-llmd-infra.sh does.
+        export MODEL_ID="$2"
+        shift 2
+        ;;
+      --accelerator)
+        export ACCELERATOR_TYPE="$2"
+        shift 2
         ;;
       -h|--help)              print_help; exit 0 ;;
       *)
