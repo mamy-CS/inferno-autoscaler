@@ -48,41 +48,6 @@ Summary of WVA benchmark runs with configuration details.
 | Scale-down policy | 10 Pods / 150s |
 | Metric source | External (`wva_desired_replicas`) |
 
-## How to Run
-
-> **Prerequisites:** Active `kubectl`/`oc` context pointing at your cluster.
-
-**Step 1 — Install the benchmark CLI** (once per workspace):
-
-```bash
-make benchmark-install
-```
-
-**Step 2 — Stand up the benchmark environment:**
-
-```bash
-make benchmark-standup BENCHMARK_NAMESPACE=<your-namespace>
-```
-
-**Step 3 — Run a scenario:**
-
-```bash
-make benchmark-run BENCHMARK_NAMESPACE=<your-namespace> BENCHMARK_WORKLOAD=prefill_heavy.yaml
-```
-
-Repeat with `decode_heavy.yaml` or `symmetrical.yaml` for the other scenarios.
-
-**Step 4 — Tear down when done:**
-
-```bash
-make benchmark-teardown BENCHMARK_NAMESPACE=<your-namespace>
-```
-
-Results are saved automatically in a timestamped directory at the repo root (e.g. `<username>-YYYYMMDD-HHMMSS/results/`).
-
-> **Tip:** To run all three scenarios in one command: `make benchmark-full BENCHMARK_NAMESPACE=<your-namespace>`
-
----
 
 ## Prefill Heavy Scenario
 
