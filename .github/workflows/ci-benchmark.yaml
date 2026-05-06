@@ -283,10 +283,11 @@ jobs:
           ENVIRONMENT: kind-emulator
           USE_SIMULATOR: "true"
           CREATE_CLUSTER: "true"
+          # install-llmd-infra defaults INSTALL_GATEWAY_CTRLPLANE=true; explicit for readability in CI.
           INSTALL_GATEWAY_CTRLPLANE: "true"
-          E2E_TESTS_ENABLED: "true"
           IMG: ${{ steps.build-image.outputs.image }}
           SKIP_BUILD: "true"
+          # Optional follow-up helm tune after deploy-e2e-infra (same env names as Makefile uses).
           KV_SPARE_TRIGGER: "0.1"
           QUEUE_SPARE_TRIGGER: "3"
           INSTALL_GRAFANA: "true"
@@ -542,17 +543,18 @@ jobs:
       - name: Deploy WVA and llm-d infrastructure
         env:
           ENVIRONMENT: openshift
+          # Cluster provides gateway — skip install-llmd gateway helmfile.
           INSTALL_GATEWAY_CTRLPLANE: "false"
-          E2E_TESTS_ENABLED: "true"
           NAMESPACE_SCOPED: "false"
           LLMD_NS: ${{ env.LLMD_NAMESPACE }}
           WVA_NS: ${{ env.WVA_NAMESPACE }}
           CONTROLLER_INSTANCE: ${{ env.WVA_NAMESPACE }}
-          DEPLOY_VA: "false"
-          DEPLOY_HPA: "false"
+          # Benchmark does not use chart VA/HPA from install — workloads and autoscalers come from the benchmark job.
           DECODE_REPLICAS: "1"
           MONITORING_NAMESPACE: openshift-user-workload-monitoring
+          # See OpenShift e2e: user-workload Prometheus cannot bearer-auth to WVA /metrics.
           WVA_METRICS_SECURE: "false"
+          # Full capacity-scaling chart values (install.sh no longer passes these).
           KV_CACHE_THRESHOLD: "0.90"
           QUEUE_LENGTH_THRESHOLD: "10"
           KV_SPARE_TRIGGER: "0.05"
@@ -564,8 +566,19 @@ jobs:
           VLLM_BLOCK_SIZE: "64"
           VLLM_ENFORCE_EAGER: "true"
           INSTALL_GRAFANA: "true"
+          MODEL_ID: ${{ env.MODEL_ID }}
+          ACCELERATOR_TYPE: ${{ env.ACCELERATOR_TYPE }}
+          LLMD_PATCH_EPP_FLOW_CONTROL: "true"
+          LLMD_SKIP_INFERENCE_OBJECTIVE: "true"
         run: |
-          ./deploy/install.sh --model "$MODEL_ID" --accelerator "$ACCELERATOR_TYPE" --release-name "$WVA_RELEASE_NAME" --environment openshift
+          # Split deploy: WVA base (install.sh) → llm-d (install-llmd-infra.sh) → chart capacity tuning (helm upgrade).
+          ./deploy/install.sh --release-name "$WVA_RELEASE_NAME" --environment openshift
+          ./deploy/install-llmd-infra.sh -e openshift
+          helm upgrade "$WVA_RELEASE_NAME" ./charts/workload-variant-autoscaler -n "$WVA_NS" --reuse-values \
+            --set wva.capacityScaling.default.kvCacheThreshold="${KV_CACHE_THRESHOLD}" \
+            --set wva.capacityScaling.default.queueLengthThreshold="${QUEUE_LENGTH_THRESHOLD}" \
+            --set wva.capacityScaling.default.kvSpareTrigger="${KV_SPARE_TRIGGER}" \
+            --set wva.capacityScaling.default.queueSpareTrigger="${QUEUE_SPARE_TRIGGER}"
 
       - name: Label namespaces for OpenShift monitoring
         run: |

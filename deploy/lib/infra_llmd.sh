@@ -1,11 +1,35 @@
 #!/usr/bin/env bash
 #
-# Shared llm-d infrastructure deployment helpers for deploy/install.sh.
+# Shared llm-d infrastructure deployment helpers for deploy/install-llmd-infra.sh.
 # Requires vars: LLMD_NS, WVA_NS, EXAMPLE_DIR, WVA_PROJECT, GATEWAY_PROVIDER,
-# LLM_D_* values, model/latency knobs.
+# LLMD_REMOVE_EMULATED_DECODE_DEPLOYMENTS, LLM_D_* values, model/latency knobs.
 # Requires funcs: log_info/log_warning/log_success/log_error,
 # containsElement(), wait_deployment_available_nonfatal(), detect_inference_pool_api_group().
 #
+
+# Post-deploy cleanup for emulated clusters (e.g. Kind): chart ModelService ships both prefill and decode;
+# current WVA flows expect a single user-owned decode workload. Always remove prefill; decode removal is gated
+# by LLMD_REMOVE_EMULATED_DECODE_DEPLOYMENTS (default true for e2e / local emulated flows).
+apply_llm_d_infrastructure_fixes() {
+    log_info "Applying llm-d infrastructure fixes for emulated cluster..."
+    # Skip cleanup when modelservice release is not installed (e.g. e2e infra-only path excludes it).
+    if ! helm list -n "$LLMD_NS" --short 2>/dev/null | grep -q '^ms-'; then
+        log_info "No llm-d modelservice release detected in $LLMD_NS; skipping prefill/decode cleanup"
+        return
+    fi
+
+    log_info "Deleting prefill deployments..."
+    kubectl delete deployments.apps \
+        "$LLM_D_MODELSERVICE_NAME-prefill" \
+        --ignore-not-found -n "$LLMD_NS"
+
+    if [ "${LLMD_REMOVE_EMULATED_DECODE_DEPLOYMENTS:-true}" = "true" ]; then
+        log_info "Deleting decode deployments (LLMD_REMOVE_EMULATED_DECODE_DEPLOYMENTS=true; tests deploy their own workloads)..."
+        kubectl delete deployments.apps \
+            "$LLM_D_MODELSERVICE_NAME-decode" \
+            --ignore-not-found -n "$LLMD_NS"
+    fi
+}
 
 deploy_llm_d_infrastructure() {
     log_info "Deploying llm-d infrastructure..."
@@ -210,12 +234,11 @@ deploy_llm_d_infrastructure() {
       helmfile_selector_exprs+=("kind!=autoscaling")
       log_info "Skipping WVA in helmfile (will be deployed separately from local chart)"
     fi
-    if [ "$E2E_TESTS_ENABLED" = "true" ] && [ "$INFRA_ONLY" = "true" ]; then
-      # E2E infra-only tests create scenario-specific modelservice workloads
-      # themselves. Skip the default llm-d-modelservice release so baseline
-      # infrastructure is clean and we avoid create-then-delete churn.
+    if [ "${LLMD_SKIP_DEFAULT_MODELSERVICE:-false}" = "true" ]; then
+      # E2E and similar flows create scenario-specific ModelService workloads;
+      # skip the default llm-d-modelservice release so baseline infra is clean.
       helmfile_selector_exprs+=("chart!=llm-d-modelservice")
-      log_info "E2E infra-only mode: skipping llm-d-modelservice release in helmfile"
+      log_info "Skipping llm-d-modelservice release in helmfile (LLMD_SKIP_DEFAULT_MODELSERVICE=true)"
     fi
     local selector_csv=""
     if [ "${#helmfile_selector_exprs[@]}" -gt 0 ]; then
@@ -237,16 +260,16 @@ deploy_llm_d_infrastructure() {
         log_warning "Role $LLM_D_EPP_NAME not found, skipping RBAC patch"
     fi
 
-    if [ "$E2E_TESTS_ENABLED" = "true" ] && [ "$INFRA_ONLY" = "true" ]; then
+    if [ "${LLMD_SKIP_DEFAULT_MODELSERVICE:-false}" = "true" ]; then
       if helm list -n "$LLMD_NS" --short 2>/dev/null | grep -q '^ms-'; then
-        log_warning "Modelservice release still present in $LLMD_NS despite e2e selector; tests may need extra cleanup"
+        log_warning "Modelservice release still present in $LLMD_NS despite selector; tests may need extra cleanup"
       fi
     fi
 
     # Post-deploy: align the WVA vllm-service selector and ServiceMonitor to match
     # the actual pod labels. The llm-d-modelservice chart sets pod labels from
     # modelArtifacts.labels (e.g. "Qwen3-32B"), but the WVA chart's Service selector
-    # uses llmd.modelName (e.g. "ms-inference-scheduling-llm-d-modelservice").
+    # uses llmd.modelName (e.g. "ms-<GUIDE_NAME>-llm-d-modelservice" from the active llm-d guide).
     # We patch the Service/ServiceMonitor selectors (which ARE mutable) rather than
     # the deployment labels (which have immutable selectors).
     if [ "$NEEDS_LABEL_ALIGNMENT" == "true" ]; then
@@ -308,7 +331,7 @@ deploy_llm_d_infrastructure() {
 
     # Patch llm-d-inference-scheduler deployment image and enable flowControl when scale-to-zero or e2e tests are enabled
     # (required for scale-from-zero: the image must support flow control for queue metrics).
-    if [ "$ENABLE_SCALE_TO_ZERO" == "true" ] || [ "$E2E_TESTS_ENABLED" == "true" ]; then
+    if [ "$ENABLE_SCALE_TO_ZERO" == "true" ] || [ "${LLMD_PATCH_EPP_FLOW_CONTROL:-false}" == "true" ]; then
         if kubectl get deployment "$LLM_D_EPP_NAME" -n "$LLMD_NS" &> /dev/null; then
             # Get the current image from the deployment
             local CURRENT_IMAGE=$(kubectl get deployment "$LLM_D_EPP_NAME" -n "$LLMD_NS" -o jsonpath='{.spec.template.spec.containers[0].image}')
@@ -370,7 +393,7 @@ deploy_llm_d_infrastructure() {
 
     # Deploy InferenceObjective for GIE queuing when flow control is enabled (scale-from-zero).
     # E2E applies e2e-default from Go (test/e2e/fixtures) so tests do not depend on install.sh for this CR.
-    if [ "$E2E_TESTS_ENABLED" != "true" ] && [ "$ENABLE_SCALE_TO_ZERO" == "true" ]; then
+    if [ "${LLMD_SKIP_INFERENCE_OBJECTIVE:-false}" != "true" ] && [ "$ENABLE_SCALE_TO_ZERO" == "true" ]; then
         if kubectl get crd inferenceobjectives.inference.networking.x-k8s.io &>/dev/null; then
             local infobj_file="${WVA_PROJECT}/deploy/inference-objective-e2e.yaml"
             if [ -f "$infobj_file" ]; then
@@ -393,9 +416,9 @@ deploy_llm_d_infrastructure() {
     # For deterministic e2e infra-only runs, avoid waiting on all llm-d deployments.
     # The full wait often blocks on modelservice decode/prefill readiness, which is
     # unnecessary for the e2e suite because tests create/manage their own workloads.
-    if [ "$E2E_TESTS_ENABLED" = "true" ] && [ "$INFRA_ONLY" = "true" ]; then
+    if [ "${LLMD_WAIT_FOR_ESSENTIAL_LLM_D_ONLY:-false}" = "true" ]; then
         local E2E_DEPLOY_WAIT_TIMEOUT="${E2E_DEPLOY_WAIT_TIMEOUT:-120s}"
-        log_info "E2E infra-only mode: waiting for essential llm-d components (timeout=${E2E_DEPLOY_WAIT_TIMEOUT})..."
+        log_info "Waiting for essential llm-d components only (timeout=${E2E_DEPLOY_WAIT_TIMEOUT}, LLMD_WAIT_FOR_ESSENTIAL_LLM_D_ONLY=true)..."
 
         if kubectl get deployment "$LLM_D_EPP_NAME" -n "$LLMD_NS" &>/dev/null; then
             kubectl wait --for=condition=Available "deployment/$LLM_D_EPP_NAME" -n "$LLMD_NS" --timeout="$E2E_DEPLOY_WAIT_TIMEOUT" || \
@@ -439,6 +462,10 @@ deploy_llm_d_infrastructure() {
         else
             log_warning "Could not detect InferencePool API group - WVA may have empty datastore for scale-from-zero"
         fi
+    fi
+
+    if ! containsElement "$ENVIRONMENT" "${NON_EMULATED_ENV_LIST[@]}"; then
+        apply_llm_d_infrastructure_fixes
     fi
 
     cd "$WVA_PROJECT"

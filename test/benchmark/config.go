@@ -33,6 +33,8 @@ type BenchmarkConfig struct {
 func LoadConfigFromEnv() BenchmarkConfig {
 	shared := testconfig.LoadSharedConfig()
 
+	// Defaults match llm-d guide helm releases for inference-scheduling (pinned deploys); llm-d main uses optimized-baseline naming.
+	// Note/ Todo - This needs aligning once llm-d 0.7 is released
 	gatewayServiceDefault := "infra-inference-scheduling-inference-gateway-istio"
 	if shared.Environment == "kind-emulator" {
 		gatewayServiceDefault = "infra-sim-inference-gateway-istio"
