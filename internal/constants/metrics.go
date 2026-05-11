@@ -116,6 +116,18 @@ const (
 	// WVAModelsProcessed is a gauge that tracks the number of models processed in the last optimization cycle.
 	WVAModelsProcessed = "wva_models_processed"
 
+	// WVAConfigInfo is an info-style gauge that exposes WVA configuration as labels.
+	// Labels: analyzer_name, limiter_enabled, scale_to_zero_enabled
+	WVAConfigInfo = "wva_config_info"
+
+	// WVAConfigKvSpareThreshold is a gauge that tracks the KV cache spare threshold configuration.
+	WVAConfigKvSpareThreshold = "wva_config_kv_spare_threshold"
+
+	// WVAConfigQueueSpareThreshold is a gauge that tracks the queue spare threshold configuration.
+	WVAConfigQueueSpareThreshold = "wva_config_queue_spare_threshold"
+
+	// WVAConfigOptimizationIntervalSeconds is a gauge that tracks the optimization interval in seconds.
+	WVAConfigOptimizationIntervalSeconds = "wva_config_optimization_interval_seconds"
 	// WVAMetricsCollectionDurationSeconds is a histogram that tracks the duration of metrics collection operations.
 	// Labels: query_type
 	WVAMetricsCollectionDurationSeconds = "wva_metrics_collection_duration_seconds"
@@ -168,6 +180,9 @@ const (
 	LabelAcceleratorType    = "accelerator_type"
 	LabelControllerInstance = "controller_instance"
 	LabelStatus             = "status"
+	LabelAnalyzerName       = "analyzer_name"
+	LabelLimiterEnabled     = "limiter_enabled"
+	LabelScaleToZeroEnabled = "scale_to_zero_enabled"
 	LabelQueryType          = "query_type"
 	// LabelUnit distinguishes the unit of a metric value when a single metric name
 	// carries values with different semantic units. Currently applied to
