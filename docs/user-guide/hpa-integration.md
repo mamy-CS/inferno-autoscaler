@@ -318,11 +318,9 @@ oc get featuregate cluster -o jsonpath='{.spec.customNoUpgrade.enabled}'
 5. Deploy HPA with `minReplicas: 0`:
 
 ```sh
-# Using install script
-HPA_MIN_REPLICAS=0 ./deploy/install.sh -e openshift
-
-# Or via Helm
+# Via Helm
 helm upgrade workload-variant-autoscaler ./charts/workload-variant-autoscaler \
+  --set hpa.enabled=true \
   --set hpa.minReplicas=0
 ```
 
@@ -377,21 +375,6 @@ helm install workload-variant-autoscaler ./charts/workload-variant-autoscaler \
 helm install workload-variant-autoscaler ./charts/workload-variant-autoscaler \
   --set hpa.behavior.scaleUp.stabilizationWindowSeconds=0 \
   --set hpa.behavior.scaleDown.stabilizationWindowSeconds=0
-```
-
-#### Via Deployment Script
-
-The `deploy/install.sh` script supports the `HPA_STABILIZATION_SECONDS` environment variable:
-
-```bash
-# Custom stabilization window
-HPA_STABILIZATION_SECONDS=120 ./deploy/install.sh
-
-# Production default (240 seconds)
-./deploy/install.sh
-
-# E2E testing (30 seconds)
-HPA_STABILIZATION_SECONDS=30 ./deploy/install.sh
 ```
 
 #### Via values.yaml
