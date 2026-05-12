@@ -431,9 +431,21 @@ jobs:
           which go
           go version
           go env GOTOOLCHAIN
-      - name: Install tools (kubectl, oc, helm, make)
+      - name: Install tools (kubectl, oc, helm, make, jq, yq)
         run: |
-          sudo apt-get update && sudo apt-get install -y make
+          sudo apt-get update && sudo apt-get install -y make jq
+          # mikefarah/yq — required by deploy/install-llmd-infra.sh (REQUIRED_TOOLS) and deploy/lib/infra_llmd.sh
+          YQ_VERSION="v4.45.1"
+          ARCH=$(uname -m)
+          case "$ARCH" in
+            x86_64)  YQ_ARCH="amd64" ;;
+            aarch64) YQ_ARCH="arm64" ;;
+            *) echo "::error::Unsupported arch for yq: $ARCH"; exit 1 ;;
+          esac
+          curl -fsSL --retry 3 --retry-delay 5 -o yq "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${YQ_ARCH}"
+          chmod +x yq
+          sudo mv yq /usr/local/bin/
+          yq --version
           # Install kubectl - use pinned version for reproducible CI builds
           # Pinned 2025-12: v1.31.0 tested compatible with OpenShift 4.16+
           # Update this version when upgrading target cluster or during regular dependency reviews
