@@ -13,7 +13,8 @@
 # Usage:
 #   ./deploy/install-llmd-infra.sh [-e kubernetes|openshift|kind-emulator] [--undeploy]
 #
-# Prerequisites: kubectl, helm, git. On kubernetes/openshift, GPU discovery uses jq — install it or run on kind-emulator to skip that path.
+# Prerequisites: kubectl, helm, git, yq, jq (yq edits values.yaml; jq builds JSON merge patches for
+# Service/ServiceMonitor label alignment; GPU discovery uses jq on kubernetes/openshift).
 
 set -e
 set -o pipefail
@@ -51,7 +52,6 @@ LLM_D_MODELSERVICE_VALUES=${LLM_D_MODELSERVICE_VALUES:-"$EXAMPLE_DIR/ms-$GUIDE_N
 ITL_AVERAGE_LATENCY_MS=${ITL_AVERAGE_LATENCY_MS:-20}
 TTFT_AVERAGE_LATENCY_MS=${TTFT_AVERAGE_LATENCY_MS:-200}
 ENABLE_SCALE_TO_ZERO=${ENABLE_SCALE_TO_ZERO:-true}
-LLM_D_INFERENCE_SCHEDULER_IMG=${LLM_D_INFERENCE_SCHEDULER_IMG:-"ghcr.io/llm-d/llm-d-inference-scheduler:v0.7.0"}
 
 GATEWAY_PROVIDER=${GATEWAY_PROVIDER:-"istio"}
 # Install Gateway control plane via helmfile when true (default). Set false if your cluster already has one.
@@ -92,7 +92,7 @@ LLM_D_INFERENCE_SIM_IMG_TAG=${LLM_D_INFERENCE_SIM_IMG_TAG:-"latest"}
 ENVIRONMENT=${ENVIRONMENT:-"kubernetes"}
 COMPATIBLE_ENV_LIST=("kubernetes" "openshift" "kind-emulator")
 NON_EMULATED_ENV_LIST=("kubernetes" "openshift")
-REQUIRED_TOOLS=("kubectl" "helm" "git")
+REQUIRED_TOOLS=("kubectl" "helm" "git" "yq" "jq")
 
 UNDEPLOY=false
 

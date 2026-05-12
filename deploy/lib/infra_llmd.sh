@@ -118,10 +118,14 @@ deploy_llm_d_infrastructure() {
         ACTUAL_DEFAULT_MODEL="$DEFAULT_MODEL_ID"
     fi
 
-    # Update model ID if different from the guide's actual default
+    # Update model ID if different from the guide's actual default.
+    # Use strenv() so MODEL_ID / ACTUAL_DEFAULT_MODEL are never interpolated into yq
+    # expression text (avoids breakage on quotes, pipes, etc. in HuggingFace IDs).
     if [ "$MODEL_ID" != "$ACTUAL_DEFAULT_MODEL" ] ; then
         log_info "Updating deployment to use model: $MODEL_ID (replacing guide default: $ACTUAL_DEFAULT_MODEL)"
-        yq eval "(.. | select(. == \"$ACTUAL_DEFAULT_MODEL\")) = \"$MODEL_ID\" | (.. | select(. == \"hf://$ACTUAL_DEFAULT_MODEL\")) = \"hf://$MODEL_ID\"" -i "$LLM_D_MODELSERVICE_VALUES"
+        MODEL_ID="$MODEL_ID" ACTUAL_DEFAULT_MODEL="$ACTUAL_DEFAULT_MODEL" yq eval -i \
+            '(.. | select(. == strenv(ACTUAL_DEFAULT_MODEL))) = strenv(MODEL_ID) | (.. | select(. == ("hf://" + strenv(ACTUAL_DEFAULT_MODEL)))) = ("hf://" + strenv(MODEL_ID))' \
+            "$LLM_D_MODELSERVICE_VALUES"
 
         # Increase model-storage volume size
         log_info "Increasing model-storage volume size for model: $MODEL_ID"
@@ -285,18 +289,16 @@ deploy_llm_d_infrastructure() {
       local svc_name="${wva_fullname}-vllm"
       local svcmon_name="${wva_fullname}-vllm-mon"
       log_info "Aligning WVA Service/ServiceMonitor selectors: llm-d.ai/model=$CURRENT_MODEL_LABEL"
-      # Patch Service selector
-      kubectl patch service "$svc_name" -n "$LLMD_NS" --type=merge -p "{
-        \"spec\": {\"selector\": {\"llm-d.ai/model\": \"$CURRENT_MODEL_LABEL\"}}
-      }" && log_success "Patched Service $svc_name selector" \
+      # Build merge patches with jq so label values cannot break JSON (e.g. quotes, backslashes).
+      local svc_patch svcmon_patch svc_label_patch
+      svc_patch=$(jq -n --arg label "$CURRENT_MODEL_LABEL" '{"spec":{"selector":{"llm-d.ai/model":$label}}}')
+      kubectl patch service "$svc_name" -n "$LLMD_NS" --type=merge -p "$svc_patch" && log_success "Patched Service $svc_name selector" \
          || log_warning "Failed to patch Service $svc_name selector"
-      # Patch ServiceMonitor matchLabels
-      kubectl patch servicemonitor "$svcmon_name" -n "$LLMD_NS" --type=merge -p "{
-        \"spec\": {\"selector\": {\"matchLabels\": {\"llm-d.ai/model\": \"$CURRENT_MODEL_LABEL\"}}}
-      }" && log_success "Patched ServiceMonitor $svcmon_name selector" \
+      svcmon_patch=$(jq -n --arg label "$CURRENT_MODEL_LABEL" '{"spec":{"selector":{"matchLabels":{"llm-d.ai/model":$label}}}}')
+      kubectl patch servicemonitor "$svcmon_name" -n "$LLMD_NS" --type=merge -p "$svcmon_patch" && log_success "Patched ServiceMonitor $svcmon_name selector" \
          || log_warning "Failed to patch ServiceMonitor $svcmon_name selector"
-      # Also patch the Service labels so the ServiceMonitor can find it
-      kubectl label service "$svc_name" -n "$LLMD_NS" "llm-d.ai/model=$CURRENT_MODEL_LABEL" --overwrite \
+      svc_label_patch=$(jq -n --arg label "$CURRENT_MODEL_LABEL" '{"metadata":{"labels":{"llm-d.ai/model":$label}}}')
+      kubectl patch service "$svc_name" -n "$LLMD_NS" --type=merge -p "$svc_label_patch" \
         && log_success "Patched Service $svc_name label" \
         || log_warning "Failed to patch Service $svc_name label"
     fi
@@ -329,8 +331,8 @@ deploy_llm_d_infrastructure() {
         fi
     fi
 
-    # Patch llm-d-inference-scheduler deployment image and enable flowControl when scale-to-zero or e2e tests are enabled
-    # (required for scale-from-zero: the image must support flow control for queue metrics).
+    # EPP (inference scheduler) image comes from the llm-d guide helmfile at LLM_D_RELEASE — not overridden here.
+    # Enable flowControl in the EPP ConfigMap when scale-to-zero or e2e tests require it (queue metrics path).
     if [ "$ENABLE_SCALE_TO_ZERO" == "true" ] || [ "${LLMD_PATCH_EPP_FLOW_CONTROL:-false}" == "true" ]; then
         if kubectl get deployment "$LLM_D_EPP_NAME" -n "$LLMD_NS" &> /dev/null; then
         
