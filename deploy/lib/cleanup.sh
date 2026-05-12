@@ -20,6 +20,7 @@ undeploy_keda() {
     helm uninstall "$KEDA_RELEASE_NAME" -n "$KEDA_NAMESPACE" 2>/dev/null || \
         log_warning "KEDA not found or already uninstalled"
     kubectl delete namespace "$KEDA_NAMESPACE" --ignore-not-found --timeout=120s 2>/dev/null || true
+    
     log_success "KEDA uninstalled"
 }
 
