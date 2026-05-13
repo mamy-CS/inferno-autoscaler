@@ -5,7 +5,8 @@ metadata:
     control-plane: controller-manager
     app.kubernetes.io/name: workload-variant-autoscaler
     app.kubernetes.io/managed-by: kustomize
-  name: controller-manager-metrics-service
+  # Short name so namePrefix + optional instance nameSuffix stays within DNS 63-char limit
+  name: cm-metrics
   namespace: workload-variant-autoscaler-system
 spec:
   ports:

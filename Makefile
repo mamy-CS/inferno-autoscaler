@@ -28,7 +28,7 @@ KV_SPARE_TRIGGER           ?=
 QUEUE_SPARE_TRIGGER         ?=
 E2E_MONITORING_NAMESPACE    ?= workload-variant-autoscaler-monitoring
 E2E_EMULATED_LLMD_NAMESPACE ?= llm-d-sim
-E2E_WVA_CHART_PATH          ?= $(CURDIR)/charts/workload-variant-autoscaler
+E2E_WVA_REPO_ROOT           ?= $(CURDIR)
 # llm-d-benchmark CLI configuration
 BENCHMARK_REPO_URL   ?= https://github.com/llm-d/llm-d-benchmark.git
 BENCHMARK_REPO_DIR   ?= $(CURDIR)/llm-d-benchmark
@@ -200,9 +200,10 @@ undeploy-wva-on-k8s:
 # If IMG is set, builds the image locally first (unless SKIP_BUILD=true).
 # Ordering: install.sh first, then install-llmd-infra.sh (WVA poolGroup upgrade runs after InferencePool exists).
 .PHONY: deploy-e2e-infra
-deploy-e2e-infra: ## Deploy e2e test infrastructure (WVA + llm-d; no chart VA/HPA). Uses Prometheus Adapter unless SCALER_BACKEND=keda.
+deploy-e2e-infra: ## Deploy e2e test infrastructure (WVA + llm-d; no chart VA/HPA). Uses Prometheus Adapter unless SCALER_BACKEND=keda. Forces WVA_NS + clears CONTROLLER_INSTANCE + drops PROM_CA_CERT_PATH for install so local shell env cannot skew e2e.
 	@echo "Deploying e2e test infrastructure..."
-	@if [ -n "$(IMG)" ]; then \
+	@set -e; \
+	if [ -n "$(IMG)" ]; then \
 		echo "IMG is set to '$(IMG)'"; \
 		if [ "$(SKIP_BUILD)" != "true" ]; then \
 			echo "Building local image (SKIP_BUILD not set)..."; \
@@ -219,14 +220,20 @@ deploy-e2e-infra: ## Deploy e2e test infrastructure (WVA + llm-d; no chart VA/HP
 			IMAGE_TAG="latest"; \
 		fi; \
 		echo "Using local image: $$IMAGE_REPO:$$IMAGE_TAG"; \
+		env -u PROM_CA_CERT_PATH \
+		WVA_NS=workload-variant-autoscaler-system \
+		CONTROLLER_INSTANCE= \
 		ENVIRONMENT=$(ENVIRONMENT) \
 		SCALER_BACKEND=$(SCALER_BACKEND) \
 		NAMESPACE_SCOPED=$(NAMESPACE_SCOPED) \
 		WVA_IMAGE_REPO=$$IMAGE_REPO \
 		WVA_IMAGE_TAG=$$IMAGE_TAG \
 		WVA_IMAGE_PULL_POLICY=IfNotPresent \
-		./deploy/install.sh && \
+		./deploy/install.sh; \
+		env -u PROM_CA_CERT_PATH \
 		KIND=$(KIND) KUBECTL=$(KUBECTL) IMG=$(IMG) \
+		WVA_NS=workload-variant-autoscaler-system \
+		CONTROLLER_INSTANCE= \
 		ENVIRONMENT=$(ENVIRONMENT) \
 		NAMESPACE_SCOPED=$(NAMESPACE_SCOPED) \
 		CREATE_CLUSTER=false \
@@ -243,11 +250,17 @@ deploy-e2e-infra: ## Deploy e2e test infrastructure (WVA + llm-d; no chart VA/HP
 		./deploy/install-llmd-infra.sh -e "$(ENVIRONMENT)"; \
 	else \
 		echo "IMG not set - using default image from registry (latest)"; \
+		env -u PROM_CA_CERT_PATH \
+		WVA_NS=workload-variant-autoscaler-system \
+		CONTROLLER_INSTANCE= \
 		ENVIRONMENT=$(ENVIRONMENT) \
 		SCALER_BACKEND=$(SCALER_BACKEND) \
 		NAMESPACE_SCOPED=$(NAMESPACE_SCOPED) \
-		./deploy/install.sh && \
+		./deploy/install.sh; \
+		env -u PROM_CA_CERT_PATH \
 		KIND=$(KIND) KUBECTL=$(KUBECTL) \
+		WVA_NS=workload-variant-autoscaler-system \
+		CONTROLLER_INSTANCE= \
 		ENVIRONMENT=$(ENVIRONMENT) \
 		NAMESPACE_SCOPED=$(NAMESPACE_SCOPED) \
 		CREATE_CLUSTER=false \
@@ -260,12 +273,12 @@ deploy-e2e-infra: ## Deploy e2e test infrastructure (WVA + llm-d; no chart VA/HP
 		LLMD_SKIP_INFERENCE_OBJECTIVE=true \
 		./deploy/install-llmd-infra.sh -e "$(ENVIRONMENT)"; \
 	fi; \
-	REL=$${WVA_RELEASE_NAME:-workload-variant-autoscaler}; NS=$${WVA_NS:-workload-variant-autoscaler-system}; \
+	REL=$${WVA_RELEASE_NAME:-workload-variant-autoscaler}; NS=workload-variant-autoscaler-system; \
 	if [ -n "$(KV_SPARE_TRIGGER)" ] || [ -n "$(QUEUE_SPARE_TRIGGER)" ]; then \
 		echo "Applying optional WVA capacity threshold overrides (KV_SPARE_TRIGGER / QUEUE_SPARE_TRIGGER)..."; \
-		helm upgrade "$$REL" "$(CURDIR)/charts/workload-variant-autoscaler" -n "$$NS" --reuse-values \
-			$(if $(KV_SPARE_TRIGGER),--set wva.capacityScaling.default.kvSpareTrigger=$(KV_SPARE_TRIGGER)) \
-			$(if $(QUEUE_SPARE_TRIGGER),--set wva.capacityScaling.default.queueSpareTrigger=$(QUEUE_SPARE_TRIGGER)); \
+		KV="$(if $(KV_SPARE_TRIGGER),$(KV_SPARE_TRIGGER),0.1)"; Q="$(if $(QUEUE_SPARE_TRIGGER),$(QUEUE_SPARE_TRIGGER),3)"; \
+		kubectl patch configmap workload-variant-autoscaler-saturation-scaling-config -n "$$NS" --type merge \
+			-p "{\"data\":{\"default\":\"kvCacheThreshold: 0.80\\nqueueLengthThreshold: 5\\nkvSpareTrigger: $$KV\\nqueueSpareTrigger: $$Q\\nenableLimiter: false\\n\"}}" || true; \
 	fi
 
 ## DEPRECATED: prefer ./deploy/install-llmd-infra.sh or upstream llm-d install tooling; kept for Makefile discoverability.
@@ -343,7 +356,7 @@ test-e2e-smoke: ## Run smoke e2e tests
 	WVA_NAMESPACE=$(CONTROLLER_NAMESPACE) \
 	LLMD_NAMESPACE=$(E2E_EMULATED_LLMD_NAMESPACE) \
 	MONITORING_NAMESPACE=$(E2E_MONITORING_NAMESPACE) \
-	WVA_E2E_CHART_PATH=$${WVA_E2E_CHART_PATH:-$(E2E_WVA_CHART_PATH)} \
+	WVA_E2E_REPO_ROOT=$${WVA_E2E_REPO_ROOT:-$(E2E_WVA_REPO_ROOT)} \
 	USE_SIMULATOR=$(USE_SIMULATOR) \
 	SCALE_TO_ZERO_ENABLED=$(SCALE_TO_ZERO_ENABLED) \
 	SCALER_BACKEND=$(SCALER_BACKEND) \
@@ -359,14 +372,17 @@ test-e2e-smoke: ## Run smoke e2e tests
 
 # Runs the complete e2e test suite (excluding flaky tests).
 .PHONY: test-e2e-full
-test-e2e-full: ## Run full e2e test suite
+test-e2e-full: ## Run full e2e test suite (forces emulated MONITORING_NAMESPACE / LLMD_NAMESPACE like test-e2e-smoke so shell env cannot skew Kind runs).
 	@echo "Running full e2e test suite..."
 	$(eval FOCUS_ARGS := $(if $(FOCUS),-ginkgo.focus="$(FOCUS)",))
 	$(eval SKIP_ARGS := $(if $(SKIP),-ginkgo.skip="$(SKIP)",))
 	KUBECONFIG=$(KUBECONFIG) \
 	ENVIRONMENT=$(ENVIRONMENT) \
 	WVA_NAMESPACE=$(CONTROLLER_NAMESPACE) \
-	WVA_E2E_CHART_PATH=$${WVA_E2E_CHART_PATH:-$(E2E_WVA_CHART_PATH)} \
+	LLMD_NAMESPACE=$(E2E_EMULATED_LLMD_NAMESPACE) \
+	MONITORING_NAMESPACE=$(E2E_MONITORING_NAMESPACE) \
+	WVA_E2E_REPO_ROOT=$${WVA_E2E_REPO_ROOT:-$(E2E_WVA_REPO_ROOT)} \
+	CONTROLLER_INSTANCE= \
 	USE_SIMULATOR=$(USE_SIMULATOR) \
 	SCALE_TO_ZERO_ENABLED=$(SCALE_TO_ZERO_ENABLED) \
 	SCALER_BACKEND=$(SCALER_BACKEND) \
@@ -607,7 +623,7 @@ docker-buildx: ## Build and push docker image for the manager for cross-platform
 build-installer: manifests generate kustomize ## Generate a consolidated YAML with CRDs and deployment.
 	mkdir -p dist
 	cd config/manager && $(KUSTOMIZE) edit set image controller=${IMG}
-	$(KUSTOMIZE) build config/default > dist/install.yaml
+	{ $(KUSTOMIZE) build config/crd; echo '---'; $(KUSTOMIZE) build config/default; } > dist/install.yaml
 
 ##@ Deployment
 
@@ -626,11 +642,13 @@ uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified 
 .PHONY: deploy
 deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in ~/.kube/config.
 	cd config/manager && $(KUSTOMIZE) edit set image controller=${IMG}
+	$(KUSTOMIZE) build config/crd | $(KUBECTL) apply -f -
 	$(KUSTOMIZE) build config/default | $(KUBECTL) apply -f -
 
 .PHONY: undeploy
 undeploy: kustomize ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
 	$(KUSTOMIZE) build config/default | $(KUBECTL) delete --ignore-not-found=$(ignore-not-found) -f -
+	$(KUSTOMIZE) build config/crd | $(KUBECTL) delete --ignore-not-found=$(ignore-not-found) -f -
 
 ##@ Dependencies
 

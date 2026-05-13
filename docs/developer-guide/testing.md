@@ -189,6 +189,8 @@ make test-e2e-full
 
 See the [E2E Test Suite README](../../test/e2e/README.md) for full configuration options and examples.
 
+**Kustomize-first pitfalls (local / CI):** Ensure **`IMG`** (or `WVA_IMAGE_REPO` / `WVA_IMAGE_TAG`) matches the image you built — the running controller `Deployment` must not silently stay on an older tag. Do not export **`PROM_CA_CERT_PATH`** to a non-file (e.g. `/dev/null`); that can abort `deploy/install.sh` before llm-d installs. Dual-controller specs need **`WVA_E2E_REPO_ROOT`** pointing at the repository root; **`make test-e2e-*`** exports **`WVA_E2E_REPO_ROOT=$(CURDIR)`** by default. Deprecated fallback: **`WVA_E2E_CHART_PATH`**, then **`os.Getwd()`** if you run **`go test`** from the repo root without env. See the [Kustomize / Helm migration plan](kustomize-helm-migration-plan.md) for the full checklist and CI parity notes.
+
 ### Quick Start
 
 ```bash
@@ -227,7 +229,7 @@ Key environment variables (see [E2E Test Suite README](../../test/e2e/README.md)
 | `E2E_EVENTUALLY_STANDARD`, etc. | see README | Optional `Eventually` timeouts and poll intervals (`E2E_EVENTUALLY_*`, `E2E_EVENTUALLY_POLL*`) |
 | `RESTART_PROMETHEUS_ADAPTER` | `auto` | kind-emulator: `auto` probes adapter + API before restarting pods; `true`/`false` force always/never |
 
-Deploy-time knobs: `SKIP_HELM_REPO_UPDATE`, `E2E_DEPLOY_WAIT_TIMEOUT`, optional `KV_SPARE_TRIGGER` / `QUEUE_SPARE_TRIGGER` (Makefile applies a follow-up `helm upgrade` when set) — see **Install script tuning** above.
+Deploy-time knobs: `SKIP_HELM_REPO_UPDATE`, `E2E_DEPLOY_WAIT_TIMEOUT`, optional `KV_SPARE_TRIGGER` / `QUEUE_SPARE_TRIGGER` (with Kustomize-first WVA, `make deploy-e2e-infra` / `deploy-e2e-infra` applies a follow-up **merge patch on the saturation ConfigMap** when these are set — not a Helm upgrade on the controller) — see **Install script tuning** above.
 
 For running multiple test runs in parallel, use [multi-controller isolation](../user-guide/multi-controller-isolation.md) (`CONTROLLER_INSTANCE`).
 
@@ -266,6 +268,8 @@ E2E workflows run the **consolidated suite** (`test/e2e/`):
 - **Full** (`make test-e2e-full`): Full suite; typically run with infra deployed via `deploy-e2e-infra` or equivalent
 
 Infrastructure is deployed in **infra-only** mode (WVA + llm-d only); tests create VA, HPA, and model services dynamically.
+
+PR checks align Kind e2e with Kustomize-first learnings: **`WVA_E2E_REPO_ROOT`** on smoke and full jobs, **`unset PROM_CA_CERT_PATH`** before `make`, full OpenShift deploy passes **`IMG=ghcr.io/<repo>:<tag>`** into `install.sh` — see [Kustomize / Helm migration plan](kustomize-helm-migration-plan.md).
 
 #### OpenShift E2E Tests Workflow
 

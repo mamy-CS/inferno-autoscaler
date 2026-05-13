@@ -2,7 +2,7 @@
 
 Complete guide for deploying the Workload-Variant-Autoscaler (WVA) on Kubernetes, OpenShift, and Kind clusters.
 
-> **Central Documentation Hub**: This is the main deployment guide containing comprehensive information about deployment methods, Helm chart configuration, and complete configuration reference. Platform-specific guides ([Kubernetes](kubernetes/README.md), [OpenShift](openshift/README.md), [Kind](kind-emulator/README.md)) provide additional platform-specific details and examples.
+> **Central Documentation Hub**: This is the main deployment guide. **The supported path for the WVA controller is Kustomize** (`config/deploy/kubernetes` or `config/deploy/openshift`, applied by `deploy/install.sh` and `make deploy`). The Helm chart remains published for migration, chart-only resources (for example VA/HPA templates in CI), and backwards compatibility, but is **deprecated for installing the controller**—see [Method 2: Helm Chart (deprecated)](#method-2-helm-chart-deprecated). Platform-specific guides ([Kubernetes](kubernetes/README.md), [OpenShift](openshift/README.md), [Kind](kind-emulator/README.md)) provide additional details.
 
 ## Table of Contents
 
@@ -10,7 +10,7 @@ Complete guide for deploying the Workload-Variant-Autoscaler (WVA) on Kubernetes
 - [Prerequisites](#prerequisites)
 - [Deployment Methods](#deployment-methods)
   - [Method 1: Automated Deployment Script](#method-1-automated-deployment-script-recommended)
-  - [Method 2: Helm Chart](#method-2-helm-chart)
+  - [Method 2: Helm Chart (deprecated)](#method-2-helm-chart-deprecated)
 - [Platform-Specific Guides](#platform-specific-guides)
 - [Configuration Reference](#configuration-reference)
 - [Post-Deployment](#post-deployment)
@@ -18,10 +18,10 @@ Complete guide for deploying the Workload-Variant-Autoscaler (WVA) on Kubernetes
 
 ## Overview
 
-This guide covers two deployment procedures:
+This guide covers:
 
-1. **Automated Script**: Complete end-to-end and customizable deployment including WVA, llm-d infrastructure, Prometheus, and HPA
-2. **Helm Chart**: Deploy the WVA controller into an existing cluster
+1. **Automated script**: `deploy/install.sh` deploys monitoring, scaler backends, and the **WVA controller via Kustomize** (`kubectl apply -k` with `config/deploy/...` bundles). Optional llm-d stack is `deploy/install-llmd-infra.sh`.
+2. **Legacy Helm chart**: Deprecated for the controller; retained for OCI consumers and workflows that still template chart-only resources (for example optional VA/HPA installs in CI).
 
 ## Prerequisites
 
@@ -160,7 +160,7 @@ export INSTALL_GATEWAY_CTRLPLANE=true
 
 #### Script deployment examples
 
-Chart-managed **VariantAutoscaling** and **HPA** are no longer toggled from `install.sh`; use `helm upgrade` with `--set va.enabled=true` / `hpa.enabled=true` on the WVA chart, or let tests/operators create CRs.
+Chart-managed **VariantAutoscaling** and **HPA** are no longer toggled from `install.sh`; use the deprecated Helm chart with `--set va.enabled=true` / `hpa.enabled=true`, patch manifests, or let tests/operators create CRs.
 
 ##### Example 1: Base infra then llm-d
 
@@ -194,7 +194,11 @@ export DEPLOY_LWS=false
 ./deploy/install.sh -e kubernetes
 ```
 
-### Method 2: Helm Chart
+### Method 2: Helm Chart (deprecated)
+
+> **Deprecation:** Installing the **controller** with this chart is deprecated. Prefer **`deploy/install.sh`** (Kustomize) or `kubectl apply -k config/deploy/<platform>` / `make deploy` as described in the [Kubebuilder book](https://book.kubebuilder.io/quick-start.html) flow. The chart may still be used for **non-controller** manifests (for example VA/HPA-only releases) and remains published as an OCI artifact for transition periods.
+
+The following sections document the legacy Helm workflow.
 
 The WVA can be deployed as a standalone using Helm, assuming you have:
 
@@ -592,7 +596,7 @@ VariantAutoscaling, HPA stabilization, and vLLM ModelService tuning are not cont
 
 #### Optional: capacity thresholds after `make deploy-e2e-infra`
 
-If `KV_SPARE_TRIGGER` and/or `QUEUE_SPARE_TRIGGER` are set in the environment, the Makefile runs a follow-up `helm upgrade --reuse-values` on the WVA release.
+If `KV_SPARE_TRIGGER` and/or `QUEUE_SPARE_TRIGGER` are set in the environment, the Makefile used to run a follow-up `helm upgrade --reuse-values` on the WVA Helm release; with Kustomize-first installs, patch the saturation ConfigMap (`workload-variant-autoscaler-saturation-scaling-config`) or set these before `kubectl apply` if you add a custom overlay.
 
 ### Helm Values Reference
 

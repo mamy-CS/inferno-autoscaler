@@ -6,6 +6,12 @@
 # Requires funcs: log_info/log_warning/log_success/log_error, containsElement().
 #
 
+if ! declare -F wva_kustomize_apply >/dev/null 2>&1; then
+    _infra_wva_lib="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    # shellcheck source=lib/wva_kustomize.sh
+    source "${_infra_wva_lib}/wva_kustomize.sh"
+fi
+
 set_tls_verification() {
     log_info "Setting TLS verification..."
 
@@ -59,48 +65,28 @@ set_wva_logging_level() {
 deploy_wva_controller() {
     log_info "Deploying Workload-Variant-Autoscaler..."
     log_info "Using image: $WVA_IMAGE_REPO:$WVA_IMAGE_TAG"
-    log_info "Using release name: $WVA_RELEASE_NAME"
+    log_info "Using release name: $WVA_RELEASE_NAME (used for vLLM Service name prefix; controller install is Kustomize)"
 
-    # Deploy WVA using Helm chart
-    log_info "Installing Workload-Variant-Autoscaler via Helm chart"
-
-    # Default namespaceScoped to true if not set (matches chart default)
-    # But allow override via env var (e.g. for E2E tests)
     NAMESPACE_SCOPED=${NAMESPACE_SCOPED:-true}
 
-    # Chart baseName is the controller's logical pool name (InferencePool prefix), not necessarily the llm-d guide folder.
-    WVA_BASE_NAME="${WVA_BASE_NAME:-inference-scheduling}"
+    log_info "Installing Workload-Variant-Autoscaler via Kustomize (bundle: $(wva_kustomize_controller_bundle_dir); platform: $(wva_kustomize_platform_dir))"
 
-    # VA / HPA / capacity thresholds are chart defaults unless changed via helm --set separately (see deploy README).
-    # llmd.modelName / llmd.modelID are optional Helm overrides here when the vars are exported (often unset for infra-only installs).
-    helm upgrade -i "$WVA_RELEASE_NAME" ${WVA_PROJECT}/charts/workload-variant-autoscaler \
-        -n "$WVA_NS" \
-        --values $VALUES_FILE \
-        --set-file wva.prometheus.caCert="$PROM_CA_CERT_PATH" \
-        --set wva.image.repository="$WVA_IMAGE_REPO" \
-        --set wva.image.tag="$WVA_IMAGE_TAG" \
-        --set wva.imagePullPolicy="$WVA_IMAGE_PULL_POLICY" \
-        --set wva.baseName="$WVA_BASE_NAME" \
-        ${LLM_D_MODELSERVICE_NAME:+--set llmd.modelName="$LLM_D_MODELSERVICE_NAME"} \
-        ${MODEL_ID:+--set llmd.modelID="$MODEL_ID"} \
-        --set llmd.namespace="$LLMD_NS" \
-        --set wva.prometheus.baseURL="$PROMETHEUS_URL" \
-        --set wva.prometheus.monitoringNamespace="$MONITORING_NAMESPACE" \
-        --set vllmService.enabled="$VLLM_SVC_ENABLED" \
-        --set vllmService.port="$VLLM_SVC_PORT" \
-        --set vllmService.targetPort="$VLLM_SVC_PORT" \
-        --set vllmService.nodePort="$VLLM_SVC_NODEPORT" \
-        --set wva.logging.level="$WVA_LOG_LEVEL" \
-        --set wva.prometheus.tls.insecureSkipVerify="$SKIP_TLS_VERIFY" \
-        --set wva.namespaceScoped="$NAMESPACE_SCOPED" \
-        --set wva.metrics.secure="$WVA_METRICS_SECURE" \
-        --set wva.scaleToZero="$ENABLE_SCALE_TO_ZERO" \
-        ${CONTROLLER_INSTANCE:+--set wva.controllerInstance=$CONTROLLER_INSTANCE} \
-        ${POOL_GROUP:+--set wva.poolGroup=$POOL_GROUP}
+    # Legacy Helm release: remove so Kustomize can own the same resource names.
+    helm uninstall "$WVA_RELEASE_NAME" -n "$WVA_NS" 2>/dev/null || true
 
-    # Wait for WVA to be ready
-    log_info "Waiting for WVA controller to be ready..."
-    if kubectl wait --for=condition=Ready pod -l "$WVA_CONTROLLER_LABEL_SELECTOR" -n "$WVA_NS" --timeout=60s; then
+    wva_kustomize_apply
+
+    local wva_mgr_deploy
+    wva_mgr_deploy=$(wva_kustomize_manager_deployment_name)
+    log_info "Waiting for WVA controller rollout..."
+    if kubectl rollout status "deployment/${wva_mgr_deploy}" -n "$WVA_NS" --timeout=300s 2>/dev/null; then
+        log_success "WVA deployment rollout complete"
+    else
+        log_warning "WVA rollout status timed out or deployment missing — check kubectl get pods -n $WVA_NS"
+    fi
+
+    log_info "Waiting for WVA controller pods to be Ready..."
+    if kubectl wait --for=condition=Ready pod -l "$WVA_CONTROLLER_LABEL_SELECTOR" -n "$WVA_NS" --timeout=120s 2>/dev/null; then
         :
     else
         log_warning "WVA controller is not ready yet - check 'kubectl get pods -n $WVA_NS'"
