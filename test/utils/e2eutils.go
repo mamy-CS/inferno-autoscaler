@@ -1100,8 +1100,6 @@ func (p *PrometheusClient) QueryWithRetry(ctx context.Context, query string) (fl
 			return false, queryErr // Stop retrying, return error
 		}
 
-		// Log retry attempt
-		fmt.Printf("Debug: Prometheus query failed, will retry: %v\n", queryErr)
 		return false, nil // Continue retrying
 	})
 

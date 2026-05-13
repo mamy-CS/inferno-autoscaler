@@ -20,6 +20,7 @@ var (
 	desiredReplicas     *prometheus.GaugeVec
 	currentReplicas     *prometheus.GaugeVec
 	desiredRatio        *prometheus.GaugeVec
+	errorsTotal         *prometheus.CounterVec
 
 	optimizationDuration *prometheus.HistogramVec
 	modelsProcessedGauge *prometheus.GaugeVec
@@ -65,6 +66,7 @@ func InitMetrics(registry prometheus.Registerer) error {
 	// can group/filter by the model a variant serves.
 	baseLabels := []string{constants.LabelVariantName, constants.LabelNamespace, constants.LabelAcceleratorType}
 	scalingLabels := []string{constants.LabelVariantName, constants.LabelNamespace, constants.LabelDirection, constants.LabelReason}
+	errorLabels := []string{constants.LabelComponent, constants.LabelErrorType}
 	// satAccelLabels: per-variant per-accelerator saturation metrics.
 	satAccelLabels := []string{constants.LabelVariantName, constants.LabelNamespace, constants.LabelModelName, constants.LabelAcceleratorType}
 	// satModelLabels: per-variant model-level saturation metrics (no accelerator_type).
@@ -76,6 +78,7 @@ func InitMetrics(registry prometheus.Registerer) error {
 	if controllerInstance != "" {
 		baseLabels = append(baseLabels, constants.LabelControllerInstance)
 		scalingLabels = append(scalingLabels, constants.LabelControllerInstance)
+		errorLabels = append(errorLabels, constants.LabelControllerInstance)
 		satAccelLabels = append(satAccelLabels, constants.LabelControllerInstance)
 		satModelLabels = append(satModelLabels, constants.LabelControllerInstance)
 		requiredCapacityLabels = append(requiredCapacityLabels, constants.LabelControllerInstance)
@@ -108,6 +111,13 @@ func InitMetrics(registry prometheus.Registerer) error {
 			Help: "Ratio of the desired number of replicas and the current number of replicas for each variant",
 		},
 		baseLabels,
+	)
+	errorsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: constants.WVAErrorsTotal,
+			Help: "Total number of errors by component",
+		},
+		errorLabels,
 	)
 	saturationUtilization = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
@@ -271,6 +281,9 @@ func InitMetrics(registry prometheus.Registerer) error {
 	if err := registry.Register(desiredRatio); err != nil {
 		return fmt.Errorf("failed to register desiredRatio metric: %w", err)
 	}
+	if err := registry.Register(errorsTotal); err != nil {
+		return fmt.Errorf("failed to register errorsTotal metric: %w", err)
+	}
 	if err := registry.Register(optimizationDuration); err != nil {
 		return fmt.Errorf("failed to register optimizationDuration metric: %w", err)
 	}
@@ -414,6 +427,27 @@ func (m *MetricsEmitter) EmitReplicaMetrics(ctx context.Context, va *llmdOptv1al
 	}
 	desiredRatio.With(baseLabels).Set(float64(desired) / float64(current))
 	return nil
+}
+
+// RecordError records an error metric for the specified component and error type
+// Callers MUST invoke InitMetrics before this method (the package-level
+// metric vars are nil otherwise, and the Set calls below would panic).
+// InitMetricsAndEmitter is the recommended construction path because it
+// performs the registration before returning the emitter.
+func RecordError(component, errorType string) {
+	if errorsTotal == nil {
+		return
+	}
+	labels := prometheus.Labels{
+		constants.LabelComponent: component,
+		constants.LabelErrorType: errorType,
+	}
+
+	// Add controller_instance label if configured
+	if controllerInstance != "" {
+		labels[constants.LabelControllerInstance] = controllerInstance
+	}
+	errorsTotal.With(labels).Inc()
 }
 
 // SetConfigInfo sets the config info metric with the given analyzer name and feature flags.

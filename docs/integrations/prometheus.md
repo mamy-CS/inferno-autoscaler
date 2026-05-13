@@ -1,6 +1,6 @@
 # Prometheus Integration
 
-WVA integrates with Prometheus to collect metrics from vLLM inference servers and expose custom autoscaling metrics. This guide covers Prometheus configuration, metric collection, and security best practices.
+WVA integrates with Prometheus to collect metrics from vLLM inference servers and expose custom autoscaling metrics. In addition, WVA also emits internal metrics for observability (See [Internal Metrics](#internal-metrics)). This guide covers Prometheus configuration, metric collection, and security best practices.
 
 ## Configuration
 
@@ -242,3 +242,12 @@ abs(wva_desired_replicas - wva_current_replicas)
 # Scaling frequency by reason
 rate(wva_replica_scaling_total[5m]) by (reason)
 ```
+
+## Internal Metrics
+### `wva_errors_total`
+- **Type**: Counter
+- **Description**: Total number of errors by WVA components
+- **Labels**:
+  - `component`: Name of the component. The components are `collector`, `analyzer`, `optimizer`, `limiter`, `enforcer`, and `controller`. Currently, this metric is available for `collector`, `enforcer`, `controller`. It will be available for other components as these components handle errors
+  - `error_type`: Short description of the error
+- **Use Case**: Track errors in WVA by components

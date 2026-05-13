@@ -116,6 +116,9 @@ const (
 	// WVAModelsProcessed is a gauge that tracks the number of models processed in the last optimization cycle.
 	WVAModelsProcessed = "wva_models_processed"
 
+	// WVAErrorsTotal is a counter that tracks the total number of errors by component.
+	// Labels: component, error_type
+	WVAErrorsTotal = "wva_errors_total"
 	// WVAConfigInfo is an info-style gauge that exposes WVA configuration as labels.
 	// Labels: analyzer_name, limiter_enabled, scale_to_zero_enabled
 	WVAConfigInfo = "wva_config_info"
@@ -174,12 +177,14 @@ const (
 const (
 	LabelModelName          = "model_name"
 	LabelNamespace          = "namespace"
+	LabelComponent          = "component"
 	LabelVariantName        = "variant_name"
 	LabelDirection          = "direction"
 	LabelReason             = "reason"
 	LabelAcceleratorType    = "accelerator_type"
 	LabelControllerInstance = "controller_instance"
 	LabelStatus             = "status"
+	LabelErrorType          = "error_type"
 	LabelAnalyzerName       = "analyzer_name"
 	LabelLimiterEnabled     = "limiter_enabled"
 	LabelScaleToZeroEnabled = "scale_to_zero_enabled"
