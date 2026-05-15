@@ -46,13 +46,11 @@ BENCHMARK_SCENARIOS_DIR ?= $(CURDIR)/test/benchmark/scenarios
 BENCHMARK_MODEL_ID   ?= $(MODEL_ID)
 
 # Flags for deploy/install.sh + install-llmd-infra.sh (e2e / CI-style cluster infra; no chart VA/HPA).
-CREATE_CLUSTER ?= false
-DELETE_CLUSTER ?= false
+CREATE_CLUSTER    ?= false
+DELETE_CLUSTER    ?= false
 DELETE_NAMESPACES ?= false
+NAMESPACE_SCOPED  ?= false
 
-# Multi-model deployment configuration (used by deploy-multi-model-infra)
-MODELS           ?= Qwen/Qwen3-0.6B,unsloth/Meta-Llama-3.1-8B
-NAMESPACE_SCOPED ?= false
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -276,61 +274,6 @@ deploy-e2e-llmd-infra: ## DEPRECATED — runs install-llmd-infra only (run after
 	@echo "DEPRECATED target deploy-e2e-llmd-infra: invoking ./deploy/install-llmd-infra.sh"
 	@ENVIRONMENT=$(ENVIRONMENT) ./deploy/install-llmd-infra.sh -e "$(ENVIRONMENT)"
 
-.PHONY: deploy-e2e-infra-multi-model
-deploy-e2e-infra-multi-model: ## Deploy e2e test infrastructure with two concurrent model services
-	@echo "Deploying multi-model e2e test infrastructure..."
-	./deploy/install-multi-model.sh
-
-# Configurable multi-model deployment for any environment.
-# Usage:
-#   make deploy-multi-model-infra \
-#     ENVIRONMENT=openshift \
-#     WVA_NS=my-namespace LLMD_NS=my-namespace \
-#     NAMESPACE_SCOPED=true \
-#     SKIP_BUILD=true DECODE_REPLICAS=1 \
-#     IMG_TAG=v0.6.0 LLM_D_RELEASE=v0.6.0 \
-#     MODELS="Qwen/Qwen3-0.6B,unsloth/Meta-Llama-3.1-8B"
-.PHONY: deploy-multi-model-infra
-deploy-multi-model-infra: ## Deploy multi-model infra with N models. Set MODELS=m1,m2,... (comma-separated).
-	@echo "Deploying multi-model infrastructure (MODELS=$(MODELS))..."
-	@if [ "$(SKIP_BUILD)" != "true" ]; then \
-		echo "Building WVA image $(IMG)..."; \
-		$(MAKE) docker-build IMG=$(IMG); \
-	else \
-		echo "Skipping image build (SKIP_BUILD=true)"; \
-	fi; \
-	if echo "$(IMG)" | grep -q ":"; then \
-		IMAGE_REPO=$$(echo "$(IMG)" | cut -d: -f1); \
-		IMAGE_TAG=$$(echo "$(IMG)" | cut -d: -f2); \
-	else \
-		IMAGE_REPO="$(IMG)"; \
-		IMAGE_TAG="latest"; \
-	fi; \
-	echo "Using WVA image: $$IMAGE_REPO:$$IMAGE_TAG"; \
-	ENVIRONMENT=$(ENVIRONMENT) \
-	WVA_NS="$(WVA_NS)" \
-	LLMD_NS="$(LLMD_NS)" \
-	NAMESPACE_SCOPED=$(NAMESPACE_SCOPED) \
-	DECODE_REPLICAS=$(DECODE_REPLICAS) \
-	LLM_D_RELEASE=$(LLM_D_RELEASE) \
-	WVA_IMAGE_REPO="$$IMAGE_REPO" \
-	WVA_IMAGE_TAG="$$IMAGE_TAG" \
-	WVA_IMAGE_PULL_POLICY=IfNotPresent \
-	MODELS="$(MODELS)" \
-	./deploy/install-multi-model.sh
-
-# Undeploy multi-model infrastructure.
-# Must use the same MODELS list that was used during deployment.
-.PHONY: undeploy-multi-model-infra
-undeploy-multi-model-infra: ## Undeploy multi-model infra. Use same MODELS=m1,m2,... as deploy.
-	@echo "Undeploying multi-model infrastructure (MODELS=$(MODELS))..."
-	ENVIRONMENT=$(ENVIRONMENT) \
-	WVA_NS="$(WVA_NS)" \
-	LLMD_NS="$(LLMD_NS)" \
-	NAMESPACE_SCOPED=$(NAMESPACE_SCOPED) \
-	DELETE_NAMESPACES=$(DELETE_NAMESPACES) \
-	MODELS="$(MODELS)" \
-	./deploy/install-multi-model.sh --undeploy
 
 
 # Deploy e2e infrastructure with KEDA as scaler backend (installs KEDA, skips Prometheus Adapter).
@@ -545,7 +488,6 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@echo "Syntax-checking deploy shell scripts..."
 	@bash -n deploy/install.sh
 	@bash -n deploy/install-llmd-infra.sh
-	@bash -n deploy/install-multi-model.sh
 	@for script in deploy/lib/*.sh; do bash -n "$$script"; done
 	@for script in deploy/*/install.sh; do if [ -f "$$script" ]; then bash -n "$$script"; fi; done
 	@for script in deploy/kind-emulator/*.sh; do if [ -f "$$script" ]; then bash -n "$$script"; fi; done
