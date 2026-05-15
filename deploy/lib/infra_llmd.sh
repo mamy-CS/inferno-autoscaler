@@ -216,14 +216,8 @@ deploy_llm_d_infrastructure() {
       if [ "$VLLM_SVC_PORT" != "$DETECTED_PORT" ]; then
         log_info "Routing proxy disabled - updating vLLM service port: $VLLM_SVC_PORT -> $DETECTED_PORT"
         VLLM_SVC_PORT=$DETECTED_PORT
-        # Update the WVA vllm-service port (WVA was deployed before llm-d infra)
-        if [ "$DEPLOY_WVA" == "true" ] && [ "$VLLM_SVC_ENABLED" == "true" ]; then
-          helm upgrade "$WVA_RELEASE_NAME" ${WVA_PROJECT}/charts/workload-variant-autoscaler \
-            -n "$WVA_NS" --reuse-values \
-            --set wva.namespaceScoped="${NAMESPACE_SCOPED:-true}" \
-            --set vllmService.port="$VLLM_SVC_PORT" \
-            --set vllmService.targetPort="$VLLM_SVC_PORT"
-        fi
+        # vLLM service port update: the vllm Service is not managed by the WVA Kustomize install;
+        # it is owned by the llm-d model-serving stack. No WVA update needed here.
       fi
     fi
 
@@ -482,13 +476,13 @@ deploy_llm_d_infrastructure() {
         detect_inference_pool_api_group
         if [ -n "$DETECTED_POOL_GROUP" ]; then
             log_info "Detected InferencePool API group: $DETECTED_POOL_GROUP; upgrading WVA to watch it (scale-from-zero)"
-            if helm upgrade "$WVA_RELEASE_NAME" ${WVA_PROJECT}/charts/workload-variant-autoscaler \
-                -n "$WVA_NS" --reuse-values \
-                --set wva.namespaceScoped="${NAMESPACE_SCOPED:-true}" \
-                --set wva.poolGroup="$DETECTED_POOL_GROUP" --wait --timeout=60s; then
-                log_success "WVA upgraded with wva.poolGroup=$DETECTED_POOL_GROUP"
+            if kubectl patch deployment workload-variant-autoscaler-controller-manager \
+                -n "$WVA_NS" --type=json \
+                -p="[{\"op\":\"add\",\"path\":\"/spec/template/spec/containers/0/args/-\",\"value\":\"--pool-group=${DETECTED_POOL_GROUP}\"}]" \
+                --timeout=60s; then
+                log_success "WVA patched with --pool-group=$DETECTED_POOL_GROUP"
             else
-                log_warning "WVA upgrade with poolGroup failed - scale-from-zero may not see the InferencePool"
+                log_warning "WVA pool-group patch failed - scale-from-zero may not see the InferencePool"
             fi
         else
             log_warning "Could not detect InferencePool API group - WVA may have empty datastore for scale-from-zero"
