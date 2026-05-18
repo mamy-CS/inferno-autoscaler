@@ -398,9 +398,9 @@ jobs:
       HPA_STABILIZATION_SECONDS: ${{ github.event.inputs.hpa_stabilization_seconds || '240' }}
       SKIP_CLEANUP: ${{ github.event.inputs.skip_cleanup || 'false' }}
       # Pin llm-d release for deterministic CI behavior
-      LLM_D_RELEASE: v0.6.0
+      LLM_D_RELEASE: v0.7.0
       # PR-specific namespaces for isolation between concurrent PR tests
-      LLMD_NAMESPACE: llm-d-inference-scheduler-pr-${{ needs.gate.outputs.pr_number || github.run_id }}
+      LLMD_NAMESPACE: llm-d-optimized-baseline-pr-${{ needs.gate.outputs.pr_number || github.run_id }}
       WVA_NAMESPACE: llm-d-autoscaler-pr-${{ needs.gate.outputs.pr_number || github.run_id }}
       # Unique release names per run to avoid conflicts
       WVA_RELEASE_NAME: wva-e2e-${{ github.run_id }}
@@ -641,7 +641,7 @@ jobs:
           done
 
           # Clean up legacy namespaces if they exist (these are not PR-specific)
-          for legacy_ns in llm-d-inference-scheduler workload-variant-autoscaler-system; do
+          for legacy_ns in llm-d-optimized-baseline workload-variant-autoscaler-system; do
             if kubectl get namespace "$legacy_ns" &>/dev/null; then
               echo ""
               echo "=== Cleaning up legacy namespace: $legacy_ns ==="
@@ -720,7 +720,7 @@ jobs:
           # queueLength > 0.5, which the simulator produces under load.
           KV_SPARE_TRIGGER: "0.5"
           QUEUE_SPARE_TRIGGER: "4.5"
-          # inference-scheduling guide runs vLLM directly on 8000 (no 8200 routing proxy).
+          # optimized-baseline guide runs vLLM directly on 8000 (no routing proxy sidecar).
           VLLM_SVC_PORT: "8000"
           MODEL_ID: ${{ env.MODEL_ID }}
           ACCELERATOR_TYPE: ${{ env.ACCELERATOR_TYPE }}
@@ -768,15 +768,15 @@ jobs:
           kubectl rollout status deployment -l app.kubernetes.io/name=workload-variant-autoscaler -n "$WVA_NAMESPACE" --timeout=300s || true
           kubectl get pods -n "$WVA_NAMESPACE"
 
-          # Wait for ModelService decode Deployment to exist (helmfile can lag; names can vary slightly by llm-d release).
-          CANONICAL_DECODE="ms-inference-scheduling-llm-d-modelservice-decode"
+          # Wait for model server decode Deployment to exist (Kustomize apply can lag; names derive from guide namePrefix).
+          CANONICAL_DECODE="optimized-baseline-nvidia-gpu-vllm-decode"
           DECODE_DEPLOY=""
           for i in $(seq 1 90); do
             if kubectl get deployment "$CANONICAL_DECODE" -n "$LLMD_NAMESPACE" &>/dev/null; then
               DECODE_DEPLOY="$CANONICAL_DECODE"
               break
             fi
-            DECODE_DEPLOY=$(kubectl get deploy -n "$LLMD_NAMESPACE" -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null | grep -E -- '-decode$' | grep -i modelservice | head -1 || true)
+            DECODE_DEPLOY=$(kubectl get deploy -n "$LLMD_NAMESPACE" -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null | grep -E -- '-decode$' | head -1 || true)
             if [ -n "$DECODE_DEPLOY" ]; then
               break
             fi
@@ -965,8 +965,8 @@ jobs:
           LLMD_NAMESPACE: ${{ env.LLMD_NAMESPACE }}
           # Legacy variables for backward compatibility (if needed by tests)
           CONTROLLER_NAMESPACE: ${{ env.WVA_NAMESPACE }}
-          GATEWAY_NAME: infra-inference-scheduling-inference-gateway-istio
-          DEPLOYMENT: ms-inference-scheduling-llm-d-modelservice-decode
+          GATEWAY_NAME: optimized-baseline-inference-gateway-istio
+          DEPLOYMENT: optimized-baseline-nvidia-gpu-vllm-decode
           # Pass WVA_RELEASE_NAME so test can filter for current run's resources
           WVA_RELEASE_NAME: ${{ env.WVA_RELEASE_NAME }}
           # Controller instance label must match what the controller was deployed with

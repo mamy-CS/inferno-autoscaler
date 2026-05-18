@@ -7,26 +7,20 @@
 # containsElement(), wait_deployment_available_nonfatal(), detect_inference_pool_api_group().
 #
 
-# Post-deploy cleanup for emulated clusters (e.g. Kind): chart ModelService ships both prefill and decode;
-# current WVA flows expect a single user-owned decode workload. Always remove prefill; decode removal is gated
-# by LLMD_REMOVE_EMULATED_DECODE_DEPLOYMENTS (default true for e2e / local emulated flows).
+# Post-deploy cleanup for emulated clusters (e.g. Kind): v0.7.0 deploys model server via Kustomize
+# (single decode Deployment, no prefill). Remove it so e2e tests can deploy their own workloads.
 apply_llm_d_infrastructure_fixes() {
     log_info "Applying llm-d infrastructure fixes for emulated cluster..."
-    # Skip cleanup when modelservice release is not installed (e.g. e2e infra-only path excludes it).
-    if ! helm list -n "$LLMD_NS" --short 2>/dev/null | grep -q '^ms-'; then
-        log_info "No llm-d modelservice release detected in $LLMD_NS; skipping prefill/decode cleanup"
+    # Skip cleanup when the model server Deployment was not deployed (LLMD_SKIP_DEFAULT_MODELSERVICE=true).
+    if ! kubectl get deployment "$LLM_D_MODELSERVICE_NAME" -n "$LLMD_NS" &>/dev/null; then
+        log_info "Model server deployment $LLM_D_MODELSERVICE_NAME not found in $LLMD_NS; skipping cleanup"
         return
     fi
 
-    log_info "Deleting prefill deployments..."
-    kubectl delete deployments.apps \
-        "$LLM_D_MODELSERVICE_NAME-prefill" \
-        --ignore-not-found -n "$LLMD_NS"
-
     if [ "${LLMD_REMOVE_EMULATED_DECODE_DEPLOYMENTS:-true}" = "true" ]; then
-        log_info "Deleting decode deployments (LLMD_REMOVE_EMULATED_DECODE_DEPLOYMENTS=true; tests deploy their own workloads)..."
+        log_info "Deleting decode deployment $LLM_D_MODELSERVICE_NAME (LLMD_REMOVE_EMULATED_DECODE_DEPLOYMENTS=true; tests deploy their own workloads)..."
         kubectl delete deployments.apps \
-            "$LLM_D_MODELSERVICE_NAME-decode" \
+            "$LLM_D_MODELSERVICE_NAME" \
             --ignore-not-found -n "$LLMD_NS"
     fi
 }
@@ -85,7 +79,7 @@ deploy_llm_d_infrastructure() {
     # Only install Gateway API Inference Extension (GAIE) CRDs directly.
     if [[ "$ENVIRONMENT" == "openshift" ]]; then
         log_info "Skipping Gateway API base CRDs on OpenShift (managed by Ingress Operator)"
-        GAIE_CRD_REV=${GATEWAY_API_INFERENCE_EXTENSION_CRD_REVISION:-"v1.3.0"}
+        GAIE_CRD_REV=${GATEWAY_API_INFERENCE_EXTENSION_CRD_REVISION:-"$GAIE_VERSION"}
         log_info "Installing Gateway API Inference Extension CRDs (${GAIE_CRD_REV})"
         kubectl apply -k "https://github.com/kubernetes-sigs/gateway-api-inference-extension/config/crd/?ref=${GAIE_CRD_REV}" \
             && log_success "GAIE CRDs installed" \
@@ -108,115 +102,20 @@ deploy_llm_d_infrastructure() {
         log_info "Skipping Gateway control plane installation (INSTALL_GATEWAY_CTRLPLANE=false)"
     fi
 
-    # Configuring llm-d before installation
-    cd "$EXAMPLE_DIR"
-    log_info "Configuring llm-d infrastructure"
+    # v0.7.0+: Deploy EPP + InferencePool via GAIE standalone Helm chart.
+    # The single release named $GUIDE_NAME replaces the three-chart helmfile pattern from v0.6.0.
+    local recipe_scheduler_values="$WVA_PROJECT/$LLM_D_PROJECT/guides/recipes/scheduler/base.values.yaml"
+    local guide_scheduler_values="$EXAMPLE_DIR/scheduler/$GUIDE_NAME.values.yaml"
+    log_info "Deploying GAIE standalone chart (release=$GUIDE_NAME, version=$GAIE_VERSION)"
+    helm upgrade --install "$GUIDE_NAME" \
+        oci://registry.k8s.io/gateway-api-inference-extension/charts/standalone \
+        -f "$recipe_scheduler_values" \
+        -f "$guide_scheduler_values" \
+        -n "$LLMD_NS" \
+        --version "$GAIE_VERSION" \
+        --wait --timeout 3m
 
-    # Detect the actual default model from the values file (not the hardcoded DEFAULT_MODEL_ID)
-    ACTUAL_DEFAULT_MODEL=$(yq eval '.modelArtifacts.name' "$LLM_D_MODELSERVICE_VALUES" 2>/dev/null || echo "$DEFAULT_MODEL_ID")
-    if [ -z "$ACTUAL_DEFAULT_MODEL" ] || [ "$ACTUAL_DEFAULT_MODEL" == "null" ]; then
-        ACTUAL_DEFAULT_MODEL="$DEFAULT_MODEL_ID"
-    fi
-
-    # Update model ID if different from the guide's actual default.
-    # Use strenv() so MODEL_ID / ACTUAL_DEFAULT_MODEL are never interpolated into yq
-    # expression text (avoids breakage on quotes, pipes, etc. in HuggingFace IDs).
-    if [ "$MODEL_ID" != "$ACTUAL_DEFAULT_MODEL" ] ; then
-        log_info "Updating deployment to use model: $MODEL_ID (replacing guide default: $ACTUAL_DEFAULT_MODEL)"
-        MODEL_ID="$MODEL_ID" ACTUAL_DEFAULT_MODEL="$ACTUAL_DEFAULT_MODEL" yq eval -i \
-            '(.. | select(. == strenv(ACTUAL_DEFAULT_MODEL))) = strenv(MODEL_ID) | (.. | select(. == ("hf://" + strenv(ACTUAL_DEFAULT_MODEL)))) = ("hf://" + strenv(MODEL_ID))' \
-            "$LLM_D_MODELSERVICE_VALUES"
-
-        # Increase model-storage volume size
-        log_info "Increasing model-storage volume size for model: $MODEL_ID"
-        yq eval '.modelArtifacts.size = "100Gi"' -i "$LLM_D_MODELSERVICE_VALUES"
-    else
-        log_info "Model ID matches guide default ($ACTUAL_DEFAULT_MODEL), no replacement needed"
-    fi
-
-    # Ensure llm-d.ai/model label is unique per model for multi-model HPA isolation.
-    # The chart sets a default (e.g. "Qwen3-32B") that all deployments share,
-    # which causes AmbiguousSelector errors when multiple HPAs target different
-    # deployments with identical pod selectors.
-    local model_label_value
-    model_label_value=$(echo "$MODEL_ID" | sed 's|.*/||; s|\.|-|g')  # e.g. "Qwen3-0-6B", "Meta-Llama-3.1-8B"
-    log_info "Setting llm-d.ai/model label to: $model_label_value (unique per model)"
-    yq eval ".modelArtifacts.labels.\"llm-d.ai/model\" = \"$model_label_value\"" -i "$LLM_D_MODELSERVICE_VALUES"
-    # Configure llm-d-inference-simulator if needed
-    if [ "$DEPLOY_LLM_D_INFERENCE_SIM" == "true" ]; then
-      log_info "Deploying llm-d-inference-simulator..."
-        yq eval ".decode.containers[0].image = \"$LLM_D_INFERENCE_SIM_IMG_REPO:$LLM_D_INFERENCE_SIM_IMG_TAG\" | \
-                 .prefill.containers[0].image = \"$LLM_D_INFERENCE_SIM_IMG_REPO:$LLM_D_INFERENCE_SIM_IMG_TAG\" | \
-                 .decode.containers[0].args = [\"--time-to-first-token=$TTFT_AVERAGE_LATENCY_MS\", \"--inter-token-latency=$ITL_AVERAGE_LATENCY_MS\"] | \
-                 .prefill.containers[0].args = [\"--time-to-first-token=$TTFT_AVERAGE_LATENCY_MS\", \"--inter-token-latency=$ITL_AVERAGE_LATENCY_MS\"]" \
-                 -i "$LLM_D_MODELSERVICE_VALUES"
-    else
-        log_info "Skipping llm-d-inference-simulator deployment (DEPLOY_LLM_D_INFERENCE_SIM=false)"
-    fi
-
-    # Override llm-d container image tags if set (e.g. upgrade from v0.3.0 to v0.6.0)
-    if [ -n "$LLMD_IMAGE_TAG" ]; then
-      log_info "Overriding llm-d image tags to $LLMD_IMAGE_TAG"
-      yq eval ".decode.containers[0].image = \"ghcr.io/llm-d/llm-d-cuda:${LLMD_IMAGE_TAG}\"" -i "$LLM_D_MODELSERVICE_VALUES"
-      yq eval ".routing.proxy.image = \"ghcr.io/llm-d/llm-d-routing-sidecar:${LLMD_IMAGE_TAG}\"" -i "$LLM_D_MODELSERVICE_VALUES"
-    fi
-
-    # Configure vLLM max-num-seqs if set (useful for e2e testing to force saturation)
-    if [ -n "$VLLM_MAX_NUM_SEQS" ]; then
-      log_info "Setting vLLM max-num-seqs to $VLLM_MAX_NUM_SEQS for decode containers"
-      yq eval ".decode.containers[0].args += [\"--max-num-seqs=$VLLM_MAX_NUM_SEQS\"]" -i "$LLM_D_MODELSERVICE_VALUES"
-    fi
-
-    # Configure vLLM GPU memory utilization if set
-    if [ -n "$VLLM_GPU_MEM_UTIL" ]; then
-      log_info "Setting vLLM gpu-memory-utilization to $VLLM_GPU_MEM_UTIL"
-      yq eval ".decode.containers[0].args += [\"--gpu-memory-utilization=$VLLM_GPU_MEM_UTIL\"]" -i "$LLM_D_MODELSERVICE_VALUES"
-    fi
-
-    # Configure vLLM max-model-len if set
-    if [ -n "$VLLM_MAX_MODEL_LEN" ]; then
-      log_info "Setting vLLM max-model-len to $VLLM_MAX_MODEL_LEN"
-      yq eval ".decode.containers[0].args += [\"--max-model-len=$VLLM_MAX_MODEL_LEN\"]" -i "$LLM_D_MODELSERVICE_VALUES"
-    fi
-
-    # Configure vLLM block-size if set
-    if [ -n "$VLLM_BLOCK_SIZE" ]; then
-      log_info "Setting vLLM block-size to $VLLM_BLOCK_SIZE"
-      yq eval ".decode.containers[0].args += [\"--block-size=$VLLM_BLOCK_SIZE\"]" -i "$LLM_D_MODELSERVICE_VALUES"
-    fi
-
-    # Configure vLLM enforce-eager if set
-    if [ -n "$VLLM_ENFORCE_EAGER" ] && [ "$VLLM_ENFORCE_EAGER" = "true" ]; then
-      log_info "Setting vLLM enforce-eager"
-      yq eval ".decode.containers[0].args += [\"--enforce-eager\"]" -i "$LLM_D_MODELSERVICE_VALUES"
-    fi
-
-    # Configure decode replicas if set (useful for e2e testing with limited GPUs)
-    if [ -n "$DECODE_REPLICAS" ]; then
-      log_info "Setting decode replicas to $DECODE_REPLICAS"
-      yq eval ".decode.replicas = $DECODE_REPLICAS" -i "$LLM_D_MODELSERVICE_VALUES"
-    fi
-
-    # Deploy llm-d core components
-    log_info "Deploying llm-d core components"
-    local -a helmfile_selector_exprs=()
-    if [ "${LLMD_SKIP_DEFAULT_MODELSERVICE:-false}" = "true" ]; then
-      # E2E and similar flows create scenario-specific ModelService workloads;
-      # skip the default llm-d-modelservice release so baseline infra is clean.
-      helmfile_selector_exprs+=("chart!=llm-d-modelservice")
-      log_info "Skipping llm-d-modelservice release in helmfile (LLMD_SKIP_DEFAULT_MODELSERVICE=true)"
-    fi
-    local selector_csv=""
-    if [ "${#helmfile_selector_exprs[@]}" -gt 0 ]; then
-      selector_csv=$(IFS=,; echo "${helmfile_selector_exprs[*]}")
-      log_info "helmfile selector: $selector_csv"
-      helmfile apply -e "$GATEWAY_PROVIDER" -n "${LLMD_NS}" --selector "$selector_csv"
-    else
-      log_info "helmfile selector: (none)"
-      helmfile apply -e "$GATEWAY_PROVIDER" -n "${LLMD_NS}"
-    fi
-
-    # Post-deploy workaround: Upstream EPP chart (v1.0.1) is missing RBAC for inferencemodelrewrites
+    # Post-deploy workaround: patch Role for inferencemodelrewrites if missing.
     log_info "Patching Role $LLM_D_EPP_NAME to include inferencemodelrewrites"
     if kubectl get role "$LLM_D_EPP_NAME" -n "$LLMD_NS" &> /dev/null; then
         kubectl patch role "$LLM_D_EPP_NAME" -n "$LLMD_NS" --type='json' -p='[{"op": "add", "path": "/rules/0/resources/-", "value": "inferencemodelrewrites"}]' && \
@@ -226,37 +125,73 @@ deploy_llm_d_infrastructure() {
         log_warning "Role $LLM_D_EPP_NAME not found, skipping RBAC patch"
     fi
 
+    # v0.7.0+: Deploy model server via Kustomize overlay (replaces llm-d-modelservice Helm chart).
     if [ "${LLMD_SKIP_DEFAULT_MODELSERVICE:-false}" = "true" ]; then
-      if helm list -n "$LLMD_NS" --short 2>/dev/null | grep -q '^ms-'; then
-        log_warning "Modelservice release still present in $LLMD_NS despite selector; tests may need extra cleanup"
-      fi
-    fi
+        log_info "Skipping model server deploy (LLMD_SKIP_DEFAULT_MODELSERVICE=true); e2e tests will create their own workloads"
+    else
+        local modelserver_overlay="$EXAMPLE_DIR/modelserver/gpu/vllm/$INFRA_PROVIDER"
+        log_info "Deploying model server via Kustomize: $modelserver_overlay"
+        kubectl apply -n "$LLMD_NS" -k "$modelserver_overlay"
 
-    # Apply HTTPRoute with correct resource name references.
-    # The static httproute.yaml uses resource names matching the helmfile's default
-    # RELEASE_NAME_POSTFIX (e.g. "workload-autoscaler"). When RELEASE_NAME_POSTFIX
-    # is overridden (e.g. in CI), gateway and InferencePool names change, so we
-    # must template the HTTPRoute references to match the actual deployed resources.
-    # RELEASE_NAME_POSTFIX is set by the reusable nightly workflow
-    # (llm-d-infra reusable-nightly-e2e-openshift.yaml) via the guide_name input.
-    if [ -f httproute.yaml ]; then
-        local rn="${RELEASE_NAME_POSTFIX:-}"
-        if [ -n "$rn" ]; then
-            local gw_name="infra-${rn}-inference-gateway"
-            local pool_name="gaie-${rn}"
-            log_info "Applying HTTPRoute (gateway=$gw_name, pool=$pool_name)"
-            if ! yq eval "
-                .spec.parentRefs[0].name = \"${gw_name}\" |
-                .spec.rules[0].backendRefs[0].name = \"${pool_name}\"
-            " httproute.yaml | kubectl apply -f - -n ${LLMD_NS}; then
-                log_error "Failed to apply templated HTTPRoute for gateway=${gw_name}, pool=${pool_name}"
-                exit 1
+        # Post-apply patches for model server customization.
+        # (In v0.7.0 configuration is in Kustomize overlays; we patch the Deployment for runtime overrides.)
+
+        # Inference simulator: replace vLLM image + args with simulator image + latency config.
+        if [ "$DEPLOY_LLM_D_INFERENCE_SIM" == "true" ]; then
+            log_info "Replacing model server image with inference simulator: $LLM_D_INFERENCE_SIM_IMG_REPO:$LLM_D_INFERENCE_SIM_IMG_TAG"
+            local container_name
+            container_name=$(kubectl get deployment "$LLM_D_MODELSERVICE_NAME" -n "$LLMD_NS" \
+                -o jsonpath='{.spec.template.spec.containers[0].name}')
+            kubectl set image deployment/"$LLM_D_MODELSERVICE_NAME" \
+                "${container_name}=$LLM_D_INFERENCE_SIM_IMG_REPO:$LLM_D_INFERENCE_SIM_IMG_TAG" \
+                -n "$LLMD_NS"
+            local sim_args
+            sim_args=$(printf '["--model","%s","--port","8000","--time-to-first-token=%sms","--inter-token-latency=%sms"]' \
+                "$MODEL_ID" "$TTFT_AVERAGE_LATENCY_MS" "$ITL_AVERAGE_LATENCY_MS")
+            if [ -n "$VLLM_MAX_NUM_SEQS" ]; then
+                sim_args=$(echo "$sim_args" | sed "s/\]$/,\"--max-num-seqs=$VLLM_MAX_NUM_SEQS\"]/")
             fi
+            kubectl patch deployment "$LLM_D_MODELSERVICE_NAME" -n "$LLMD_NS" --type=json \
+                -p="[{\"op\":\"replace\",\"path\":\"/spec/template/spec/containers/0/args\",\"value\":$sim_args}]"
         else
-            if ! kubectl apply -f httproute.yaml -n ${LLMD_NS}; then
-                log_error "Failed to apply HTTPRoute from httproute.yaml"
-                exit 1
+            log_info "Using real vLLM model server (DEPLOY_LLM_D_INFERENCE_SIM=false)"
+            # Patch model ID if it differs from the guide's default (Qwen/Qwen3-32B).
+            if [ -n "$MODEL_ID" ] && [ "$MODEL_ID" != "Qwen/Qwen3-32B" ]; then
+                log_info "Patching model server to use MODEL_ID=$MODEL_ID"
+                kubectl patch deployment "$LLM_D_MODELSERVICE_NAME" -n "$LLMD_NS" --type=json \
+                    -p="[{\"op\":\"replace\",\"path\":\"/spec/template/spec/containers/0/args/1\",\"value\":\"$MODEL_ID\"}]"
             fi
+            if [ -n "$VLLM_MAX_NUM_SEQS" ]; then
+                log_info "Appending --max-num-seqs=$VLLM_MAX_NUM_SEQS to model server args"
+                kubectl patch deployment "$LLM_D_MODELSERVICE_NAME" -n "$LLMD_NS" --type=json \
+                    -p="[{\"op\":\"add\",\"path\":\"/spec/template/spec/containers/0/args/-\",\"value\":\"--max-num-seqs=$VLLM_MAX_NUM_SEQS\"}]"
+            fi
+            if [ -n "$VLLM_GPU_MEM_UTIL" ]; then
+                log_info "Appending --gpu-memory-utilization=$VLLM_GPU_MEM_UTIL to model server args"
+                kubectl patch deployment "$LLM_D_MODELSERVICE_NAME" -n "$LLMD_NS" --type=json \
+                    -p="[{\"op\":\"add\",\"path\":\"/spec/template/spec/containers/0/args/-\",\"value\":\"--gpu-memory-utilization=$VLLM_GPU_MEM_UTIL\"}]"
+            fi
+            if [ -n "$VLLM_MAX_MODEL_LEN" ]; then
+                log_info "Appending --max-model-len=$VLLM_MAX_MODEL_LEN to model server args"
+                kubectl patch deployment "$LLM_D_MODELSERVICE_NAME" -n "$LLMD_NS" --type=json \
+                    -p="[{\"op\":\"add\",\"path\":\"/spec/template/spec/containers/0/args/-\",\"value\":\"--max-model-len=$VLLM_MAX_MODEL_LEN\"}]"
+            fi
+            if [ -n "$VLLM_BLOCK_SIZE" ]; then
+                log_info "Appending --block-size=$VLLM_BLOCK_SIZE to model server args"
+                kubectl patch deployment "$LLM_D_MODELSERVICE_NAME" -n "$LLMD_NS" --type=json \
+                    -p="[{\"op\":\"add\",\"path\":\"/spec/template/spec/containers/0/args/-\",\"value\":\"--block-size=$VLLM_BLOCK_SIZE\"}]"
+            fi
+            if [ -n "$VLLM_ENFORCE_EAGER" ] && [ "$VLLM_ENFORCE_EAGER" = "true" ]; then
+                log_info "Appending --enforce-eager to model server args"
+                kubectl patch deployment "$LLM_D_MODELSERVICE_NAME" -n "$LLMD_NS" --type=json \
+                    -p="[{\"op\":\"add\",\"path\":\"/spec/template/spec/containers/0/args/-\",\"value\":\"--enforce-eager\"}]"
+            fi
+        fi
+
+        # Scale decode replicas if requested.
+        if [ -n "$DECODE_REPLICAS" ]; then
+            log_info "Scaling $LLM_D_MODELSERVICE_NAME to $DECODE_REPLICAS replicas"
+            kubectl scale deployment "$LLM_D_MODELSERVICE_NAME" -n "$LLMD_NS" --replicas="$DECODE_REPLICAS"
         fi
     fi
 
@@ -312,8 +247,8 @@ deploy_llm_d_infrastructure() {
         if kubectl get crd inferenceobjectives.inference.networking.x-k8s.io &>/dev/null; then
             local infobj_file="${WVA_PROJECT}/deploy/inference-objective-e2e.yaml"
             if [ -f "$infobj_file" ]; then
-                local pool_ref_name="${RELEASE_NAME_POSTFIX:+gaie-$RELEASE_NAME_POSTFIX}"
-                pool_ref_name="${pool_ref_name:-gaie-$WELL_LIT_PATH_NAME}"
+                # v0.7.0+: InferencePool name matches the GAIE Helm release name ($GUIDE_NAME).
+                local pool_ref_name="${RELEASE_NAME_POSTFIX:-$WELL_LIT_PATH_NAME}"
                 log_info "Applying InferenceObjective e2e-default (poolRef.name=$pool_ref_name) for GIE queuing"
                 if sed -e "s/NAMESPACE_PLACEHOLDER/${LLMD_NS}/g" -e "s/POOL_NAME_PLACEHOLDER/${pool_ref_name}/g" "$infobj_file" | kubectl apply -f -; then
                     log_success "InferenceObjective e2e-default applied"

@@ -34,9 +34,7 @@ Environment Variables:
   KEDA_NAMESPACE               Namespace for KEDA (default: keda-system)
   UNDEPLOY                     Undeploy mode (default: false)
   DELETE_NAMESPACES            Delete namespaces after undeploy (default: false)
-  LLMD_NS                      Namespace WVA watches for workloads (default: llm-d-inference-scheduler)
-                               Optional overrides (not set by install.sh): LLM_D_MODELSERVICE_NAME, MODEL_ID
-                               for chart llmd.modelName / llmd.modelID when you export them before running.
+  LLMD_NS                      Namespace WVA watches for workloads (default: llm-d-optimized-baseline)
 
 Examples:
   $(basename "$0")

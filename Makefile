@@ -11,7 +11,7 @@ K8S_VERSION ?= v1.32.0
 
 CONTROLLER_NAMESPACE ?= workload-variant-autoscaler-system
 MONITORING_NAMESPACE ?= openshift-user-workload-monitoring
-LLMD_NAMESPACE       ?= llm-d-inference-scheduler
+LLMD_NAMESPACE       ?= llm-d-optimized-baseline
 GATEWAY_NAME         ?= # discovered automatically in e2es
 MODEL_ID             ?= unsloth/Meta-Llama-3.1-8B
 DEPLOYMENT           ?= # discovered automatically in e2es
@@ -23,7 +23,7 @@ ENVIRONMENT                 ?= kind-emulator
 USE_SIMULATOR               ?= true
 SCALE_TO_ZERO_ENABLED       ?= false
 SCALER_BACKEND              ?= prometheus-adapter  # prometheus-adapter (HPA), keda (ScaledObject), or none (skip, use pre-installed backend)
-LLM_D_RELEASE               ?= v0.6.0
+LLM_D_RELEASE               ?= v0.7.0
 KV_SPARE_TRIGGER           ?=
 QUEUE_SPARE_TRIGGER         ?=
 E2E_MONITORING_NAMESPACE    ?= workload-variant-autoscaler-monitoring
@@ -32,8 +32,9 @@ E2E_WVA_SECONDARY_OVERLAY_PATH ?= $(CURDIR)/test/e2e/testdata/secondary-controll
 # llm-d-benchmark CLI configuration
 BENCHMARK_REPO_URL   ?= https://github.com/llm-d/llm-d-benchmark.git
 BENCHMARK_REPO_DIR   ?= $(CURDIR)/llm-d-benchmark
-# Pin to v0.6.0: v0.6.2 has a broken guidellm harness (missing --target flag, see llm-d/llm-d-benchmark#1231)
+# TODO: verify v0.7.0 benchmark repo fixes llm-d/llm-d-benchmark#1231 (broken guidellm harness in v0.6.2) before bumping
 BENCHMARK_REPO_REF   ?= v0.6.0
+# TODO: verify benchmark repo guide path for v0.7.0 (was guides/inference-scheduling-wva)
 BENCHMARK_SPEC       ?= guides/inference-scheduling-wva
 BENCHMARK_NAMESPACE  ?= # set via BENCHMARK_NAMESPACE=<namespace>
 BENCHMARK_WORKSPACE  ?= $(CURDIR)

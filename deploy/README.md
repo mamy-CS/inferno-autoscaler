@@ -136,7 +136,7 @@ On **emulated** environments (`kind-emulator`), `deploy/lib/infra_llmd.sh` runs 
 ```bash
 # Always set for install.sh
 export ENVIRONMENT="kubernetes"   # or openshift, kind-emulator
-export LLMD_NS="llm-d-inference-scheduler"  # namespace WVA watches
+export LLMD_NS="llm-d-optimized-baseline"  # namespace WVA watches
 
 # When DEPLOY_WVA=true (default)
 export WVA_IMAGE_REPO="ghcr.io/llm-d/llm-d-workload-variant-autoscaler"
@@ -151,10 +151,9 @@ export DEPLOY_LWS=false           # Skip LeaderWorkerSet if already on cluster
 export HF_TOKEN="hf_xxx"
 export MODEL_ID="unsloth/Meta-Llama-3.1-8B"
 export INSTALL_GATEWAY_CTRLPLANE=true
-# Guide basename under llm-d guides/ (llm-d README: GUIDE_NAME). Default inference-scheduling matches
-# LLM_D_RELEASE pins; llm-d main primary guide is optimized-baseline:
+# Guide basename under llm-d guides/ (llm-d README: GUIDE_NAME). Default optimized-baseline matches v0.7.0+.
 # https://github.com/llm-d/llm-d/tree/main/guides/optimized-baseline
-# export GUIDE_NAME=optimized-baseline   # only when your LLM_D_RELEASE checkout includes that path + values layout
+# export GUIDE_NAME=optimized-baseline   # default; change only if using a custom guide path
 ```
 
 #### Gateway control plane (`install-llmd-infra.sh`)
@@ -313,8 +312,8 @@ wva:
 
 # llm-d Infrastructure Configuration
 llmd:
-  namespace: llm-d-inference-scheduler
-  modelName: ms-inference-scheduling-llm-d-modelservice
+  namespace: llm-d-optimized-baseline
+  modelName: optimized-baseline-nvidia-gpu-vllm-decode
   modelID: "unsloth/Meta-Llama-3.1-8B"
 
 # VariantAutoscaling Configuration
@@ -489,7 +488,7 @@ apiVersion: llmd.ai/v1alpha1
 kind: VariantAutoscaling
 metadata:
   name: my-vllm-deployment-decode
-  namespace: llm-d-inference-scheduler
+  namespace: llm-d-optimized-baseline
   labels:
     inference.optimization/acceleratorName: A100
 spec:
@@ -508,7 +507,7 @@ apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
   name: vllm-deployment-hpa
-  namespace: llm-d-inference-scheduler
+  namespace: llm-d-optimized-baseline
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
@@ -576,7 +575,7 @@ Each guide includes platform-specific examples, troubleshooting, and quick start
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `ENVIRONMENT` | Deployment environment | `kubernetes` |
-| `WVA_BASE_NAME` | Controller base name in chart | `inference-scheduling` |
+| `WVA_BASE_NAME` | Controller base name | `optimized-baseline` |
 
 #### Image Configuration
 
@@ -592,7 +591,7 @@ Each guide includes platform-specific examples, troubleshooting, and quick start
 |----------|-------------|---------|
 | `WVA_NS` | WVA controller namespace | `workload-variant-autoscaler-system` |
 | `MONITORING_NAMESPACE` | Prometheus namespace | `workload-variant-autoscaler-monitoring` |
-| `LLMD_NS` | llm-d namespace | `llm-d-inference-scheduler` |
+| `LLMD_NS` | llm-d namespace | `llm-d-optimized-baseline` |
 
 #### Gateway Configuration
 
