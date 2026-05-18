@@ -112,16 +112,14 @@ More examples in [config/samples/](config/samples/).
 
 ### CRD Updates
 
-**Important:** Helm does not automatically update CRDs during `helm upgrade`. When upgrading WVA to a new version with CRD changes, you must manually apply the updated CRDs first:
+When upgrading WVA to a new version with CRD changes, apply the updated CRDs before rolling out the new controller:
 
 ```bash
-# Apply the latest CRDs before upgrading
-kubectl apply -f charts/workload-variant-autoscaler/crds/
+# Apply the latest CRDs
+kubectl apply -k config/crd
 
-# Then upgrade the Helm release
-helm upgrade workload-variant-autoscaler ./charts/workload-variant-autoscaler \
-  --namespace workload-variant-autoscaler-system \
-  [your-values...]
+# Then roll out the new controller
+kubectl apply -k config/default    # or config/openshift
 ```
 
 ### Breaking Changes
