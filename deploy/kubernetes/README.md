@@ -2,7 +2,7 @@
 
 Automated deployment script for WVA, llm-d infrastructure, Prometheus, and HPA on Kubernetes clusters.
 
-> **Note**: This guide covers Kubernetes-specific deployment details. For a complete overview of deployment methods, Helm chart configuration, and the full configuration reference, see the [main deployment guide](../README.md).
+> **Note**: This guide covers Kubernetes-specific deployment details. For a complete overview of deployment methods and the full configuration reference, see the [main deployment guide](../README.md).
 
 ## Table of Contents
 
@@ -100,7 +100,7 @@ export HF_TOKEN="hf_xxxxx"                  # Required: HuggingFace token
 export MODEL_ID="unsloth/Meta-Llama-3.1-8B" # Model to deploy
 export ACCELERATOR_TYPE="H100"              # GPU type
 export WVA_IMAGE_TAG="latest"               # WVA version
-# HPA stabilization: set on Helm chart (`hpa.behavior.*`), not install.sh
+# HPA stabilization: configure on the HPA resource directly, not install.sh
 
 # Performance tuning (optional; passed to install-llmd-infra / ModelService)
 export VLLM_MAX_NUM_SEQS=64                 # vLLM max concurrent sequences (batch size)
@@ -108,7 +108,7 @@ export ACCELERATOR_TYPE="A100"              # GPU type (auto-detected)
 export GATEWAY_PROVIDER="istio"             # Gateway: istio or kgateway (for install-llmd-infra.sh)
 ```
 
-**Deployment flags** (`deploy/install.sh`) — use Helm for chart VA/HPA; llm-d is **`deploy/install-llmd-infra.sh`**:
+**Deployment flags** (`deploy/install.sh`) — VA/HPA are managed separately; llm-d is **`deploy/install-llmd-infra.sh`**:
 
 ```bash
 export DEPLOY_PROMETHEUS=true         # Deploy kube-prometheus-stack
