@@ -90,23 +90,16 @@ jobs:
         id: filter
         continue-on-error: true  # Don't fail if paths-filter can't determine changes (e.g., issue_comment without PR context)
         with:
+          predicate-quantifier: 'every'
           filters: |
             code:
-              - 'api/**'
-              - 'cmd/**'
-              - 'config/**'
-              - 'deploy/**'
-              - 'hack/**'
-              - 'internal/**'
-              - 'pkg/**'
-              - 'test/**'
-              - 'charts/**'
-              - 'vendor/**'
-              - 'Dockerfile'
-              - 'Makefile'
-              - 'go.mod'
-              - 'go.sum'
-              - '.github/**'
+              - '**'
+              - '!docs/**'
+              - '!README.md'
+              - '!CONTRIBUTING.md'
+              - '!LICENSE'
+              - '!OWNERS'
+              - '!PROJECT'
 
       - name: Set output with default
         id: set-output
