@@ -484,19 +484,22 @@ jobs:
           make test-e2e-full-with-setup
 
   # Status gate for full e2e — always runs so branch protection has a stable required check.
-  # Passes when full e2e succeeded or was skipped (not triggered / doc-only PR).
+  # Passes when full e2e succeeded, or skipped on doc-only PRs. Blocks on code PRs until /ok-to-test runs.
   e2e-full-status:
     runs-on: ubuntu-latest
-    needs: [check-full-tests, e2e-tests-full]
+    needs: [check-code-changes, check-full-tests, e2e-tests-full]
     if: always()
     steps:
       - name: Check e2e full result
         run: |
           result="${{ needs.e2e-tests-full.result }}"
-          if [[ "$result" == "success" || "$result" == "skipped" ]]; then
-            echo "Full e2e passed or not triggered (skipped)"
+          has_code_changes="${{ needs.check-code-changes.outputs.has_code_changes }}"
+          if [[ "$result" == "success" ]]; then
+            echo "Full e2e passed"
+          elif [[ "$result" == "skipped" && "$has_code_changes" != "true" ]]; then
+            echo "Full e2e skipped (doc-only PR)"
           else
-            echo "Full e2e failed: $result"
+            echo "Full e2e not yet run or failed: $result"
             exit 1
           fi
 

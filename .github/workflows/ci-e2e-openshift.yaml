@@ -1073,10 +1073,13 @@ jobs:
       - name: Check e2e openshift result
         run: |
           result="${{ needs.e2e-openshift.result }}"
-          if [[ "$result" == "success" || "$result" == "skipped" ]]; then
-            echo "OpenShift e2e passed or skipped (doc-only PR / no trigger)"
+          gate_result="${{ needs.gate.result }}"
+          if [[ "$result" == "success" ]]; then
+            echo "OpenShift e2e passed"
+          elif [[ "$result" == "skipped" && "$gate_result" == "skipped" ]]; then
+            echo "OpenShift e2e skipped (doc-only PR)"
           else
-            echo "OpenShift e2e failed: $result"
+            echo "OpenShift e2e not yet run or failed: $result"
             exit 1
           fi
 
