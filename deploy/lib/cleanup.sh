@@ -113,6 +113,10 @@ EOF
         log_warning "Workload-Variant-Autoscaler resources not found or already removed"
     rm -rf "$tmp_overlay"
 
+    # Remove the per-deployment ClusterRoleBinding created for shared-cluster isolation.
+    kubectl delete clusterrolebinding "workload-variant-autoscaler-manager-${WVA_NS}" \
+        --ignore-not-found 2>/dev/null || true
+
     rm -f "$PROM_CA_CERT_PATH"
 
     log_success "WVA uninstalled"
