@@ -1063,6 +1063,21 @@ jobs:
             fi
           done
 
+  e2e-openshift-status:
+    runs-on: ubuntu-latest
+    needs: [gate, e2e-openshift]
+    if: always()
+    steps:
+      - name: Check e2e openshift result
+        run: |
+          result="${{ needs.e2e-openshift.result }}"
+          if [[ "$result" == "success" || "$result" == "skipped" ]]; then
+            echo "OpenShift e2e passed or skipped (doc-only PR / no trigger)"
+          else
+            echo "OpenShift e2e failed: $result"
+            exit 1
+          fi
+
   # Report status back to PR for issue_comment triggered runs
   # This ensures fork PRs show the correct status after /ok-to-test runs complete
   report-status:

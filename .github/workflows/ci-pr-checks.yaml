@@ -358,6 +358,23 @@ jobs:
         run: |
           make test-e2e-smoke-with-setup
 
+  # Status gate for smoke e2e — always runs so branch protection has a stable required check.
+  # Passes when smoke succeeded (code PR) or was skipped (doc-only PR); fails on test failure.
+  e2e-smoke-status:
+    runs-on: ubuntu-latest
+    needs: [check-code-changes, e2e-tests-smoke]
+    if: always()
+    steps:
+      - name: Check e2e smoke result
+        run: |
+          result="${{ needs.e2e-tests-smoke.result }}"
+          if [[ "$result" == "success" || "$result" == "skipped" ]]; then
+            echo "E2E smoke passed or skipped (doc-only PR)"
+          else
+            echo "E2E smoke failed: $result"
+            exit 1
+          fi
+
   # Full Kind E2E - runs only when triggered (/ok-to-test or workflow_dispatch with run_full_tests).
   # Add "e2e-tests-full" as a required status check in branch protection so it appears on every PR
   # and must run and pass before merge (shows as "Expected" until triggered).
@@ -463,6 +480,24 @@ jobs:
           QUEUE_SPARE_TRIGGER: "4.5"
         run: |
           make test-e2e-full-with-setup
+
+  # Status gate for full e2e — always runs so branch protection has a stable required check.
+  # Passes when full e2e succeeded or was skipped (not triggered / doc-only PR).
+  # Set THIS job as the required check in branch protection, not e2e-tests-full directly.
+  e2e-full-status:
+    runs-on: ubuntu-latest
+    needs: [check-full-tests, e2e-tests-full]
+    if: always()
+    steps:
+      - name: Check e2e full result
+        run: |
+          result="${{ needs.e2e-tests-full.result }}"
+          if [[ "$result" == "success" || "$result" == "skipped" ]]; then
+            echo "Full e2e passed or not triggered (skipped)"
+          else
+            echo "Full e2e failed: $result"
+            exit 1
+          fi
 
   # Report status back to PR for issue_comment triggered runs
   # This ensures fork PRs show the correct status after /ok-to-test runs complete
