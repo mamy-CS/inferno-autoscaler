@@ -466,37 +466,6 @@ jobs:
         run: |
           make test-e2e-full-with-setup
 
-  # For doc-only PRs, auto-satisfy the required comment-trigger status checks so
-  # maintainers don't need to comment /ok-to-test just to merge a docs change.
-  doc-only-status:
-    runs-on: ubuntu-latest
-    needs: [check-code-changes]
-    if: github.event_name == 'pull_request' && needs.check-code-changes.outputs.has_code_changes != 'true'
-    permissions:
-      statuses: write
-    steps:
-      - name: Post success status for doc-only PR
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const sha = context.payload.pull_request.head.sha;
-            const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            const contexts = [
-              'CI - PR Checks / e2e (comment trigger)',
-              'CI - OpenShift E2E Tests / e2e (comment trigger)'
-            ];
-            for (const ctx of contexts) {
-              await github.rest.repos.createCommitStatus({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                sha,
-                state: 'success',
-                target_url: runUrl,
-                description: 'Skipped — doc-only PR',
-                context: ctx
-              });
-            }
-
   # Report status back to PR for issue_comment triggered runs
   # This ensures fork PRs show the correct status after /ok-to-test runs complete
   report-status:
