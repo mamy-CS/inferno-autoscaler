@@ -115,9 +115,13 @@ PATCH
     # breaking any other run that applied first. Create a per-deployment binding named
     # after WVA_NS so each run has its own authoritative binding that survives concurrent
     # applies.
-    log_info "Creating per-deployment ClusterRoleBinding for SA in $WVA_NS (shared cluster isolation)"
+    log_info "Creating per-deployment ClusterRoleBindings for SA in $WVA_NS (shared cluster isolation)"
     kubectl create clusterrolebinding "workload-variant-autoscaler-manager-${WVA_NS}" \
         --clusterrole=workload-variant-autoscaler-manager-role \
+        --serviceaccount="${WVA_NS}:workload-variant-autoscaler-controller-manager" \
+        --dry-run=client -o yaml | kubectl apply -f -
+    kubectl create clusterrolebinding "workload-variant-autoscaler-cluster-monitoring-view-${WVA_NS}" \
+        --clusterrole=cluster-monitoring-view \
         --serviceaccount="${WVA_NS}:workload-variant-autoscaler-controller-manager" \
         --dry-run=client -o yaml | kubectl apply -f -
 
