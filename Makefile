@@ -9,6 +9,7 @@ CLUSTER_GPUS ?= 4
 KUBECONFIG ?= $(HOME)/.kube/config
 K8S_VERSION ?= v1.32.0
 
+WVA_NS              ?= workload-variant-autoscaler-system
 CONTROLLER_NAMESPACE ?= workload-variant-autoscaler-system
 MONITORING_NAMESPACE ?= openshift-user-workload-monitoring
 LLMD_NAMESPACE       ?= llm-d-optimized-baseline
@@ -158,15 +159,15 @@ undeploy-wva-emulated-on-kind:
 .PHONY: deploy-wva-on-openshift
 deploy-wva-on-openshift: manifests kustomize ## Deploy WVA to OpenShift cluster with specified image.
 	@echo "Deploying WVA to OpenShift with image: $(IMG)"
-	@echo "Target namespace: $(or $(NAMESPACE),workload-variant-autoscaler-system)"
-	NAMESPACE=$(or $(NAMESPACE),workload-variant-autoscaler-system) IMG=$(IMG) ENVIRONMENT=openshift ./deploy/install.sh && \
-	NAMESPACE=$(or $(NAMESPACE),workload-variant-autoscaler-system) IMG=$(IMG) ENVIRONMENT=openshift LLM_D_RELEASE=$(LLM_D_RELEASE) ./deploy/install-llmd-infra.sh -e openshift
+	@echo "Target namespace: $(WVA_NS)"
+	WVA_NS=$(WVA_NS) IMG=$(IMG) ENVIRONMENT=openshift ./deploy/install.sh && \
+	WVA_NS=$(WVA_NS) IMG=$(IMG) ENVIRONMENT=openshift LLM_D_RELEASE=$(LLM_D_RELEASE) ./deploy/install-llmd-infra.sh -e openshift
 
 ## Undeploy WVA from OpenShift.
 .PHONY: undeploy-wva-on-openshift
 undeploy-wva-on-openshift:
 	@echo ">>> Undeploying workload-variant-autoscaler from OpenShift"
-	export KIND=$(KIND) KUBECTL=$(KUBECTL) ENVIRONMENT=openshift && \
+	export KIND=$(KIND) KUBECTL=$(KUBECTL) ENVIRONMENT=openshift WVA_NS=$(WVA_NS) && \
 		deploy/install-llmd-infra.sh --undeploy -e openshift; \
 		deploy/install.sh --undeploy
 
@@ -174,15 +175,15 @@ undeploy-wva-on-openshift:
 .PHONY: deploy-wva-on-k8s
 deploy-wva-on-k8s: manifests kustomize ## Deploy WVA on Kubernetes with the specified image.
 	@echo "Deploying WVA on Kubernetes with image: $(IMG)"
-	@echo "Target namespace: $(or $(NAMESPACE),workload-variant-autoscaler-system)"
-	NAMESPACE=$(or $(NAMESPACE),workload-variant-autoscaler-system) IMG=$(IMG) ENVIRONMENT=kubernetes ./deploy/install.sh && \
-	NAMESPACE=$(or $(NAMESPACE),workload-variant-autoscaler-system) IMG=$(IMG) ENVIRONMENT=kubernetes LLM_D_RELEASE=$(LLM_D_RELEASE) ./deploy/install-llmd-infra.sh -e kubernetes
+	@echo "Target namespace: $(WVA_NS)"
+	WVA_NS=$(WVA_NS) IMG=$(IMG) ENVIRONMENT=kubernetes ./deploy/install.sh && \
+	WVA_NS=$(WVA_NS) IMG=$(IMG) ENVIRONMENT=kubernetes LLM_D_RELEASE=$(LLM_D_RELEASE) ./deploy/install-llmd-infra.sh -e kubernetes
 
 ## Undeploy WVA from Kubernetes.
 .PHONY: undeploy-wva-on-k8s
 undeploy-wva-on-k8s:
 	@echo ">>> Undeploying workload-variant-autoscaler from Kubernetes"
-	export KIND=$(KIND) KUBECTL=$(KUBECTL) ENVIRONMENT=kubernetes && \
+	export KIND=$(KIND) KUBECTL=$(KUBECTL) ENVIRONMENT=kubernetes WVA_NS=$(WVA_NS) && \
 		deploy/install-llmd-infra.sh --undeploy -e kubernetes; \
 		deploy/install.sh --undeploy
 
