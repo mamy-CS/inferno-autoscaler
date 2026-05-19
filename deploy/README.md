@@ -59,6 +59,65 @@ Platform-specific requirements:
 - Cluster admin privileges (for full deployment script)
 - Or namespace admin + ability to create ClusterRole/ClusterRoleBinding (for Kustomize direct install)
 
+### Workload Requirements
+
+WVA needs two things to associate Prometheus metrics with a `VariantAutoscaling` resource: the pod label must be present, and the Prometheus monitor must propagate it into metrics.
+
+**1. `llm-d.ai/variant` label on your scale target**
+
+Add the `llm-d.ai/variant` label to the **pod template** of your Deployment or LeaderWorkerSet. Set the value to the name of the corresponding `VariantAutoscaling` resource. WVA does not add this label automatically.
+
+```yaml
+# Deployment — add to spec.template.metadata.labels
+spec:
+  template:
+    metadata:
+      labels:
+        llm-d.ai/variant: <VariantAutoscaling-name>
+```
+
+```yaml
+# LeaderWorkerSet — add to both leaderTemplate and workerTemplate
+spec:
+  leaderWorkerTemplate:
+    leaderTemplate:
+      metadata:
+        labels:
+          llm-d.ai/variant: <VariantAutoscaling-name>
+    workerTemplate:
+      metadata:
+        labels:
+          llm-d.ai/variant: <VariantAutoscaling-name>
+```
+
+**2. Relabeling rule on your ServiceMonitor or PodMonitor**
+
+The `llm-d.ai/variant` pod label must be propagated into Prometheus metric series as `llm_d_ai_variant`. Add the following target relabeling rule to the `ServiceMonitor` or `PodMonitor` that scrapes your model-server pods:
+
+```yaml
+# ServiceMonitor — add to spec.endpoints[].relabelings
+spec:
+  endpoints:
+  - relabelings:
+    - sourceLabels: [__meta_kubernetes_pod_label_llm_d_ai_variant]
+      targetLabel: llm_d_ai_variant
+      action: replace
+```
+
+```yaml
+# PodMonitor — add to spec.podMetricsEndpoints[].relabelings
+spec:
+  podMetricsEndpoints:
+  - relabelings:
+    - sourceLabels: [__meta_kubernetes_pod_label_llm_d_ai_variant]
+      targetLabel: llm_d_ai_variant
+      action: replace
+```
+
+> **Important**: This rule must be under `relabelings` (target relabeling), **not** `metricRelabelings`. The `__meta_kubernetes_pod_label_*` labels are only available during target relabeling.
+
+If either requirement is missing, WVA will not make scaling decisions for the affected variant. See [Controller Behavior](../docs/design/controller-behavior.md#prerequisites) for more details.
+
 ### Required Tokens
 
 - **HuggingFace Token** (for llm-d deployment): after getting access to a model, set a token on [HuggingFace](https://huggingface.co/settings/tokens)
@@ -496,6 +555,8 @@ spec:
   modelID: "unsloth/Meta-Llama-3.1-8B"
 EOF
 ```
+
+> **Required**: Before creating the VA, ensure the `llm-d.ai/variant` label is set on your Deployment or LeaderWorkerSet pod template with value `my-vllm-deployment-decode` (matching the VA name above). See [Workload Requirements](#workload-requirements).
 
 #### Creating HPA Manually
 

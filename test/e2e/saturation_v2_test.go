@@ -111,7 +111,7 @@ var _ = Describe("Saturation V2 engine", Label("smoke", "full"), Ordered, func()
 		// v2SmokeFakeMetricsJSON comment for the math.
 		_ = fixtures.DeleteModelService(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName)
 		Expect(fixtures.CreateModelServiceWithExtraArgs(
-			ctx, k8sClient, cfg.LLMDNamespace, modelSvcName, poolName, modelID,
+			ctx, k8sClient, cfg.LLMDNamespace, modelSvcName, poolName, modelID, vaName,
 			cfg.UseSimulator, cfg.MaxNumSeqs,
 			[]string{"--fake-metrics", v2SmokeFakeMetricsJSON},
 		)).To(Succeed())

@@ -37,7 +37,7 @@ var _ = Describe("Annotation-based variant discovery", Serial, func() {
 
 		BeforeAll(func() {
 			By("Creating model service deployment")
-			err := fixtures.EnsureModelService(ctx, k8sClient, cfg.LLMDNamespace, modelServiceName, poolName, cfg.ModelID, cfg.UseSimulator, cfg.MaxNumSeqs)
+			err := fixtures.EnsureModelService(ctx, k8sClient, cfg.LLMDNamespace, modelServiceName, poolName, cfg.ModelID, "", cfg.UseSimulator, cfg.MaxNumSeqs)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create model service")
 
 			DeferCleanup(func() {
