@@ -25,6 +25,7 @@ USE_SIMULATOR               ?= true
 SCALE_TO_ZERO_ENABLED       ?= false
 SCALER_BACKEND              ?= prometheus-adapter  # prometheus-adapter (HPA), keda (ScaledObject), or none (skip, use pre-installed backend)
 LLM_D_RELEASE               ?= v0.7.0
+DEPLOY_LLM_D_INFRA          ?= true
 KV_SPARE_TRIGGER           ?=
 QUEUE_SPARE_TRIGGER         ?=
 E2E_MONITORING_NAMESPACE    ?= workload-variant-autoscaler-monitoring
@@ -160,7 +161,9 @@ deploy-wva-on-openshift: manifests kustomize ## Deploy WVA to OpenShift cluster 
 	@echo "Deploying WVA to OpenShift with image: $(IMG)"
 	@echo "Target namespace: $(WVA_NS)"
 	WVA_NS=$(WVA_NS) IMG=$(IMG) ENVIRONMENT=openshift ./deploy/install.sh && \
-	WVA_NS=$(WVA_NS) IMG=$(IMG) ENVIRONMENT=openshift LLM_D_RELEASE=$(LLM_D_RELEASE) ./deploy/install-llmd-infra.sh -e openshift
+	if [ "$(DEPLOY_LLM_D_INFRA)" = "true" ]; then \
+		WVA_NS=$(WVA_NS) IMG=$(IMG) ENVIRONMENT=openshift LLM_D_RELEASE=$(LLM_D_RELEASE) ./deploy/install-llmd-infra.sh -e openshift; \
+	fi
 
 ## Undeploy WVA from OpenShift.
 .PHONY: undeploy-wva-on-openshift
@@ -176,7 +179,9 @@ deploy-wva-on-k8s: manifests kustomize ## Deploy WVA on Kubernetes with the spec
 	@echo "Deploying WVA on Kubernetes with image: $(IMG)"
 	@echo "Target namespace: $(WVA_NS)"
 	WVA_NS=$(WVA_NS) IMG=$(IMG) ENVIRONMENT=kubernetes ./deploy/install.sh && \
-	WVA_NS=$(WVA_NS) IMG=$(IMG) ENVIRONMENT=kubernetes LLM_D_RELEASE=$(LLM_D_RELEASE) ./deploy/install-llmd-infra.sh -e kubernetes
+	if [ "$(DEPLOY_LLM_D_INFRA)" = "true" ]; then \
+		WVA_NS=$(WVA_NS) IMG=$(IMG) ENVIRONMENT=kubernetes LLM_D_RELEASE=$(LLM_D_RELEASE) ./deploy/install-llmd-infra.sh -e kubernetes; \
+	fi
 
 ## Undeploy WVA from Kubernetes.
 .PHONY: undeploy-wva-on-k8s
