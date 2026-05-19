@@ -1450,7 +1450,7 @@ var _ = Describe("Scale-From-Zero Feature with LeaderWorkerSet (single-node)", S
 			GinkgoWriter.Println("Single-node LWS successfully scaled up from zero")
 		})
 
-		It("should successfully process requests after scaling up single-node LWS ", func() {
+		It("should successfully process requests after scaling up single-node LWS  ", func() {
 			By("Verifying the trigger job completes successfully")
 			Eventually(func(g Gomega) {
 				job, err := k8sClient.BatchV1().Jobs(cfg.LLMDNamespace).Get(ctx, triggerJobName, metav1.GetOptions{})
