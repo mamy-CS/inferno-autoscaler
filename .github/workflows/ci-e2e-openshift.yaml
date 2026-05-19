@@ -89,23 +89,16 @@ jobs:
         uses: dorny/paths-filter@v3
         id: filter
         with:
+          predicate-quantifier: 'every'
           filters: |
             code:
-              - 'api/**'
-              - 'cmd/**'
-              - 'config/**'
-              - 'deploy/**'
-              - 'hack/**'
-              - 'internal/**'
-              - 'pkg/**'
-              - 'test/**'
-              - 'charts/**'
-              - 'vendor/**'
-              - 'Dockerfile'
-              - 'Makefile'
-              - 'go.mod'
-              - 'go.sum'
-              - '.github/**'
+              - '**'
+              - '!docs/**'
+              - '!README.md'
+              - '!CONTRIBUTING.md'
+              - '!LICENSE'
+              - '!OWNERS'
+              - '!PROJECT'
 
       - name: Set output
         id: set-output
