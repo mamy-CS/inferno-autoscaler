@@ -6,7 +6,7 @@ As such, WVA considers all variants in the system, holistically.
 It adjusts the values of the number of replicas based on a number of factors, including, but not limited to, the number of available accelerators, load statistics, model performance profiles, target SLOs, and workload priorities (criticality).
 WVA uses modeling, benchmarking, and optimization to find the best possible solution for all variants in the system.
 
-## Definitions and assumptions
+## Definitions and assumptions 
 
 - An **accelerator** is a unit of allocation of (GPU) devices, of a given type and multiplicity, e.g. 2xH100 is an accelerator consisting of two H100 GPUs, in order to satisfy model memory constraints and/or performance.
 
