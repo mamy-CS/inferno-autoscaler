@@ -345,7 +345,7 @@ jobs:
       - name: Wait for infrastructure to be ready
         run: |
           kubectl rollout status deployment -l app.kubernetes.io/name=workload-variant-autoscaler -n "$WVA_NAMESPACE" --timeout=300s || true
-          kubectl rollout status deployment/ms-inference-scheduling-llm-d-modelservice-decode -n "$LLMD_NAMESPACE" --timeout=1500s || true
+          kubectl rollout status deployment/optimized-baseline-nvidia-gpu-vllm-decode -n "$LLMD_NAMESPACE" --timeout=1500s || true
           echo "--- Services in openshift-user-workload-monitoring ---"
           kubectl get svc -n openshift-user-workload-monitoring
           echo "--- Services in openshift-monitoring ---"

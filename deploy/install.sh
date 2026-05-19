@@ -25,7 +25,7 @@ NC='\033[0m' # No Color
 WVA_PROJECT=${WVA_PROJECT:-$PWD}
 
 # Namespaces
-LLMD_NS=${LLMD_NS:-"llm-d-inference-scheduler"}
+LLMD_NS=${LLMD_NS:-"llm-d-optimized-baseline"}
 MONITORING_NAMESPACE=${MONITORING_NAMESPACE:-"workload-variant-autoscaler-monitoring"}
 WVA_NS=${WVA_NS:-"workload-variant-autoscaler-system"}
 PROMETHEUS_SECRET_NS=${PROMETHEUS_SECRET_NS:-$MONITORING_NAMESPACE}
