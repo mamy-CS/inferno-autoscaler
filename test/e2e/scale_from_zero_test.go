@@ -1451,7 +1451,7 @@ var _ = Describe("Scale-From-Zero Feature with LeaderWorkerSet (single-node)", S
 		})
 
 		It("should successfully process requests after scaling up single-node LWS", func() {
-			By("Verifying the trigger job completes successfully")
+			By("Verifying the trigger job completes successfully ")
 			Eventually(func(g Gomega) {
 				job, err := k8sClient.BatchV1().Jobs(cfg.LLMDNamespace).Get(ctx, triggerJobName, metav1.GetOptions{})
 				g.Expect(err).NotTo(HaveOccurred())
