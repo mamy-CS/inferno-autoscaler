@@ -109,6 +109,18 @@ PATCH
     kubectl apply -k "$tmp_overlay"
     rm -rf "$tmp_overlay"
 
+    # On shared clusters (e.g. OpenShift CI), concurrent runs produce the same
+    # ClusterRoleBinding name (workload-variant-autoscaler-manager-rolebinding) because
+    # Kustomize uses a fixed namePrefix. Each apply overwrites the subject namespace,
+    # breaking any other run that applied first. Create a per-deployment binding named
+    # after WVA_NS so each run has its own authoritative binding that survives concurrent
+    # applies.
+    log_info "Creating per-deployment ClusterRoleBinding for SA in $WVA_NS (shared cluster isolation)"
+    kubectl create clusterrolebinding "workload-variant-autoscaler-manager-${WVA_NS}" \
+        --clusterrole=workload-variant-autoscaler-manager-role \
+        --serviceaccount="${WVA_NS}:workload-variant-autoscaler-controller-manager" \
+        --dry-run=client -o yaml | kubectl apply -f -
+
     # Wait for WVA to be ready
     log_info "Waiting for WVA controller to be ready..."
     if kubectl wait --for=condition=Ready pod -l "$WVA_CONTROLLER_LABEL_SELECTOR" -n "$WVA_NS" --timeout=60s; then
