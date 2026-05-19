@@ -91,12 +91,21 @@ jobs:
         with:
           filters: |
             code:
-              - '!docs/**'
-              - '!README.md'
-              - '!CONTRIBUTING.md'
-              - '!LICENSE'
-              - '!OWNERS'
-              - '!PROJECT'
+              - 'api/**'
+              - 'cmd/**'
+              - 'config/**'
+              - 'deploy/**'
+              - 'hack/**'
+              - 'internal/**'
+              - 'pkg/**'
+              - 'test/**'
+              - 'charts/**'
+              - 'vendor/**'
+              - 'Dockerfile'
+              - 'Makefile'
+              - 'go.mod'
+              - 'go.sum'
+              - '.github/**'
 
       - name: Set output
         id: set-output
