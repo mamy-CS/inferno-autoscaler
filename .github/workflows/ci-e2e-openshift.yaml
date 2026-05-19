@@ -1068,13 +1068,21 @@ jobs:
   e2e-openshift-status:
     runs-on: ubuntu-latest
     needs: [gate, e2e-openshift]
+    # Always runs so branch protection has a stable required check.
+    # GitHub treats "skipped" jobs as passing, so we must exit 1 to actually block merges.
     if: always()
     steps:
       - name: Check e2e openshift result
         run: |
           result="${{ needs.e2e-openshift.result }}"
-          if [[ "$result" == "success" || "$result" == "skipped" ]]; then
-            echo "OpenShift e2e passed or skipped (doc-only PR / no trigger)"
+          gate_result="${{ needs.gate.result }}"
+          if [[ "$result" == "success" ]]; then
+            echo "OpenShift e2e passed"
+          elif [[ "$result" == "skipped" && "$gate_result" == "skipped" ]]; then
+            echo "OpenShift e2e skipped (doc-only PR)"
+          elif [[ "$result" == "skipped" ]]; then
+            echo "OpenShift e2e not yet triggered — comment /ok-to-test to run"
+            exit 1
           else
             echo "OpenShift e2e failed: $result"
             exit 1
