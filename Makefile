@@ -39,8 +39,7 @@ BENCHMARK_REPO_REF   ?= v0.6.0
 # TODO: verify benchmark repo guide path for v0.7.0 (was guides/inference-scheduling-wva)
 BENCHMARK_SPEC       ?= guides/inference-scheduling-wva
 BENCHMARK_NAMESPACE  ?= # set via BENCHMARK_NAMESPACE=<namespace>
-# TODO: update gateway name pattern after verifying v0.7.0 benchmark guide naming (was infra-<release>-inference-gateway-istio)
-BENCHMARK_GATEWAY_URL ?= http://$(BENCHMARK_NAMESPACE)-inference-gateway-istio.$(BENCHMARK_NAMESPACE).svc.cluster.local:80
+BENCHMARK_GATEWAY_URL ?= http://infra-llmdbench-inference-gateway-istio.$(BENCHMARK_NAMESPACE).svc.cluster.local:80
 BENCHMARK_WORKSPACE  ?= $(CURDIR)
 BENCHMARK_HARNESS    ?= guidellm
 BENCHMARK_WORKLOAD   ?= prefill_heavy.yaml
@@ -373,10 +372,17 @@ benchmark-standup: ## Stand up the benchmark environment (set BENCHMARK_NAMESPAC
 		echo "ERROR: BENCHMARK_NAMESPACE is required. Usage: make benchmark-standup BENCHMARK_NAMESPACE=<namespace>"; \
 		exit 1; \
 	fi
+	@echo "Injecting PYTORCH_ALLOC_CONF into scenario YAML..."
+	@sed -i.bak 's/extraEnvVars: \[\]/extraEnvVars:\n        - name: PYTORCH_ALLOC_CONF\n          value: "expandable_segments:True"/' \
+		$(BENCHMARK_REPO_DIR)/config/scenarios/guides/inference-scheduling-wva.yaml
 	$(LLMDBENCHMARK) $(BENCHMARK_CLI_FLAGS) standup \
 		-p $(BENCHMARK_NAMESPACE) \
 		$(if $(BENCHMARK_MODEL_ID),-m $(BENCHMARK_MODEL_ID),) \
-		$(if $(filter true,$(BENCHMARK_MONITORING)),--monitoring,)
+		$(if $(filter true,$(BENCHMARK_MONITORING)),--monitoring,); \
+	rc=$$?; \
+	mv $(BENCHMARK_REPO_DIR)/config/scenarios/guides/inference-scheduling-wva.yaml.bak \
+	   $(BENCHMARK_REPO_DIR)/config/scenarios/guides/inference-scheduling-wva.yaml; \
+	exit $$rc
 
 .PHONY: benchmark-run
 benchmark-run: ## Run a single benchmark workload (set BENCHMARK_NAMESPACE=<namespace>, MODEL_ID=<model>)
@@ -395,7 +401,9 @@ benchmark-run: ## Run a single benchmark workload (set BENCHMARK_NAMESPACE=<name
 		$(if $(BENCHMARK_MODEL_ID),-m $(BENCHMARK_MODEL_ID),) \
 		$(if $(filter true,$(BENCHMARK_MONITORING)),--monitoring,)
 
-BURSTY_WORKLOAD ?= bursty.yaml
+BURSTY_WORKLOAD    ?= bursty.yaml
+BENCHMARK_WAIT_TIMEOUT ?= 7200
+BENCHMARK_HARNESS_MEMORY ?= 40Gi
 
 .PHONY: benchmark-run-bursty
 benchmark-run-bursty: ## Run bursty traffic benchmark using inference-perf multi-stage rates (set BENCHMARK_NAMESPACE=<namespace>, MODEL_ID=<model>)
@@ -407,13 +415,20 @@ benchmark-run-bursty: ## Run bursty traffic benchmark using inference-perf multi
 		cp "$(BENCHMARK_SCENARIOS_DIR)/$(BURSTY_WORKLOAD)" \
 		   "$(BENCHMARK_REPO_DIR)/workload/profiles/inference-perf/$(BURSTY_WORKLOAD)"; \
 	fi
+	@echo "Patching harness memory to $(BENCHMARK_HARNESS_MEMORY)..."
+	@sed -i.bak 's/memory: 32Gi/memory: $(BENCHMARK_HARNESS_MEMORY)/' \
+		$(BENCHMARK_REPO_DIR)/config/templates/values/defaults.yaml
 	$(LLMDBENCHMARK) $(BENCHMARK_CLI_FLAGS) run \
 		-p $(BENCHMARK_NAMESPACE) \
 		-l inference-perf \
 		-w $(BURSTY_WORKLOAD) \
 		-U $(BENCHMARK_GATEWAY_URL) \
 		$(if $(BENCHMARK_MODEL_ID),-m $(BENCHMARK_MODEL_ID),) \
-		$(if $(filter true,$(BENCHMARK_MONITORING)),--monitoring,)
+		$(if $(filter true,$(BENCHMARK_MONITORING)),--monitoring,); \
+	rc=$$?; \
+	mv $(BENCHMARK_REPO_DIR)/config/templates/values/defaults.yaml.bak \
+	   $(BENCHMARK_REPO_DIR)/config/templates/values/defaults.yaml; \
+	exit $$rc
 
 .PHONY: benchmark-run-all
 benchmark-run-all: ## Run all scenarios: teardown → standup → run per scenario (set BENCHMARK_NAMESPACE=<namespace>, MODEL_ID=<model>)
