@@ -1,0 +1,27 @@
+# Helm values overlay for GAIE standalone chart to enable the EPP flowControl feature gate.
+# Applied on top of the optimized-baseline guide values when ENABLE_SCALE_TO_ZERO=true.
+# The flowControl gate exposes inference_extension_flow_control_queue_size, which the
+# WVA scale-from-zero engine reads to detect pending requests.
+inferenceExtension:
+  pluginsCustomConfig:
+    optimized-baseline-plugins.yaml: |
+      apiVersion: inference.networking.x-k8s.io/v1alpha1
+      kind: EndpointPickerConfig
+      featureGates:
+      - flowControl
+      plugins:
+      - type: queue-scorer
+      - type: kv-cache-utilization-scorer
+      - type: prefix-cache-scorer
+      - type: no-hit-lru-scorer
+      schedulingProfiles:
+      - name: default
+        plugins:
+        - pluginRef: queue-scorer
+          weight: 2
+        - pluginRef: kv-cache-utilization-scorer
+          weight: 2
+        - pluginRef: prefix-cache-scorer
+          weight: 3
+        - pluginRef: no-hit-lru-scorer
+          weight: 2

@@ -340,7 +340,7 @@ jobs:
           USE_SIMULATOR: "true"
           SCALE_TO_ZERO_ENABLED: "false"
           CREATE_CLUSTER: "true"
-          # Emulated Kind: chart decode may be removed post-deploy (LLMD_REMOVE_EMULATED_DECODE_DEPLOYMENTS, default true).
+          # Emulated Kind: llm-d model serving is deployed by install-epp.sh (GAIE standalone chart + simulator).
           # Pin llm-d release for deterministic CI behavior
           LLM_D_RELEASE: "v0.7.0"
           # Dual-controller smoke installs a secondary controller via Kustomize; overlay path must be explicit in CI.

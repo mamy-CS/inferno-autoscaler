@@ -71,7 +71,7 @@ export KIND_IMAGE_PLATFORM=linux/amd64      # Single platform for kind load (avo
 export DEPLOY_PROMETHEUS=true         # Deploy Prometheus stack
 export DEPLOY_WVA=true                # Deploy WVA controller
 export DEPLOY_PROMETHEUS_ADAPTER=true # Deploy Prometheus Adapter
-# llm-d: `make deploy-wva-emulated-on-kind` runs install.sh then install-llmd-infra.sh
+# llm-d: deploy model serving separately via the llm-d guides after install.sh
 ```
 
 ### Step-by-Step Setup
@@ -138,7 +138,7 @@ Destroys the Kind cluster.
 
 ### install.sh (Kind environment plugin)
 
-`deploy/kind-emulator/install.sh` is **sourced** by `deploy/install-llmd-infra.sh` when `ENVIRONMENT=kind-emulator`. It handles Kind-specific setup (namespaces, image load, monitoring wiring, and related helpers). **llm-d ModelService post-deploy cleanup** for emulated clusters (remove chart prefill; optionally remove chart decode when `LLMD_REMOVE_EMULATED_DECODE_DEPLOYMENTS=true`, the default) runs from **`deploy/lib/infra_llmd.sh`** inside `deploy_llm_d_infrastructure`, not from this `install.sh`.
+`deploy/kind-emulator/install.sh` is **sourced** by `deploy/install.sh` when `ENVIRONMENT=kind-emulator`. It handles Kind-specific setup (namespaces, image load, monitoring wiring, and related helpers). llm-d model serving (EPP + ModelService) is deployed separately using `deploy/install-epp.sh` or the [llm-d guides](https://github.com/llm-d/llm-d/tree/main/guides/optimized-baseline).
 
 ## Cluster Configuration
 

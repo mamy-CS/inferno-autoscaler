@@ -406,7 +406,7 @@ ensure CRDs are installed first
 **Cause:** When running `make create-kind-cluster` and `make deploy-wva-emulated-on-kind` as two
 separate commands, there can be a timing race: the Gateway API Inference Extension CRDs are
 applied by the deploy script but the Kubernetes API server hasn't finished registering them
-before the helmfile tries to deploy the `InferencePool` resource.
+before `kubectl apply -k` registers the `InferencePool` resource with the API server.
 
 **Fix (Option 1 — preferred):** Use the one-shot command, which gives the API server enough
 time to register the CRDs during cluster startup:
