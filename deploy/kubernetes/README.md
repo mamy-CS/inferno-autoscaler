@@ -102,13 +102,12 @@ export ACCELERATOR_TYPE="H100"              # GPU type
 export WVA_IMAGE_TAG="latest"               # WVA version
 # HPA stabilization: configure on the HPA resource directly, not install.sh
 
-# Performance tuning (optional; passed to install-llmd-infra / ModelService)
+# Performance tuning (optional; set in llm-d ModelService manifest)
 export VLLM_MAX_NUM_SEQS=64                 # vLLM max concurrent sequences (batch size)
 export ACCELERATOR_TYPE="A100"              # GPU type (auto-detected)
-export GATEWAY_PROVIDER="istio"             # Gateway: istio or kgateway (for install-llmd-infra.sh)
 ```
 
-**Deployment flags** (`deploy/install.sh`) — VA/HPA are managed separately; llm-d is **`deploy/install-llmd-infra.sh`**:
+**Deployment flags** (`deploy/install.sh`) — VA/HPA are managed separately; llm-d is deployed via `deploy/install-epp.sh` or the [llm-d guides](https://github.com/llm-d/llm-d/tree/main/guides/optimized-baseline):
 
 ```bash
 export DEPLOY_PROMETHEUS=true         # Deploy kube-prometheus-stack
@@ -142,7 +141,7 @@ make deploy-wva-on-k8s
 
 ```bash
 export HF_TOKEN="hf_xxxxx"
-make deploy-wva-on-k8s   # install.sh + install-llmd-infra.sh
+make deploy-wva-on-k8s   # install.sh (WVA + monitoring + scaler + LWS)
 ```
 
 ### Example 4: Deploy only WVA + Prometheus (llm-d already deployed)
@@ -652,7 +651,7 @@ kubectl set env deployment/workload-variant-autoscaler-controller-manager \
 ```bash
 export IMG="ghcr.io/yourorg/llm-d-workload-variant-autoscaler:custom-tag"
 export DEPLOY_PROMETHEUS=false
-make deploy-wva-on-k8s   # base infra only; skip install-llmd-infra if you manage llm-d separately
+make deploy-wva-on-k8s   # WVA + monitoring + scaler + LWS; llm-d is managed separately
 ```
 
 ## Performance Tuning

@@ -214,6 +214,8 @@ jobs:
       WVA_NAMESPACE: wva-benchmark-pr-${{ needs.gate.outputs.pr_number || github.run_id }}
       WVA_RELEASE_NAME: wva-bench-${{ github.run_id }}
       WVA_IMAGE_TAG: ${{ needs.build-image.outputs.image_tag }}
+      LLM_D_RELEASE: v0.7.0
+      GAIE_VERSION: v1.5.0
     steps:
       - name: Set pending status on PR head
         if: github.event_name == 'issue_comment'
@@ -236,6 +238,13 @@ jobs:
           repository: ${{ needs.gate.outputs.pr_head_repo || github.repository }}
           ref: ${{ needs.gate.outputs.pr_head_sha || github.sha }}
           token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Checkout llm-d/llm-d
+        uses: actions/checkout@v6
+        with:
+          repository: llm-d/llm-d
+          ref: ${{ env.LLM_D_RELEASE }}
+          path: llm-d
 
       - name: Set up Go
         uses: actions/setup-go@v6
@@ -298,18 +307,12 @@ jobs:
       - name: Deploy WVA and llm-d infrastructure
         env:
           ENVIRONMENT: openshift
-          # Cluster provides gateway — skip install-llmd gateway helmfile.
-          INSTALL_GATEWAY_CTRLPLANE: "false"
           NAMESPACE_SCOPED: "false"
           LLMD_NS: ${{ env.LLMD_NAMESPACE }}
           WVA_NS: ${{ env.WVA_NAMESPACE }}
           CONTROLLER_INSTANCE: ${{ env.WVA_NAMESPACE }}
-          # Benchmark does not use chart VA/HPA from install — workloads and autoscalers come from the benchmark job.
-          DECODE_REPLICAS: "1"
           MONITORING_NAMESPACE: openshift-user-workload-monitoring
-          # See OpenShift e2e: user-workload Prometheus cannot bearer-auth to WVA /metrics.
           WVA_METRICS_SECURE: "false"
-          # Full capacity-scaling chart values (install.sh no longer passes these).
           KV_CACHE_THRESHOLD: "0.90"
           QUEUE_LENGTH_THRESHOLD: "10"
           KV_SPARE_TRIGGER: "0.05"
@@ -323,15 +326,75 @@ jobs:
           INSTALL_GRAFANA: "true"
           MODEL_ID: ${{ env.MODEL_ID }}
           ACCELERATOR_TYPE: ${{ env.ACCELERATOR_TYPE }}
-          LLMD_PATCH_EPP_FLOW_CONTROL: "true"
-          LLMD_SKIP_INFERENCE_OBJECTIVE: "true"
-          # EPP + gateway only here; "Wait for infrastructure" rolls out decode (real vLLM).
-          LLMD_WAIT_FOR_ESSENTIAL_LLM_D_ONLY: "true"
-          E2E_DEPLOY_WAIT_TIMEOUT: "300s"
+          GAIE_VERSION: ${{ env.GAIE_VERSION }}
         run: |
-          # Split deploy: WVA base (install.sh) → llm-d (install-llmd-infra.sh) → capacity tuning via ConfigMap patch.
+          # WVA base: monitoring + controller + scaler backend.
           ./deploy/install.sh --environment openshift
-          ./deploy/install-llmd-infra.sh -e openshift
+
+          # Create llm-d namespace and HuggingFace token secret.
+          kubectl create namespace "$LLMD_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create secret generic llm-d-hf-token \
+            --from-literal="HF_TOKEN=${HF_TOKEN}" \
+            -n "$LLMD_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+
+          # OpenShift: install GAIE CRDs before standalone chart.
+          kubectl apply -k "https://github.com/kubernetes-sigs/gateway-api-inference-extension/config/crd/?ref=${GAIE_VERSION}" || true
+
+          # Model server via Kustomize with benchmark tuning.
+          yq ".spec.replicas = 1" -i llm-d/guides/optimized-baseline/modelserver/gpu/vllm/base/patch-vllm.yaml
+          kubectl apply -k llm-d/guides/optimized-baseline/modelserver/gpu/vllm/base -n "$LLMD_NAMESPACE"
+
+          # Post-apply: patch model ID and vLLM performance args for benchmark.
+          MODELSERVICE="optimized-baseline-nvidia-gpu-vllm-decode"
+          kubectl patch deployment "$MODELSERVICE" -n "$LLMD_NAMESPACE" --type=json \
+            -p="[{\"op\":\"replace\",\"path\":\"/spec/template/spec/containers/0/args/1\",\"value\":\"$MODEL_ID\"}]"
+          kubectl patch deployment "$MODELSERVICE" -n "$LLMD_NAMESPACE" --type=json \
+            -p="[{\"op\":\"add\",\"path\":\"/spec/template/spec/containers/0/args/-\",\"value\":\"--max-num-seqs=$VLLM_MAX_NUM_SEQS\"}]"
+          kubectl patch deployment "$MODELSERVICE" -n "$LLMD_NAMESPACE" --type=json \
+            -p="[{\"op\":\"add\",\"path\":\"/spec/template/spec/containers/0/args/-\",\"value\":\"--gpu-memory-utilization=$VLLM_GPU_MEM_UTIL\"}]"
+          kubectl patch deployment "$MODELSERVICE" -n "$LLMD_NAMESPACE" --type=json \
+            -p="[{\"op\":\"add\",\"path\":\"/spec/template/spec/containers/0/args/-\",\"value\":\"--max-model-len=$VLLM_MAX_MODEL_LEN\"}]"
+          kubectl patch deployment "$MODELSERVICE" -n "$LLMD_NAMESPACE" --type=json \
+            -p="[{\"op\":\"add\",\"path\":\"/spec/template/spec/containers/0/args/-\",\"value\":\"--block-size=$VLLM_BLOCK_SIZE\"}]"
+          [ "$VLLM_ENFORCE_EAGER" = "true" ] && kubectl patch deployment "$MODELSERVICE" -n "$LLMD_NAMESPACE" --type=json \
+            -p="[{\"op\":\"add\",\"path\":\"/spec/template/spec/containers/0/args/-\",\"value\":\"--enforce-eager\"}]"
+
+          # EPP / scheduler via GAIE standalone chart.
+          helm upgrade --install optimized-baseline \
+            oci://registry.k8s.io/gateway-api-inference-extension/charts/standalone \
+            -f llm-d/guides/recipes/scheduler/base.values.yaml \
+            -f llm-d/guides/optimized-baseline/scheduler/optimized-baseline.values.yaml \
+            -n "$LLMD_NAMESPACE" --version "$GAIE_VERSION"
+
+          # Grant EPP SA tokenreview permission required for metrics endpoint auth.
+          kubectl apply -f - <<RBAC_EOF
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: ClusterRole
+          metadata:
+            name: optimized-baseline-epp-tokenreview-creator
+          rules:
+          - apiGroups: ["authentication.k8s.io"]
+            resources: ["tokenreviews"]
+            verbs: ["create"]
+          - apiGroups: ["authorization.k8s.io"]
+            resources: ["subjectaccessreviews"]
+            verbs: ["create"]
+          ---
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: ClusterRoleBinding
+          metadata:
+            name: optimized-baseline-epp-tokenreview-creator
+          roleRef:
+            apiGroup: rbac.authorization.k8s.io
+            kind: ClusterRole
+            name: optimized-baseline-epp-tokenreview-creator
+          subjects:
+          - kind: ServiceAccount
+            name: optimized-baseline-epp
+            namespace: $LLMD_NAMESPACE
+          RBAC_EOF
+
+          # Tune capacity thresholds for benchmark scenario.
           kubectl patch configmap workload-variant-autoscaler-saturation-scaling-config \
             -n "$WVA_NAMESPACE" --type=merge \
             -p "$(printf '{"data":{"default":"kvCacheThreshold: %s\\nqueueLengthThreshold: %s\\nkvSpareTrigger: %s\\nqueueSpareTrigger: %s\\n"}}' \
