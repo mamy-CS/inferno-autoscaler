@@ -25,15 +25,19 @@ deploy_epp() {
     curl -fsSL "$_llmd_raw/guides/optimized-baseline/scheduler/optimized-baseline.values.yaml" \
         -o "$_tmpdir/epp-optimized-baseline.values.yaml"
 
-    # Gateway API CRDs (required for InferencePool).
-    log_info "Installing Gateway API CRDs (${GATEWAY_API_VERSION})..."
-    kubectl apply -f "https://github.com/kubernetes-sigs/gateway-api/releases/download/${GATEWAY_API_VERSION}/standard-install.yaml" || \
-        log_warning "Gateway API CRD install returned non-zero — may already be present"
+    # CRD installation — skipped on shared clusters where CRDs are pre-installed
+    # (e.g. OpenShift e2e). Set SKIP_CLUSTER_CRDS=true to skip.
+    if [ "${SKIP_CLUSTER_CRDS:-false}" != "true" ]; then
+        log_info "Installing Gateway API CRDs (${GATEWAY_API_VERSION})..."
+        kubectl apply -f "https://github.com/kubernetes-sigs/gateway-api/releases/download/${GATEWAY_API_VERSION}/standard-install.yaml" || \
+            log_warning "Gateway API CRD install returned non-zero — may already be present"
 
-    # GAIE CRDs (InferencePool, InferenceModel, InferenceObjective).
-    log_info "Installing GAIE CRDs (ref=${GAIE_VERSION})..."
-    kubectl apply -k "https://github.com/kubernetes-sigs/gateway-api-inference-extension/config/crd/?ref=${GAIE_VERSION}" || \
-        log_warning "GAIE CRD install returned non-zero — may already be present"
+        log_info "Installing GAIE CRDs (ref=${GAIE_VERSION})..."
+        kubectl apply -k "https://github.com/kubernetes-sigs/gateway-api-inference-extension/config/crd/?ref=${GAIE_VERSION}" || \
+            log_warning "GAIE CRD install returned non-zero — may already be present"
+    else
+        log_info "Skipping CRD installation (SKIP_CLUSTER_CRDS=true — pre-installed on shared cluster)"
+    fi
 
     # llm-d namespace and dummy HF token secret for emulated environments.
     log_info "Creating llm-d namespace ($LLMD_NS)..."
