@@ -34,10 +34,9 @@ E2E_WVA_SECONDARY_OVERLAY_PATH ?= $(CURDIR)/test/e2e/testdata/secondary-controll
 # llm-d-benchmark CLI configuration
 BENCHMARK_REPO_URL   ?= https://github.com/llm-d/llm-d-benchmark.git
 BENCHMARK_REPO_DIR   ?= $(CURDIR)/llm-d-benchmark
-# TODO: verify v0.7.0 benchmark repo fixes llm-d/llm-d-benchmark#1231 (broken guidellm harness in v0.6.2) before bumping
-BENCHMARK_REPO_REF   ?= v0.6.0
+BENCHMARK_REPO_REF   ?= v0.6.3
 # TODO: verify benchmark repo guide path for v0.7.0 (was guides/inference-scheduling-wva)
-BENCHMARK_SPEC       ?= guides/inference-scheduling-wva
+BENCHMARK_SPEC       ?= guides/workload-autoscaling
 BENCHMARK_NAMESPACE  ?= # set via BENCHMARK_NAMESPACE=<namespace>
 BENCHMARK_GATEWAY_URL ?= http://infra-llmdbench-inference-gateway-istio.$(BENCHMARK_NAMESPACE).svc.cluster.local:80
 BENCHMARK_WORKSPACE  ?= $(CURDIR)
@@ -326,7 +325,7 @@ LLMDBENCHMARK        = $(BENCHMARK_VENV)/bin/llmdbenchmark
 BENCHMARK_CLI_FLAGS = --spec $(BENCHMARK_SPEC) --workspace $(BENCHMARK_WORKSPACE) --base-dir $(BENCHMARK_REPO_DIR)
 
 .PHONY: benchmark-install
-benchmark-install: ## Clone llm-d-benchmark at BENCHMARK_REPO_REF (default v0.6.0) and install the llmdbenchmark CLI
+benchmark-install: ## Clone llm-d-benchmark at BENCHMARK_REPO_REF (default v0.6.3) and install the llmdbenchmark CLI
 	@if [ ! -d "$(BENCHMARK_REPO_DIR)" ]; then \
 		echo "Cloning llm-d-benchmark @ $(BENCHMARK_REPO_REF)..."; \
 		git clone --branch $(BENCHMARK_REPO_REF) $(BENCHMARK_REPO_URL) $(BENCHMARK_REPO_DIR); \
