@@ -52,7 +52,6 @@ BENCHMARK_MODEL_ID   ?= $(MODEL_ID)
 CREATE_CLUSTER    ?= false
 DELETE_CLUSTER    ?= false
 DELETE_NAMESPACES ?= false
-NAMESPACE_SCOPED  ?= false
 
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
@@ -97,8 +96,13 @@ help: ## Display this help.
 
 .PHONY: manifests
 manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
-	$(CONTROLLER_GEN) rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=config/crd/bases
-	cp config/crd/bases/llmd.ai_variantautoscalings.yaml charts/workload-variant-autoscaler/crds/llmd.ai_variantautoscalings.yaml
+	$(CONTROLLER_GEN) rbac:roleName=manager-role crd webhook paths="./..." \
+		output:crd:artifacts:config=config/base/crd \
+		output:rbac:artifacts:config=config/base/rbac
+	# controller-gen writes `<group>_<plural>.yaml` and `role.yaml`; rename to
+	# match the (<app>-)?<kind>.yaml convention used under config/.
+	mv config/base/crd/llmd.ai_variantautoscalings.yaml config/base/crd/variantautoscalings-customresourcedefinition.yaml
+	mv config/base/rbac/role.yaml config/base/rbac/manager-clusterrole.yaml
 
 .PHONY: generate
 generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
@@ -134,7 +138,7 @@ destroy-kind-cluster:
 .PHONY: deploy-wva-emulated-on-kind
 deploy-wva-emulated-on-kind: ## Deploy WVA + EPP on Kind (Prometheus Adapter as scaler backend)
 	@echo ">>> Deploying workload-variant-autoscaler (cluster args: $(KIND_ARGS), image: $(IMG))"
-	KIND=$(KIND) KUBECTL=$(KUBECTL) IMG=$(IMG) ENVIRONMENT=kind-emulator CREATE_CLUSTER=$(CREATE_CLUSTER) CLUSTER_GPU_TYPE=$(CLUSTER_GPU_TYPE) CLUSTER_NODES=$(CLUSTER_NODES) CLUSTER_GPUS=$(CLUSTER_GPUS) NAMESPACE_SCOPED=false SCALER_BACKEND=$(SCALER_BACKEND) \
+	KIND=$(KIND) KUBECTL=$(KUBECTL) IMG=$(IMG) ENVIRONMENT=kind-emulator CREATE_CLUSTER=$(CREATE_CLUSTER) CLUSTER_GPU_TYPE=$(CLUSTER_GPU_TYPE) CLUSTER_NODES=$(CLUSTER_NODES) CLUSTER_GPUS=$(CLUSTER_GPUS) SCALER_BACKEND=$(SCALER_BACKEND) \
 		deploy/install.sh
 	@ENVIRONMENT=kind-emulator \
 		LLM_D_RELEASE=$(LLM_D_RELEASE) \
@@ -219,7 +223,6 @@ deploy-e2e-infra: ## Deploy e2e test infrastructure (WVA + EPP; no model server 
 		echo "Using local image: $$IMAGE_REPO:$$IMAGE_TAG"; \
 		ENVIRONMENT=$(ENVIRONMENT) \
 		SCALER_BACKEND=$(SCALER_BACKEND) \
-		NAMESPACE_SCOPED=$(NAMESPACE_SCOPED) \
 		ENABLE_SCALE_TO_ZERO=$(SCALE_TO_ZERO_ENABLED) \
 		WVA_IMAGE_REPO=$$IMAGE_REPO \
 		WVA_IMAGE_TAG=$$IMAGE_TAG \
@@ -229,7 +232,6 @@ deploy-e2e-infra: ## Deploy e2e test infrastructure (WVA + EPP; no model server 
 		echo "IMG not set - using default image from registry (latest)"; \
 		ENVIRONMENT=$(ENVIRONMENT) \
 		SCALER_BACKEND=$(SCALER_BACKEND) \
-		NAMESPACE_SCOPED=$(NAMESPACE_SCOPED) \
 		ENABLE_SCALE_TO_ZERO=$(SCALE_TO_ZERO_ENABLED) \
 		./deploy/install.sh; \
 	fi
@@ -243,11 +245,10 @@ deploy-e2e-infra: ## Deploy e2e test infrastructure (WVA + EPP; no model server 
 	@NS=$${WVA_NS:-workload-variant-autoscaler-system}; \
 	if [ -n "$(KV_SPARE_TRIGGER)" ] || [ -n "$(QUEUE_SPARE_TRIGGER)" ]; then \
 		echo "Applying optional WVA capacity threshold overrides (KV_SPARE_TRIGGER / QUEUE_SPARE_TRIGGER)..."; \
-		$(KUBECTL) patch configmap workload-variant-autoscaler-saturation-scaling-config \
+		$(KUBECTL) patch configmap wva-saturation-scaling-config \
 			-n "$$NS" --type=merge \
 			-p "{\"data\":{\"default\":\"kvSpareTrigger: $(KV_SPARE_TRIGGER)\\nqueueSpareTrigger: $(QUEUE_SPARE_TRIGGER)\\n\"}}"; \
 	fi
-
 
 
 # Deploy e2e infrastructure with KEDA as scaler backend (installs KEDA, skips Prometheus Adapter).
@@ -539,34 +540,12 @@ docker-buildx: ## Build and push docker image for the manager for cross-platform
 	- $(CONTAINER_TOOL) buildx rm workload-variant-autoscaler-builder
 	rm Dockerfile.cross
 
-.PHONY: build-installer
-build-installer: manifests generate kustomize ## Generate a consolidated YAML with CRDs and deployment.
-	mkdir -p dist
-	cd config/manager && $(KUSTOMIZE) edit set image controller=${IMG}
-	$(KUSTOMIZE) build config/default > dist/install.yaml
-
 ##@ Deployment
 
 ifndef ignore-not-found
   ignore-not-found = false
 endif
 
-.PHONY: install
-install: manifests kustomize ## Install CRDs into the K8s cluster specified in ~/.kube/config.
-	$(KUSTOMIZE) build config/crd | $(KUBECTL) apply -f -
-
-.PHONY: uninstall
-uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
-	$(KUSTOMIZE) build config/crd | $(KUBECTL) delete --ignore-not-found=$(ignore-not-found) -f -
-
-.PHONY: deploy
-deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in ~/.kube/config.
-	cd config/manager && $(KUSTOMIZE) edit set image controller=${IMG}
-	$(KUSTOMIZE) build config/default | $(KUBECTL) apply -f -
-
-.PHONY: undeploy
-undeploy: kustomize ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
-	$(KUSTOMIZE) build config/default | $(KUBECTL) delete --ignore-not-found=$(ignore-not-found) -f -
 
 ##@ Dependencies
 

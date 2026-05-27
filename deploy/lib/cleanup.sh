@@ -43,9 +43,9 @@ undeploy_wva_controller() {
 
     local kustomize_overlay
     if [ "$ENVIRONMENT" = "openshift" ]; then
-        kustomize_overlay="$(cd "$WVA_PROJECT/config/openshift" && pwd)"
+        kustomize_overlay="$(cd "$WVA_PROJECT/config/overlays/namespace-scoped/openshift" && pwd)"
     else
-        kustomize_overlay="$(cd "$WVA_PROJECT/config/default" && pwd)"
+        kustomize_overlay="$(cd "$WVA_PROJECT/config/overlays/cluster-scoped/kubernetes" && pwd)"
     fi
 
     local tmp_overlay

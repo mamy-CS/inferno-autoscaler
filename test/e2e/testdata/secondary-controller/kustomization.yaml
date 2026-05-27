@@ -8,12 +8,12 @@ kind: Kustomization
 #   - optional --controller-instance arg patch
 
 resources:
-- ../../../../config/default
+- ../../../../config/overlays/cluster-scoped/kubernetes
 
 patches:
 - target:
     kind: Deployment
-    name: controller-manager
+    name: wva-controller-manager
   patch: |
     - op: add
       path: /spec/template/spec/containers/0/args/-

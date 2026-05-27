@@ -249,26 +249,26 @@ Install the WVA controller directly into an existing cluster using Kustomize. Th
 
 ```bash
 # Set the controller image
-cd config/manager
+cd config/base/manager
 kustomize edit set image controller=ghcr.io/llm-d/llm-d-workload-variant-autoscaler:v0.7.0
 
 # Apply
-kubectl apply -k ../default
+kubectl apply -k ../../overlays/cluster-scoped/kubernetes
 ```
 
 #### OpenShift
 
 ```bash
-cd config/manager
+cd config/base/manager
 kustomize edit set image controller=ghcr.io/llm-d/llm-d-workload-variant-autoscaler:v0.7.0
 
-kubectl apply -k ../openshift
+kubectl apply -k ../../overlays/namespace-scoped/openshift
 ```
 
 #### Undeploy
 
 ```bash
-kubectl delete -k config/default    # or config/openshift
+kubectl delete -k config/overlays/cluster-scoped/kubernetes    # or config/overlays/namespace-scoped/openshift
 ```
 
 ### Legacy: Helm Chart (Deprecated)
@@ -666,7 +666,7 @@ VariantAutoscaling, HPA stabilization, and vLLM ModelService tuning are not cont
 
 #### Optional: capacity thresholds after `make deploy-e2e-infra`
 
-If `KV_SPARE_TRIGGER` and/or `QUEUE_SPARE_TRIGGER` are set in the environment, the Makefile patches the `saturation-scaling-config` ConfigMap after install.
+If `KV_SPARE_TRIGGER` and/or `QUEUE_SPARE_TRIGGER` are set in the environment, the Makefile patches the `wva-saturation-scaling-config` ConfigMap after install.
 
 ## Post-Deployment
 
@@ -948,7 +948,7 @@ If you encounter issues not covered here:
 # === WVA Controller ===
 kubectl get pods -n workload-variant-autoscaler-system
 kubectl logs -n workload-variant-autoscaler-system -l app.kubernetes.io/name=workload-variant-autoscaler -f
-kubectl describe deployment workload-variant-autoscaler-controller-manager -n workload-variant-autoscaler-system
+kubectl describe deployment controller-manager -n workload-variant-autoscaler-system
 
 # === VariantAutoscaling Resources ===
 kubectl get variantautoscaling -A
@@ -985,7 +985,7 @@ kubectl get configmap model-accelerator-data -n workload-variant-autoscaler-syst
 - **Main Project**: [README.md](../README.md)
 - **Kubernetes Guide**: [kubernetes/README.md](kubernetes/README.md)
 - **OpenShift Guide**: [openshift/README.md](openshift/README.md)
-- **Kustomize overlays**: [config/default](../config/default/), [config/openshift](../config/openshift/)
+- **Kustomize overlays**: [config/overlays/cluster-scoped/kubernetes](../config/overlays/cluster-scoped/kubernetes/), [config/overlays/namespace-scoped/openshift](../config/overlays/namespace-scoped/openshift/)
 - **Helm Chart (deprecated)**: [charts/workload-variant-autoscaler](../charts/workload-variant-autoscaler/)
 - **API Reference**: [api/v1alpha1](../api/v1alpha1/)
 - **Architecture**: [docs/design/modeling-optimization.md](../docs/design/modeling-optimization.md)
