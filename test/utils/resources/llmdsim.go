@@ -41,7 +41,7 @@ func CreateLlmdSimDeployment(namespace, deployName, modelName, appLabel, port st
 					Containers: []corev1.Container{
 						{
 							Name:            appLabel,
-							Image:           "ghcr.io/llm-d/llm-d-inference-sim:v0.7.1",
+							Image:           "ghcr.io/llm-d/llm-d-inference-sim:v0.9.0",
 							ImagePullPolicy: corev1.PullAlways,
 							Args: []string{
 								"--model",
@@ -100,7 +100,7 @@ func CreateLlmdSimDeploymentWithGPU(namespace, deployName, modelName, appLabel, 
 
 	container := corev1.Container{
 		Name:            appLabel,
-		Image:           "ghcr.io/llm-d/llm-d-inference-sim:v0.7.1",
+		Image:           "ghcr.io/llm-d/llm-d-inference-sim:v0.9.0",
 		ImagePullPolicy: corev1.PullAlways,
 		Args: []string{
 			"--model",
