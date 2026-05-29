@@ -29,6 +29,9 @@ LLMD_NS="llm-d-$NAMESPACE_SUFFIX"
 MONITORING_NAMESPACE="workload-variant-autoscaler-monitoring"
 WVA_NS=${WVA_NS:-"workload-variant-autoscaler-system"}
 
+# Simulator image — must match defaultModelServiceSimulatorImage in test/e2e/fixtures/model_service_conventions.go
+SIM_IMAGE=${SIM_IMAGE:-"ghcr.io/llm-d/llm-d-inference-sim:v0.9.0"}
+
 # WVA Configuration
 WVA_RECONCILE_INTERVAL=${WVA_RECONCILE_INTERVAL:-"60s"} # WVA controller reconcile interval - tests set 30s interval
 SKIP_TLS_VERIFY=true  # Skip TLS verification in emulated environments
@@ -103,6 +106,9 @@ check_specific_prerequisites() {
 
     # Load WVA image into KIND cluster
     load_image
+
+    # Pre-load the simulator image so tests don't pull it cold (avoids PodReadyTimeout).
+    load_sim_image
 
     log_success "All Kind emulated deployment prerequisites met"
 }
@@ -266,6 +272,46 @@ load_image() {
     done
 
     log_success "Image '$full_image' pulled directly into KIND cluster '$CLUSTER_NAME' nodes"
+}
+
+# Pre-loads the llm-d-inference-sim image into the KIND cluster so tests that create
+# model service Deployments don't pull it cold and hit PodReadyTimeout.
+load_sim_image() {
+    log_info "Pre-loading simulator image '$SIM_IMAGE' into KIND cluster..."
+
+    local platform="${KIND_IMAGE_PLATFORM:-}"
+    if [ -z "$platform" ]; then
+        case "$(uname -m)" in
+            aarch64|arm64) platform="linux/arm64" ;;
+            *) platform="linux/amd64" ;;
+        esac
+    fi
+
+    if ! docker pull --platform "$platform" "$SIM_IMAGE"; then
+        log_warning "Failed to pull simulator image '$SIM_IMAGE' — tests may be slow on first run"
+        return
+    fi
+
+    local load_stderr
+    if load_stderr="$(kind load docker-image "$SIM_IMAGE" --name "$CLUSTER_NAME" 2>&1)"; then
+        log_success "Simulator image '$SIM_IMAGE' loaded into KIND cluster '$CLUSTER_NAME'"
+        return
+    fi
+
+    if ! echo "$load_stderr" | grep -qiE "docker save|multi-?platform|manifest|content digest|no such image|not found"; then
+        log_warning "Failed to load simulator image into KIND cluster: $load_stderr"
+        return
+    fi
+
+    log_warning "'kind load docker-image' failed for simulator image — falling back to pulling directly into KIND nodes"
+    local nodes
+    nodes="$(kind get nodes --name "$CLUSTER_NAME")" || return
+    for node in $nodes; do
+        if ! docker exec "$node" crictl pull "$SIM_IMAGE" 2>&1; then
+            log_warning "Failed to pre-pull simulator image on node '$node' — tests may be slow on first run"
+        fi
+    done
+    log_success "Simulator image '$SIM_IMAGE' pulled directly into KIND cluster '$CLUSTER_NAME' nodes"
 }
 
 KUBE_LIKE_VALUES_DEV_IF_PRESENT=true
