@@ -123,6 +123,15 @@ EOF
     else
         log_info "cluster-monitoring-view ClusterRole not found — skipping binding (non-OpenShift cluster)"
     fi
+    # metrics-reader-rolebinding is a shared-name CRB that gets overwritten on
+    # shared clusters. Create a per-namespace named binding as the authoritative
+    # grant so each deployment is independent regardless of apply order.
+    if kubectl get clusterrole wva-metrics-reader &>/dev/null; then
+        kubectl create clusterrolebinding "workload-variant-autoscaler-metrics-reader-${WVA_NS}" \
+            --clusterrole=wva-metrics-reader \
+            --serviceaccount="${WVA_NS}:wva-controller-manager" \
+            --dry-run=client -o yaml | kubectl apply -f -
+    fi
 
     # Wait for WVA to be ready
     log_info "Waiting for WVA controller to be ready..."
