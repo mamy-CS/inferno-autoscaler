@@ -42,7 +42,12 @@ This deploys:
 To also deploy a simulator model service for manual testing:
 
 ```bash
-kubectl apply -k config/samples/simulator/
+# Both prefill and decode (disaggregated serving)
+kubectl apply -k config/samples/simulator/disaggregated/
+
+# Or deploy only what you need
+kubectl apply -k config/samples/simulator/decode/
+kubectl apply -k config/samples/simulator/prefill/
 ```
 
 ## Configuration Options
@@ -327,7 +332,8 @@ CREATE_CLUSTER=true WVA_IMAGE_PULL_POLICY=IfNotPresent make deploy-e2e-infra IMG
 **Remove simulator model service (if deployed):**
 
 ```bash
-kubectl delete -k config/samples/simulator/
+kubectl delete -k config/samples/simulator/disaggregated/
+# or whichever target you applied (decode/ or prefill/)
 ```
 
 **Destroy cluster:**

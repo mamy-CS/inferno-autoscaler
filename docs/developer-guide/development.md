@@ -107,18 +107,27 @@ make deploy-e2e-infra
 
 **Step 2 (optional) — Deploy a simulator model service:**
 
-Apply the sample simulator stack to get a running model server with metrics flowing into Prometheus:
+The simulator samples are under `config/samples/simulator/` and support three configurations:
 
 ```bash
-kubectl apply -k config/samples/simulator/
+# Decode only
+kubectl apply -k config/samples/simulator/decode/
+
+# Prefill only
+kubectl apply -k config/samples/simulator/prefill/
+
+# Both prefill and decode (disaggregated serving)
+kubectl apply -k config/samples/simulator/disaggregated/
 ```
 
-This creates a `dev-model-decode` Deployment (using `llm-d-inference-sim:v0.9.0`), a Service, a ServiceMonitor, and an HPA in the `llm-d-sim` namespace. The HPA carries `llm-d.ai/managed: "true"` annotations so WVA discovers it without a VariantAutoscaling CRD and begins emitting `wva_desired_replicas` metrics.
+Each configuration creates a Deployment (using `llm-d-inference-sim:v0.9.0`), a Service, a ServiceMonitor, and an HPA in the `llm-d-sim` namespace. The HPAs carry `llm-d.ai/managed: "true"` annotations so WVA discovers them without a VariantAutoscaling CRD and begins emitting `wva_desired_replicas` metrics.
 
-To clean up the simulator:
+To clean up the simulator, use the same path you applied:
 
 ```bash
-kubectl delete -k config/samples/simulator/
+kubectl delete -k config/samples/simulator/decode/
+# or
+kubectl delete -k config/samples/simulator/disaggregated/
 ```
 
 To tear down the cluster entirely:
@@ -234,7 +243,7 @@ See [Testing Guide](testing.md) and [E2E Test Suite README](../../test/e2e/READM
 2. **Deploy simulator model service:**
 
    ```bash
-   kubectl apply -k config/samples/simulator/
+   kubectl apply -k config/samples/simulator/disaggregated/
    ```
 
 3. **Monitor controller logs:**
