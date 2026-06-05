@@ -113,7 +113,7 @@ Apply the sample simulator stack to get a running model server with metrics flow
 kubectl apply -k config/samples/simulator/
 ```
 
-This creates a `dev-model-decode` Deployment (using `llm-d-inference-sim:v0.9.0`), a Service, a ServiceMonitor, a VariantAutoscaling, and an HPA in the `llm-d-sim` namespace. The WVA controller will begin reconciling `dev-model-va` and emitting `wva_desired_replicas` metrics.
+This creates a `dev-model-decode` Deployment (using `llm-d-inference-sim:v0.9.0`), a Service, a ServiceMonitor, and an HPA in the `llm-d-sim` namespace. The HPA carries `llm-d.ai/managed: "true"` annotations so WVA discovers it without a VariantAutoscaling CRD and begins emitting `wva_desired_replicas` metrics.
 
 To clean up the simulator:
 
