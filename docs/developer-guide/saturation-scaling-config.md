@@ -28,6 +28,18 @@ The saturation scaling configuration is stored in a ConfigMap named `wva-saturat
 | `kvSpareTrigger` | float64 | Scale-up signal if average spare KV capacity < trigger (0.0-1.0) | 0.10 |
 | `queueSpareTrigger` | float64 | Scale-up signal if average spare queue capacity < trigger | 3 |
 
+### V2 Analyzer Parameters
+
+These parameters apply when `analyzerName: "saturation"` is set or when the `analyzers:` list is populated.
+
+| Parameter | Type | Description | Default |
+|-----------|------|-------------|---------|
+| `analyzerName` | string | Selects the V2 token-based analyzer: set to `"saturation"`. Empty string uses V1. | `""` |
+| `priority` | float64 | Multiplier for this model's scaling urgency in fair-share GPU allocation | 1.0 |
+| `analyzers` | list | Multi-analyzer pipeline registration — see [Multi-Analyzer Registration](#multi-analyzer-registration) | `[{name: "saturation", score: 1.0}]` |
+
+> `scaleUpThreshold` and `scaleDownBoundary` are honored only for saturation on this branch; see the `multi-analyzer-threshold` PR for the universal post-step that calibrates RC/SC across all analyzers.
+
 ### Default Configuration
 
 The recommended values for the V1 (percentage-based) saturation analyzer are:
@@ -77,6 +89,90 @@ The saturation analyzer uses a **spare capacity model** to determine when to sca
 This proactive approach ensures adequate headroom and prevents request drops by scaling before saturation occurs.
 
 **For detailed implementation, see:** [Saturation Analyzer Documentation](user-guide/saturation-analyzer.md)
+
+## Multi-Analyzer Registration
+
+The V2 engine carries an analyzer registry so external analyzers (e.g.
+throughput, SLO) can be plugged in without the engine package knowing the
+concrete type. Each cycle the engine iterates every registered analyzer in
+registration order and invokes its `Analyze` method.
+
+> **Scope on this branch.** Saturation drives every scaling decision on
+> its own. Non-saturation analyzers are registered and invoked, but their
+> results are **not yet consumed** — combine semantics, per-analyzer score
+> consumption, and per-analyzer threshold application land in follow-up
+> PRs (`multi-analyzer-optimizer`, `multi-analyzer-threshold`). The hooks
+> below are wired so those follow-ups can hang their behavior off them
+> without further engine changes. When those PRs land, this section will
+> be refactored into a generic multi-analyzer guide.
+
+### Registering Analyzers
+
+Pre-registered:
+
+- The V2 saturation analyzer is pre-registered by `NewEngine` under
+  `interfaces.SaturationAnalyzerName`. It always runs and drives the
+  optimizer.
+
+External analyzers are registered from `cmd/main.go` via:
+
+```go
+if err := engine.RegisterAnalyzer(name, analyzer); err != nil {
+    // handle: duplicate name or called after StartOptimizeLoop
+}
+```
+
+`RegisterAnalyzer` appends to the registry and returns an `error` for
+two misuse conditions: calling it after `StartOptimizeLoop` or
+re-registering an existing name. Callers must check the error. Registration
+order defines processing order in the engine loop and should match the
+operator's `analyzers:` config order.
+
+`RegisterAnalyzer` must be called before `StartOptimizeLoop`.
+
+### Configuring Analyzers
+
+The `analyzers:` list shapes the configuration for the registered analyzers:
+
+```yaml
+analyzerName: saturation
+scaleUpThreshold: 0.85
+scaleDownBoundary: 0.70
+analyzers:
+  - name: saturation
+    score: 1.0
+  - name: throughput
+    score: 1.0
+    # scaleUpThreshold: 0.90    # reserved for multi-analyzer-threshold PR
+    # scaleDownBoundary: 0.75   # reserved for multi-analyzer-threshold PR
+```
+
+When `analyzers:` is omitted, it defaults to `[{name: "saturation", score: 1.0}]`.
+
+### AnalyzerScoreConfig Fields
+
+| Field | Type | Description | Default |
+|-------|------|-------------|---------|
+| `name` | string | Analyzer name (must match a `RegisterAnalyzer` call) | required |
+| `enabled` | bool | Reserved — placeholder for future combine logic | `true` |
+| `score` | float64 | Reserved — placeholder for future combine logic | `1.0` |
+| `scaleUpThreshold` | float64 | Per-analyzer override; honored only for saturation today (other analyzers tracked on the multi-analyzer-threshold PR) | global `scaleUpThreshold` |
+| `scaleDownBoundary` | float64 | Per-analyzer override; honored only for saturation today (other analyzers tracked on the multi-analyzer-threshold PR) | global `scaleDownBoundary` |
+
+### Saturation Always Runs
+
+The saturation analyzer executes on every cycle regardless of any future
+`enabled` flag — its `VariantCapacities` carry `Cost` and `AcceleratorName`
+required by the optimizer for variant selection and GPU accounting. On
+this branch saturation's `RequiredCapacity` and `SpareCapacity` are the
+only signals the optimizer consumes.
+
+### Resilience
+
+Each registered non-saturation analyzer runs in isolation: errors are
+logged and discarded, and panics are recovered. A faulty plugin analyzer
+cannot take down the optimize goroutine or block saturation from driving
+the scaling decision.
 
 ## Best Practices: Coordinating with InferenceScheduler (End Point Picker)
 
@@ -590,19 +686,36 @@ kubectl describe cm wva-saturation-scaling-config -n <workload-variant-autoscale
 **SaturationScalingConfig** (defined in `internal/config/saturation_scaling.go`):
 ```go
 type SaturationScalingConfig struct {
-    ModelID              string  `yaml:"model_id,omitempty"`
-    Namespace            string  `yaml:"namespace,omitempty"`
-    KvCacheThreshold     float64 `yaml:"kvCacheThreshold"`
-    QueueLengthThreshold float64 `yaml:"queueLengthThreshold"`
-    KvSpareTrigger       float64 `yaml:"kvSpareTrigger"`
-    QueueSpareTrigger    float64 `yaml:"queueSpareTrigger"`
-    // ... additional V2-specific fields omitted
+    ModelID              string                `yaml:"model_id,omitempty"`
+    Namespace            string                `yaml:"namespace,omitempty"`
+    KvCacheThreshold     float64               `yaml:"kvCacheThreshold"`
+    QueueLengthThreshold float64               `yaml:"queueLengthThreshold"`
+    KvSpareTrigger       float64               `yaml:"kvSpareTrigger"`
+    QueueSpareTrigger    float64               `yaml:"queueSpareTrigger"`
+    EnableLimiter        bool                  `yaml:"enableLimiter,omitempty"`
+    AnalyzerName         string                `yaml:"analyzerName,omitempty"`
+    ScaleUpThreshold     float64               `yaml:"scaleUpThreshold,omitempty"`   // default 0.85
+    ScaleDownBoundary    float64               `yaml:"scaleDownBoundary,omitempty"`  // default 0.70
+    Priority             float64               `yaml:"priority,omitempty"`           // default 1.0
+    Analyzers            []AnalyzerScoreConfig `yaml:"analyzers,omitempty"`
+}
+
+// AnalyzerScoreConfig configures one analyzer in the multi-analyzer pipeline.
+// On this branch, only `Name` is consumed (it must match a RegisterAnalyzer
+// call); `Enabled`, `Score`, and the per-analyzer threshold overrides are
+// reserved for follow-up PRs.
+type AnalyzerScoreConfig struct {
+    Name              string   `yaml:"name"`
+    Enabled           *bool    `yaml:"enabled,omitempty"`           // default true
+    Score             float64  `yaml:"score,omitempty"`             // default 1.0
+    ScaleUpThreshold  *float64 `yaml:"scaleUpThreshold,omitempty"`  // overrides global (saturation only today)
+    ScaleDownBoundary *float64 `yaml:"scaleDownBoundary,omitempty"` // overrides global (saturation only today)
 }
 ```
 
 **Methods:**
-- `ApplyDefaults()` - Fills in zero-valued V2 fields with their defaults (V1 fields have no hardcoded defaults)
-- `Validate() error` - Validates configuration values (thresholds in range, consistency checks)
+- `ApplyDefaults()` - Fills in zero-valued V2 fields with their defaults and seeds the `Analyzers` list when empty (V1 fields have no hardcoded defaults)
+- `Validate() error` - Validates configuration values (thresholds in range, consistency checks, per-analyzer overrides)
 
 ## Architecture Notes
 

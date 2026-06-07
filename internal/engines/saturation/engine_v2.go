@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/go-logr/logr"
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d/llm-d-workload-variant-autoscaler/api/v1alpha1"
@@ -73,8 +74,15 @@ func (e *Engine) runV2AnalysisOnly(
 	return result, nil
 }
 
-// runAnalyzersAndScore runs the V2 saturation analyzer, then computes the
-// weighted composite score from enabled analyzers and model priority.
+// runAnalyzersAndScore runs the V2 saturation analyzer, invokes every other
+// registered analyzer once per cycle to exercise the multi-analyzer pipeline,
+// and computes the weighted composite score from saturation's signal and the
+// model's priority.
+//
+// On this branch only saturation drives scaling decisions: non-saturation
+// analyzer results are intentionally discarded. Combine and per-analyzer
+// threshold consumption land in follow-up PRs (multi-analyzer-optimizer,
+// multi-analyzer-threshold).
 func (e *Engine) runAnalyzersAndScore(
 	ctx context.Context,
 	modelID, namespace string,
@@ -84,9 +92,13 @@ func (e *Engine) runAnalyzersAndScore(
 	scaleTargets map[string]scaletarget.ScaleTargetAccessor,
 	variantAutoscalings map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling,
 ) (*interfaces.AnalyzerResult, error) {
+	logger := ctrl.LoggerFrom(ctx)
+
 	// Resolve per-analyzer threshold overrides before running the analyzer.
 	// The saturation analyzer reads thresholds from the config, so we apply
-	// per-analyzer overrides to the config's top-level fields.
+	// per-analyzer overrides to the config's top-level fields. Only saturation
+	// overrides are honored today; per-analyzer overrides for other analyzers
+	// are tracked on the multi-analyzer-threshold branch.
 	for _, aw := range config.Analyzers {
 		if aw.Name == interfaces.SaturationAnalyzerName && (aw.Enabled == nil || *aw.Enabled) {
 			if aw.ScaleUpThreshold != nil {
@@ -99,14 +111,38 @@ func (e *Engine) runAnalyzersAndScore(
 		}
 	}
 
-	// Run saturation analyzer (always needed for PerReplicaCapacity)
+	// Run saturation analyzer (always needed for PerReplicaCapacity).
 	baseResult, err := e.runV2AnalysisOnly(ctx, modelID, namespace, replicaMetrics, config,
 		variantStates, scaleTargets, variantAutoscalings)
 	if err != nil {
 		return nil, err
 	}
 
-	// Compute weighted score from enabled analyzers
+	// Build AnalyzerInput once; shared by all non-saturation analyzers.
+	// Note: &config has had saturation's per-entry threshold overrides applied
+	// (the loop above). Non-saturation analyzers therefore receive the
+	// saturation-adjusted config rather than the original. This is harmless
+	// on this branch (their results are discarded), and the clean fix —
+	// engine applies thresholds universally after each analyzer runs —
+	// is tracked on multi-analyzer-threshold (PR #1228).
+	input := interfaces.AnalyzerInput{
+		ModelID:        modelID,
+		Namespace:      namespace,
+		ReplicaMetrics: replicaMetrics,
+		VariantStates:  variantStates,
+		Config:         &config,
+		// SchedulerQueue: nil — wired in a later PR
+	}
+
+	// Iterate every registered analyzer in registration order. Saturation has
+	// already run above (with full args); the loop calls Analyze on every
+	// other registered analyzer to exercise the multi-analyzer pipeline.
+	// Their results are intentionally discarded on this branch — combine /
+	// per-analyzer-result consumption lands in follow-up PRs.
+	e.runRegisteredAnalyzers(ctx, logger, modelID, input)
+
+	// Compute weighted score from enabled analyzers (saturation only on this
+	// branch — non-saturation analyzer results are not consumed yet).
 	totalWeighted := 0.0
 	for _, aw := range config.Analyzers {
 		if aw.Enabled != nil && !*aw.Enabled {
@@ -121,6 +157,55 @@ func (e *Engine) runAnalyzersAndScore(
 	// Score = priority * weighted sum
 	baseResult.Score = config.Priority * totalWeighted
 	return baseResult, nil
+}
+
+// runRegisteredAnalyzers invokes Analyze on every registered non-saturation
+// analyzer in registration order, reading from the frozen analyzersSnapshot
+// built by StartOptimizeLoop. The saturation entry is skipped because the
+// engine runs saturation separately via runV2AnalysisOnly with full args.
+// Each call is isolated: errors are logged and discarded, and panics are
+// recovered so a faulty analyzer cannot take down the optimize goroutine.
+// Results are intentionally discarded on this branch — combine logic lands
+// in follow-up PRs.
+func (e *Engine) runRegisteredAnalyzers(
+	ctx context.Context,
+	logger logr.Logger,
+	modelID string,
+	input interfaces.AnalyzerInput,
+) {
+	for _, entry := range e.analyzersSnapshot {
+		if entry.name == interfaces.SaturationAnalyzerName {
+			continue
+		}
+		runRegisteredAnalyzer(ctx, logger, entry, modelID, input)
+	}
+}
+
+// runRegisteredAnalyzer invokes a single non-saturation analyzer's Analyze
+// method, isolating the call from the rest of the cycle. Errors are logged
+// and discarded; panics are recovered and logged. The result is intentionally
+// discarded on this branch — combine logic lands in follow-up PRs.
+func runRegisteredAnalyzer(
+	ctx context.Context,
+	logger logr.Logger,
+	entry analyzerEntry,
+	modelID string,
+	input interfaces.AnalyzerInput,
+) {
+	defer func() {
+		if r := recover(); r != nil {
+			// Plugin failure is non-fatal; log at debug to avoid spamming
+			// operator logs every optimize cycle.
+			logger.V(logging.DEBUG).Info("registered analyzer panicked; result discarded",
+				"name", entry.name, "modelID", modelID, "panic", fmt.Sprintf("%v", r))
+		}
+	}()
+	if _, err := entry.analyzer.Analyze(ctx, input); err != nil {
+		// Plugin failure is non-fatal; log at debug to avoid spamming
+		// operator logs every optimize cycle.
+		logger.V(logging.DEBUG).Info("registered analyzer failed; result discarded",
+			"name", entry.name, "modelID", modelID, "error", err)
+	}
 }
 
 // computeCurrentGPUUsage iterates over model scaling requests to compute the
