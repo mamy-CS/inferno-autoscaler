@@ -27,6 +27,8 @@ The saturation scaling configuration is stored in a ConfigMap named `wva-saturat
 | `queueLengthThreshold` | float64 | Replica is considered saturated if queue length ≥ threshold | 5 |
 | `kvSpareTrigger` | float64 | Scale-up signal if average spare KV capacity < trigger (0.0-1.0) | 0.10 |
 | `queueSpareTrigger` | float64 | Scale-up signal if average spare queue capacity < trigger | 3 |
+| `scaleUpThreshold` | float64 | Model-level utilization threshold above which scale-up is triggered (0.0-1.0). Applied by the engine post-step to every analyzer's result. | 0.85 |
+| `scaleDownBoundary` | float64 | Model-level utilization boundary below which scale-down is safe (0.0-1.0). Applied by the engine post-step to every analyzer's result. | 0.70 |
 
 ### V2 Analyzer Parameters
 
@@ -97,14 +99,12 @@ throughput, SLO) can be plugged in without the engine package knowing the
 concrete type. Each cycle the engine iterates every registered analyzer in
 registration order and invokes its `Analyze` method.
 
-> **Scope on this branch.** Saturation drives every scaling decision on
-> its own. Non-saturation analyzers are registered and invoked, but their
-> results are **not yet consumed** — combine semantics, per-analyzer score
-> consumption, and per-analyzer threshold application land in follow-up
-> PRs (`multi-analyzer-optimizer`, `multi-analyzer-threshold`). The hooks
-> below are wired so those follow-ups can hang their behavior off them
-> without further engine changes. When those PRs land, this section will
-> be refactored into a generic multi-analyzer guide.
+> **Scope note.** Saturation drives every scaling decision on its own.
+> Non-saturation analyzers are registered and invoked, but their results
+> are **not yet consumed** — combine semantics and per-analyzer score
+> consumption land in a follow-up PR (`multi-analyzer-optimizer`). The
+> hooks below are wired so that follow-up can hang its behavior off them
+> without further engine changes.
 
 ### Registering Analyzers
 
@@ -143,8 +143,6 @@ analyzers:
     score: 1.0
   - name: throughput
     score: 1.0
-    # scaleUpThreshold: 0.90    # reserved for multi-analyzer-threshold PR
-    # scaleDownBoundary: 0.75   # reserved for multi-analyzer-threshold PR
 ```
 
 When `analyzers:` is omitted, it defaults to `[{name: "saturation", score: 1.0}]`.
@@ -156,8 +154,86 @@ When `analyzers:` is omitted, it defaults to `[{name: "saturation", score: 1.0}]
 | `name` | string | Analyzer name (must match a `RegisterAnalyzer` call) | required |
 | `enabled` | bool | Reserved — placeholder for future combine logic | `true` |
 | `score` | float64 | Reserved — placeholder for future combine logic | `1.0` |
-| `scaleUpThreshold` | float64 | Per-analyzer override; honored only for saturation today (other analyzers tracked on the multi-analyzer-threshold PR) | global `scaleUpThreshold` |
-| `scaleDownBoundary` | float64 | Per-analyzer override; honored only for saturation today (other analyzers tracked on the multi-analyzer-threshold PR) | global `scaleDownBoundary` |
+| `scaleUpThreshold` | float64 | Per-analyzer override for the scale-up threshold; honored by the engine post-step (see Universal Threshold Post-Step below) | global `scaleUpThreshold` |
+| `scaleDownBoundary` | float64 | Per-analyzer override for the scale-down boundary; honored by the engine post-step (see Universal Threshold Post-Step below) | global `scaleDownBoundary` |
+
+### Analyzer responsibilities and the universal threshold post-step
+
+#### Per-variant data is canonical
+
+`interfaces.VariantCapacity` is the single source of truth for per-variant primitives. Analyzers populate it; the engine and optimizer read it.
+
+| Field | Written by | Read by |
+|---|---|---|
+| `ReplicaCount`, `PendingReplicas`, `PerReplicaCapacity`, `Cost`, `Role`, `AcceleratorName` | Analyzer | Optimizer (per-variant scaling math + picker) |
+| `TotalCapacity`, `TotalDemand`, `Utilization` | Analyzer | Sat_v2 internal aggregation; `Utilization` passed through to `VariantDecision.Utilization` for metric emission |
+| `r.TotalSupply`, `r.TotalAnticipatedSupply`, `r.TotalDemand` | Analyzer (via shared helpers) | Engine post-step |
+| `r.RoleCapacities[role].TotalSupply/TotalAnticipatedSupply/TotalDemand` | Analyzer (via shared helpers) | Engine post-step |
+| `r.RequiredCapacity`, `r.SpareCapacity` | **Engine post-step only** | Optimizer |
+| `r.RoleCapacities[role].RequiredCapacity/SpareCapacity` | **Engine post-step only** | Optimizer (P/D disaggregation) |
+
+#### Analyzer inputs
+
+`interfaces.AnalyzerInput` carries the shared inputs every analyzer reads:
+replica metrics, variant states, the model's resolved config, and
+`SchedulerQueue`. None of these are analyzer-specific.
+
+`SchedulerQueue` represents requests queued upstream of any pod (in the
+llm-d flow control layer). Queue items are model-scoped and **not yet
+attributed to any variant or role**. Any analyzer with a demand model may
+use it — sat_v2 does today; the throughput analyzer will when it lands.
+
+**Demand extraction from the queue is per-analyzer.** Each analyzer
+converts queue depth/bytes into demand in its own unit (sat_v2:
+kv-tokens; throughput: tokens/sec). Each analyzer also decides how to
+attribute that demand across roles or variants — sat_v2 splits it among
+active roles.
+
+#### Linearity invariant
+
+The optimizer's per-variant scaling math (`bottleneckReplicas`, `safeRemovalReplicas`, `applyAllocation`) assumes that `n` replicas of variant `v` reduce model-level RC by exactly `n × PRC[v]`. That means `Total*` must equal the canonical sum over variants:
+
+```
+r.TotalSupply            == Σ_v vc.ReplicaCount × vc.PerReplicaCapacity
+r.TotalAnticipatedSupply == Σ_v (vc.ReplicaCount + vc.PendingReplicas) × vc.PerReplicaCapacity
+r.TotalDemand            == Σ_v vc.TotalDemand
+r.RoleCapacities[role].* == same sums filtered by vc.Role == role
+```
+
+Use the shared helpers in `internal/engines/aggregation/` to compute these. An analyzer that doesn't use the helpers takes responsibility for producing identical math — otherwise the optimizer's per-variant allocation silently breaks.
+
+#### Shared aggregation helpers
+
+```go
+import "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/aggregation"
+
+r.TotalSupply            = aggregation.SumTotalSupply(variantCapacities)
+r.TotalAnticipatedSupply = aggregation.SumTotalAnticipatedSupply(variantCapacities)
+r.TotalDemand            = aggregation.SumTotalDemand(variantCapacities)
+
+// For P/D disaggregated models:
+totals := aggregation.AggregateByRole(variantCapacities)
+// → map[role]aggregation.ScopeTotals{TotalSupply, TotalAnticipatedSupply, TotalDemand}
+```
+
+`AggregateByRole` canonicalizes empty role to `interfaces.RoleBoth`.
+
+#### Engine post-step formula
+
+After each analyzer's `Analyze()` returns, the engine applies the universal threshold formula at **every scope** — model level and each `RoleCapacity` entry:
+
+```
+RC = max(0, TotalDemand / scaleUpThreshold − TotalAnticipatedSupply)
+SC = max(0, TotalSupply  − TotalDemand / scaleDownBoundary)
+```
+
+`TotalAnticipatedSupply` is read as-is — **zero is a literal value, not a sentinel**. For a model scaled to zero with positive demand, RC = TotalDemand/scaleUp (the correct "this much capacity needed" answer). Analyzers must populate `TotalAnticipatedSupply` via `SumTotalAnticipatedSupply`; the engine does not walk `VariantCapacities` as a fallback.
+
+The asymmetry — anticipated supply for scale-up, steady-state `TotalSupply` for scale-down — preserves the conservative "don't double-scale while replicas are launching, don't count pending as removable" stance.
+
+**P/D disaggregation.** The same formula and the same `(scaleUp, scaleDown)` values are applied to every `RoleCapacity` entry. Threshold configuration is common regardless of role — there are no per-role overrides. The optimizer receives fully calibrated per-role RC/SC and uses them for P/D replica allocation.
+
+**Per-analyzer threshold overrides.** `analyzers[].scaleUpThreshold` / `analyzers[].scaleDownBoundary` are resolved per analyzer: a per-entry override takes precedence over the model-level global. The resolved pair is applied uniformly at model level and every role for that analyzer. An opt-out flag for analyzers with non-universal calibration math is deferred to a follow-up.
 
 ### Saturation Always Runs
 

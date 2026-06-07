@@ -209,7 +209,7 @@ var _ = Describe("Engine analyzer registry", func() {
 			}
 			e := &Engine{analyzers: snapshot, analyzersSnapshot: snapshot, started: true}
 
-			e.runRegisteredAnalyzers(testCtx, testLogger, "model-1", interfaces.AnalyzerInput{ModelID: "model-1"})
+			e.runRegisteredAnalyzers(testCtx, testLogger, "model-1", interfaces.AnalyzerInput{ModelID: "model-1"}, config.SaturationScalingConfig{})
 
 			// Saturation entry is skipped — engine runs saturation via
 			// runV2AnalysisOnly with full args. When a future PR unifies
@@ -231,7 +231,7 @@ var _ = Describe("Engine analyzer registry", func() {
 			e := &Engine{analyzers: snapshot, analyzersSnapshot: snapshot, started: true}
 
 			Expect(func() {
-				e.runRegisteredAnalyzers(testCtx, testLogger, "model-1", interfaces.AnalyzerInput{ModelID: "model-1"})
+				e.runRegisteredAnalyzers(testCtx, testLogger, "model-1", interfaces.AnalyzerInput{ModelID: "model-1"}, config.SaturationScalingConfig{})
 			}).NotTo(Panic())
 
 			// Both analyzers are still called even though throughput erred.
@@ -250,7 +250,7 @@ var _ = Describe("Engine analyzer registry", func() {
 			e := &Engine{analyzers: snapshot, analyzersSnapshot: snapshot, started: true}
 
 			Expect(func() {
-				e.runRegisteredAnalyzers(testCtx, testLogger, "model-1", interfaces.AnalyzerInput{ModelID: "model-1"})
+				e.runRegisteredAnalyzers(testCtx, testLogger, "model-1", interfaces.AnalyzerInput{ModelID: "model-1"}, config.SaturationScalingConfig{})
 			}).NotTo(Panic())
 
 			// throughput panicked but was recovered; slo still ran.
