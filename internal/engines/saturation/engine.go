@@ -120,8 +120,14 @@ type Engine struct {
 	scheme   *runtime.Scheme
 	executor executor.Executor
 
+	// Recorder - use wrapper function recordEvent to limit number of events per va in an optimization cycle
 	Recorder record.EventRecorder
-	Config   *config.Config // Unified configuration (injected from main.go)
+
+	// vaEventTracker tracks whether a K8S event has been issued for a variant in an optimization cycle.
+	// Key is namespace/name from utils.GetNamespacedKey.
+	vaEventTracker map[string]bool
+
+	Config *config.Config // Unified configuration (injected from main.go)
 
 	// ReplicaMetricsCollector is the collector for replica metrics using the source infrastructure
 	ReplicaMetricsCollector *collector.ReplicaMetricsCollector
@@ -212,7 +218,7 @@ func NewEngine(client client.Client, scheme *runtime.Scheme, recorder record.Eve
 		scheme:                  scheme,
 		Recorder:                recorder,
 		Config:                  cfg,
-		ReplicaMetricsCollector: collector.NewReplicaMetricsCollector(promSource, client),
+		ReplicaMetricsCollector: collector.NewReplicaMetricsCollector(promSource, client, recorder),
 		ScaleToZeroEnforcer:     pipeline.NewEnforcer(requestCountFunc),
 		GPULimiter:              gpuLimiter,
 		metricsRegistry:         metricsRegistry,
@@ -346,6 +352,9 @@ func (e *Engine) optimize(ctx context.Context) (retErr error) {
 		return nil
 	}
 
+	// Initialize vaEventTracker for this optimize cycle
+	e.vaEventTracker = make(map[string]bool)
+
 	// Collected accelerator inventory (only in limited mode)
 	if e.Config.LimitedModeEnabled() {
 		inventory, err := collector.CollectInventoryK8S(ctx, e.client)
@@ -452,6 +461,68 @@ func (e *Engine) optimize(ctx context.Context) (retErr error) {
 	return nil
 }
 
+// recordEvent ensures only one event is recorded per VA in an optimization cycle.
+// Exception: K8SEventResourceConstrained events bypass deduplication and can be
+// recorded alongside other event types (e.g., ScaledUp + ResourceConstrained).
+func (e *Engine) recordEvent(
+	va *llmdVariantAutoscalingV1alpha1.VariantAutoscaling,
+	eventType, reason, message string,
+) {
+	if e.Recorder == nil {
+		return
+	}
+
+	if reason == constants.K8SEventResourceConstrained {
+		// This is the only exception where a variant can have 2 K8S events in an optimize cycle: K8SEventScaledUp & K8SEventResourceConstrained
+		e.Recorder.Event(va, eventType, reason, message)
+		return
+	}
+
+	key := utils.GetNamespacedKey(va.Namespace, va.Name)
+	if e.vaEventTracker != nil {
+		if _, ok := e.vaEventTracker[key]; ok { // ensures only one event is recorded per VA
+			return
+		}
+	}
+	e.Recorder.Event(va, eventType, reason, message)
+	if e.vaEventTracker != nil {
+		e.vaEventTracker[key] = true
+	}
+}
+
+func (e *Engine) recordOptimizationFailedEvent(
+	variantAutoscalings []llmdVariantAutoscalingV1alpha1.VariantAutoscaling,
+	message string,
+) {
+	if e.Recorder == nil {
+		return
+	}
+	for _, va := range variantAutoscalings {
+		e.recordEvent(&va, corev1.EventTypeWarning, constants.K8SEventOptimizationFailed, message)
+	}
+}
+
+func (e *Engine) recordScalingEvent(
+	va *llmdVariantAutoscalingV1alpha1.VariantAutoscaling,
+	action interfaces.SaturationAction,
+	targetReplicas int,
+	reason string,
+) {
+	if e.Recorder == nil {
+		return
+	}
+	switch action {
+	case interfaces.ActionScaleUp:
+		e.recordEvent(va, corev1.EventTypeNormal, constants.K8SEventScaledUp, reason)
+	case interfaces.ActionScaleDown:
+		if targetReplicas == 0 {
+			e.recordEvent(va, corev1.EventTypeNormal, constants.K8SEventScaledToZero, reason)
+		} else {
+			e.recordEvent(va, corev1.EventTypeNormal, constants.K8SEventScaledDown, reason)
+		}
+	}
+}
+
 // Resolve saturation config and record config metrics
 func (e *Engine) resolveSaturationConfig(
 	configMap map[string]config.SaturationScalingConfig,
@@ -506,11 +577,14 @@ func (e *Engine) optimizeV1(
 		data, err := e.prepareModelData(ctx, modelID, modelVAs, e.client)
 
 		if err != nil {
-			logger.Error(err, "Saturation data preparation failed", "modelID", modelID)
+			msg := "Saturation data preparation failed"
+			logger.Error(err, msg, "modelID", modelID)
+			e.recordOptimizationFailedEvent(modelVAs, msg)
 			e.emitSafetyNetMetrics(ctx, modelVAs, currentAllocations, nil)
 			continue
 		}
 		if data == nil {
+			e.recordOptimizationFailedEvent(modelVAs, "No saturation metrics available for model")
 			logger.Info("No saturation metrics available for model, skipping analysis",
 				"modelID", modelID, "namespace", namespace)
 			e.emitSafetyNetMetrics(ctx, modelVAs, currentAllocations, nil)
@@ -568,6 +642,7 @@ func (e *Engine) optimizeV1(
 		}
 
 		if err := e.GPULimiter.Limit(ctx, decisionPtrs); err != nil {
+			// skip record K8S events since there's no VA
 			logger.Error(err, "GPU limiter failed, proceeding with original decisions")
 		} else {
 			for _, d := range decisionPtrs {
@@ -706,7 +781,9 @@ func (e *Engine) optimizeV2(
 		saturationConfig := e.resolveSaturationConfig(saturationConfigMap, modelID, namespace)
 		data, err := e.prepareModelData(ctx, modelID, modelVAs, e.client)
 		if err != nil {
-			logger.Error(err, "Model data preparation failed", "modelID", modelID)
+			msg := "Model data preparation failed"
+			logger.Error(err, msg, "modelID", modelID)
+			e.recordOptimizationFailedEvent(modelVAs, msg)
 			e.emitSafetyNetMetrics(ctx, modelVAs, currentAllocations, nil)
 			continue
 		}
@@ -719,7 +796,9 @@ func (e *Engine) optimizeV2(
 			data.replicaMetrics, saturationConfig, data.variantStates,
 			data.scaleTargets, data.variantAutoscalings)
 		if err != nil {
-			logger.Error(err, "V2 analysis failed", "modelID", modelID)
+			msg := "V2 analysis failed"
+			logger.Error(err, msg, "modelID", modelID)
+			e.recordOptimizationFailedEvent(modelVAs, msg)
 			e.emitSafetyNetMetrics(ctx, modelVAs, currentAllocations, data.scaleTargets)
 			continue
 		}
@@ -1174,7 +1253,7 @@ func (e *Engine) prepareModelData(
 	logger.V(logging.DEBUG).Info("Using source infrastructure for replica metrics",
 		"modelID", modelID,
 		"namespace", namespace)
-	replicaMetrics, err := e.ReplicaMetricsCollector.CollectReplicaMetrics(ctx, modelID, namespace, scaleTargets, variantAutoscalings, variantCosts)
+	replicaMetrics, err := e.ReplicaMetricsCollector.CollectReplicaMetrics(ctx, modelID, namespace, scaleTargets, variantAutoscalings, e.vaEventTracker, variantCosts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to collect Saturation metrics for model %s: %w", modelID, err)
 	}
@@ -1241,8 +1320,9 @@ func (e *Engine) applySaturationDecisions(
 			updateVa = *va.DeepCopy()
 		} else {
 			if err := utils.GetVariantAutoscalingWithBackoff(ctx, e.client, va.Name, va.Namespace, &updateVa); err != nil {
-				logger.Error(err, "Failed to get latest VA from API server",
-					"name", va.Name)
+				msg := "Failed to get latest VA from API server"
+				e.recordOptimizationFailedEvent([]llmdVariantAutoscalingV1alpha1.VariantAutoscaling{*va}, msg)
+				logger.Error(err, msg, "name", va.Name)
 				continue
 			}
 		}
@@ -1422,11 +1502,19 @@ func (e *Engine) applySaturationDecisions(
 			logger.V(logging.DEBUG).Info("Skipping metric emission - no accelerator name available",
 				"variant", updateVa.Name)
 		} else if err := act.EmitMetrics(ctx, &updateVa); err != nil {
-			logger.Error(err, "Failed to emit metrics for external autoscalers",
-				"variant", updateVa.Name)
+			msg := "Failed to emit metrics for external autoscalers"
+			// K8s best practice: events should reference the current resource version
+			e.recordOptimizationFailedEvent([]llmdVariantAutoscalingV1alpha1.VariantAutoscaling{updateVa}, msg)
+			logger.Error(err, msg, "variant", updateVa.Name)
 		} else {
 			// Only log detail if we had a decision or periodically (to avoid spamming logs on every loop for no-ops)
 			if hasDecision {
+				// Emit Kubernetes event for observability
+				e.recordScalingEvent(&updateVa, decision.Action, decision.TargetReplicas, decision.Reason)
+				if decision.WasLimited {
+					e.recordEvent(va, corev1.EventTypeWarning, constants.K8SEventResourceConstrained, decision.Reason)
+				}
+
 				logger.Info("Successfully emitted metrics",
 					"variant", updateVa.Name,
 					"target", targetReplicas,
@@ -1508,10 +1596,7 @@ func (e *Engine) applySaturationDecisions(
 // repeated emissions into a single Event entry with an updated count
 // rather than creating a new entry each optimization cycle.
 func (e *Engine) emitAcceleratorNotResolvedEvent(va *llmdVariantAutoscalingV1alpha1.VariantAutoscaling) {
-	if e.Recorder == nil {
-		return
-	}
-	e.Recorder.Event(va, corev1.EventTypeWarning, "AcceleratorNotResolved",
+	e.recordEvent(va, corev1.EventTypeWarning, "AcceleratorNotResolved",
 		"Cannot resolve accelerator type from Deployment nodeSelector/nodeAffinity or VA label "+
 			utils.AcceleratorNameLabel+". "+
 			"Set nodeSelector on Deployment or add the label to the VariantAutoscaling resource. "+

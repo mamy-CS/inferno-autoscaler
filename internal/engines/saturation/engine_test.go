@@ -28,6 +28,7 @@ import (
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d/llm-d-workload-variant-autoscaler/api/v1alpha1"
@@ -215,7 +216,8 @@ var _ = Describe("Saturation Engine", func() {
 			testConfig.UpdateSaturationConfig(map[string]config.SaturationScalingConfig{
 				"default": {},
 			})
-			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, sourceRegistry, testConfig)
+			fakeRecorder := record.NewFakeRecorder(100)
+			engine := NewEngine(k8sClient, k8sClient.Scheme(), fakeRecorder, sourceRegistry, testConfig)
 
 			By("Performing optimization loop")
 			err := engine.optimize(ctx)
@@ -277,7 +279,8 @@ var _ = Describe("Saturation Engine", func() {
 			sourceRegistry.Register("prometheus", source.NewNoOpSource()) // nolint:errcheck
 			// Create minimal test config
 			testConfig := config.NewTestConfig()
-			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, sourceRegistry, testConfig)
+			fakeRecorder := record.NewFakeRecorder(100)
+			engine := NewEngine(k8sClient, k8sClient.Scheme(), fakeRecorder, sourceRegistry, testConfig)
 			decisions := engine.convertSaturationTargetsToDecisions(context.Background(), saturationTargets, saturationAnalysis, variantStates)
 
 			By("Verifying all variants are included in decisions")
@@ -453,7 +456,8 @@ var _ = Describe("Saturation Engine", func() {
 			testConfig.UpdateSaturationConfig(map[string]config.SaturationScalingConfig{
 				"default": {},
 			})
-			engine := NewEngine(k8sClient, k8sClient.Scheme(), nil, sourceRegistry, testConfig)
+			fakeRecorder := record.NewFakeRecorder(100)
+			engine := NewEngine(k8sClient, k8sClient.Scheme(), fakeRecorder, sourceRegistry, testConfig)
 
 			By("Performing optimization loop with source infrastructure")
 			err := engine.optimize(ctx)
