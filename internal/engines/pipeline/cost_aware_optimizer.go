@@ -12,11 +12,6 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/logging"
 )
 
-const (
-	// CostAwareOptimizerName is the identifier for the cost-aware optimizer
-	CostAwareOptimizerName = "cost-aware"
-)
-
 // CostAwareOptimizer is a per-model optimizer that minimizes total cost while
 // meeting capacity requirements. It processes each model independently:
 //
@@ -36,7 +31,7 @@ func NewCostAwareOptimizer() *CostAwareOptimizer {
 
 // Name returns the optimizer identifier.
 func (o *CostAwareOptimizer) Name() string {
-	return CostAwareOptimizerName
+	return "cost-aware"
 }
 
 // Optimize produces VariantDecisions for all models.
@@ -50,21 +45,27 @@ func (o *CostAwareOptimizer) Optimize(
 	var allDecisions []interfaces.VariantDecision
 
 	for _, req := range requests {
-		if req.Result == nil {
+		satEntry := saturationEntry(req.AnalyzerResults)
+		if satEntry == nil {
 			continue
 		}
 
 		stateMap := buildStateMap(req.VariantStates)
-		vcMap := buildCapacityMap(req.Result.VariantCapacities)
+		vcMap := buildCapacityMap(satEntry.VariantCapacities)
 		targets := initTargets(req.VariantStates)
 
-		if req.Result.RequiredCapacity > 0 {
-			costAwareScaleUp(ctx, req.Result, targets, stateMap)
-		} else if req.Result.SpareCapacity > 0 {
-			costAwareScaleDown(ctx, req.Result, targets, stateMap)
+		// Unified dispatch: one path for all models via (model, role) math.
+		// Non-disaggregated uses synthetic "both" role; disaggregated uses actual roles.
+		s := req.AnalyzerResults
+		roles, ps := initRoleState(s)
+		if anyRoleNeedsScaleUp(ps, roles) {
+			allocateForModelPaired(ctx, s, satEntry.VariantCapacities, stateMap, nil, targets,
+				costGreedyRolePick, ps, roles)
+		} else {
+			scaleDownRoleIterated(ctx, s, satEntry.VariantCapacities, targets, stateMap)
 		}
 
-		decisions := buildDecisionsWithOptimizer(req, stateMap, vcMap, targets, CostAwareOptimizerName)
+		decisions := buildDecisionsWithOptimizer(req, stateMap, vcMap, targets, "cost-aware")
 		logger.V(logging.DEBUG).Info("Cost-aware optimizer decisions",
 			"modelID", req.ModelID,
 			"decisions", len(decisions))
@@ -74,156 +75,112 @@ func (o *CostAwareOptimizer) Optimize(
 	return allDecisions
 }
 
-// costAwareScaleUp adds replicas to the most cost-efficient variant.
-// Sorts by cost-efficiency (cost/perReplicaCapacity) ascending, picks first eligible.
-// Respects maxReplicas per variant — if a variant hits its cap, remaining capacity
-// spills over to the next variant.
-func costAwareScaleUp(
-	ctx context.Context,
-	result *interfaces.AnalyzerResult,
-	targets map[string]int,
+// costGreedyRolePick is a RolePickFn that picks the cheapest-by-cost-efficiency
+// variant in the given role. For "both" (non-disaggregated), all variants are
+// eligible. For role-tagged roles, only variants with a matching Role are picked.
+func costGreedyRolePick(
+	role string,
+	_ []NamedAnalyzerResult,
+	variants []interfaces.VariantCapacity,
 	stateMap map[string]interfaces.VariantReplicaState,
-) {
-	logger := ctrl.LoggerFrom(ctx)
-
-	sorted := sortByCostEfficiencyAsc(result.VariantCapacities)
-	remaining := result.RequiredCapacity
-
-	for _, vc := range sorted {
-		if remaining <= 0 {
-			break
-		}
+	_ map[string]int,
+	targets map[string]int,
+) (string, int) {
+	roleVCs := variantsForRole(variants, role)
+	for _, vc := range sortByCostEfficiencyAsc(roleVCs) {
 		if vc.PerReplicaCapacity <= 0 {
 			continue
 		}
-
-		replicasNeeded := int(math.Ceil(remaining / vc.PerReplicaCapacity))
-
-		// Cap by maxReplicas if set
 		state := stateMap[vc.VariantName]
 		if state.MaxReplicas != nil && *state.MaxReplicas > 0 {
-			maxAdd := *state.MaxReplicas - targets[vc.VariantName]
-			if maxAdd <= 0 {
-				continue // already at max
+			headroom := *state.MaxReplicas - targets[vc.VariantName]
+			if headroom <= 0 {
+				continue
 			}
-			if replicasNeeded > maxAdd {
-				replicasNeeded = maxAdd
-			}
+			return vc.VariantName, headroom
 		}
-
-		targets[vc.VariantName] += replicasNeeded
-		remaining -= float64(replicasNeeded) * vc.PerReplicaCapacity
-
-		logger.V(logging.DEBUG).Info("Scale-up allocation",
-			"variant", vc.VariantName,
-			"added", replicasNeeded,
-			"costEfficiency", costEfficiency(vc))
+		return vc.VariantName, math.MaxInt
 	}
+	return "", 0
 }
 
-// costAwareScaleDown removes replicas to shed spare capacity, most-expensive
-// variant first, respecting minReplicas.
-//
-// For disaggregated (prefill/decode) models it sheds each role independently
-// against that role's own spare. Prefill and decode capacity are not fungible, so
-// removing by the model-level SpareCapacity — which aggregates all roles — would
-// let a role with slack drive removal of replicas from a saturated role (e.g.
-// trimming prefill because decode has spare). RoleCapacities is non-nil only when
-// disaggregation is active; non-disaggregated models keep the model-level shed.
-func costAwareScaleDown(
-	ctx context.Context,
-	result *interfaces.AnalyzerResult,
-	targets map[string]int,
-	stateMap ...map[string]interfaces.VariantReplicaState,
-) {
-	var states map[string]interfaces.VariantReplicaState
-	if len(stateMap) > 0 {
-		states = stateMap[0]
-	}
-
-	if len(result.RoleCapacities) > 0 {
-		// Each role owns a disjoint set of variants and sheds against its own
-		// spare, so the map's iteration order does not affect the outcome.
-		// Assumes RoleCapacities keys partition VariantCapacities by role
-		// (one role per variant; no overlap); mixed-role configurations would
-		// break disjointness.
-		for role, rc := range result.RoleCapacities {
-			if rc.SpareCapacity <= 0 {
-				continue // saturated or under-supplied role — never trim it
-			}
-			scaleDownVariantSet(ctx, variantsForRole(result.VariantCapacities, role), rc.SpareCapacity, targets, states)
-		}
-		return
-	}
-
-	scaleDownVariantSet(ctx, result.VariantCapacities, result.SpareCapacity, targets, states)
-}
-
-// scaleDownVariantSet removes replicas from the given variant set, most-expensive
-// first, until `spare` capacity is shed or each variant's minReplicas floor is
-// reached. The cheapest variant — last in the cost-descending order — is protected
-// at one replica when it would otherwise be the last variant with replicas in the
-// set, preventing a scale-to-zero deadlock.
+// scaleDownVariantSet sheds replicas from sortedVariants (PRE-SORTED cost-desc,
+// cheapest last). minReplicas floor and cheapest-at-1 protection are enforced
+// here. maxRemovable returns how many replicas of vc the caller permits to remove;
+// onRemove is invoked after committing n so the caller can update its spare bookkeeping.
 func scaleDownVariantSet(
 	ctx context.Context,
-	variants []interfaces.VariantCapacity,
-	spare float64,
+	sortedVariants []interfaces.VariantCapacity,
 	targets map[string]int,
 	states map[string]interfaces.VariantReplicaState,
+	maxRemovable func(vc interfaces.VariantCapacity) int,
+	onRemove func(vc interfaces.VariantCapacity, n int),
 ) {
 	logger := ctrl.LoggerFrom(ctx)
-
-	sorted := sortByCostDesc(variants)
-	remaining := spare
-
-	for i, vc := range sorted {
-		if remaining <= 0 {
-			break
-		}
+	for i, vc := range sortedVariants {
 		if vc.PerReplicaCapacity <= 0 {
 			continue
 		}
-
 		current := targets[vc.VariantName]
-
-		// Annotation floor caps removal.
 		minReplicas := 0
 		if states != nil {
-			if state, ok := states[vc.VariantName]; ok && state.MinReplicas != nil {
-				minReplicas = *state.MinReplicas
+			if st, ok := states[vc.VariantName]; ok && st.MinReplicas != nil {
+				minReplicas = *st.MinReplicas
 			}
 		}
 		removable := current - minReplicas
 		if removable <= 0 {
 			continue
 		}
-
-		toRemove := int(math.Floor(remaining / vc.PerReplicaCapacity))
-		if toRemove > removable {
-			toRemove = removable
+		n := maxRemovable(vc)
+		if n > removable {
+			n = removable
 		}
-
-		// Protect the cheapest variant (last in cost-descending order) at one
-		// replica when removing toRemove would drop it below one and no
-		// more-expensive variant still holds replicas — i.e. it is the last with
-		// replicas in the set. When minReplicas >= 1, removable <= current-1 so
-		// toRemove <= current-1 and current-toRemove >= 1 already, so this clause
-		// never triggers.
-		if i == len(sorted)-1 && current-toRemove < 1 && !anyHasReplicas(sorted[:i], targets) {
-			toRemove = current - 1
+		// cheapest-at-1: the last (cheapest) variant is protected at 1 only when no
+		// more-expensive variant still holds replicas (#1237's positional rule).
+		if i == len(sortedVariants)-1 && current-n < 1 && !anyHasReplicas(sortedVariants[:i], targets) {
+			n = current - 1
 		}
-		if toRemove <= 0 {
+		if n <= 0 {
 			continue
 		}
-
-		targets[vc.VariantName] = current - toRemove
-		remaining -= float64(toRemove) * vc.PerReplicaCapacity
-
-		logger.V(logging.DEBUG).Info("Scale-down allocation",
-			"variant", vc.VariantName,
-			"removed", toRemove,
-			"cost", vc.Cost)
+		targets[vc.VariantName] = current - n
+		onRemove(vc, n)
+		logger.V(logging.DEBUG).Info("scale-down: removed replicas",
+			"variant", vc.VariantName, "removed", n, "cost", vc.Cost)
 	}
+}
+
+// sortVariantsForScaleDown orders a role's variants for cost-greedy scale-down:
+//  1. Cost descending — shed the most expensive first.
+//  2. Tie: score-weighted per-replica capacity ascending — Σ_i Score_i·PRC_i[v].
+//  3. Tie: variant name ascending — full determinism.
+//
+// With a single analyzer (Score=1) this reduces to Cost-desc then PRC-asc, i.e.
+// #1237's existing tie-break.
+func sortVariantsForScaleDown(s []NamedAnalyzerResult, roleVCs []interfaces.VariantCapacity) []interfaces.VariantCapacity {
+	weighted := func(name string) float64 {
+		sum := 0.0
+		for _, e := range s {
+			if e.Result == nil {
+				continue
+			}
+			sum += e.Score * prcForVariant(e.Result, name)
+		}
+		return sum
+	}
+	out := append([]interfaces.VariantCapacity(nil), roleVCs...)
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Cost != out[j].Cost {
+			return out[i].Cost > out[j].Cost
+		}
+		wi, wj := weighted(out[i].VariantName), weighted(out[j].VariantName)
+		if wi != wj {
+			return wi < wj
+		}
+		return out[i].VariantName < out[j].VariantName
+	})
+	return out
 }
 
 // anyHasReplicas reports whether any of the given variants has a positive target.
@@ -234,24 +191,6 @@ func anyHasReplicas(variants []interfaces.VariantCapacity, targets map[string]in
 		}
 	}
 	return false
-}
-
-// variantsForRole returns the capacities whose role matches exactly (an empty
-// role is treated as "both"). Unlike filterVariantCapacitiesByRole, which treats
-// "both" as a wildcard for scale-up allocation, this matches the role exactly so
-// per-role scale-down operates on disjoint variant sets.
-func variantsForRole(capacities []interfaces.VariantCapacity, role string) []interfaces.VariantCapacity {
-	out := make([]interfaces.VariantCapacity, 0, len(capacities))
-	for _, vc := range capacities {
-		r := vc.Role
-		if r == "" {
-			r = interfaces.RoleBoth
-		}
-		if r == role {
-			out = append(out, vc)
-		}
-	}
-	return out
 }
 
 // buildStateMap creates a lookup map from variant name to VariantReplicaState.
@@ -291,23 +230,6 @@ func sortByCostEfficiencyAsc(capacities []interfaces.VariantCapacity) []interfac
 	return sorted
 }
 
-// sortByCostDesc returns variants sorted by absolute cost descending. Equal-cost
-// variants are tie-broken by per-replica capacity ascending, so the highest-PRC
-// variant at the cheapest cost tier lands last — the deterministic slot the
-// scale-down protection keeps at one replica (prefer keeping the more capable
-// replica among equal-cost variants).
-func sortByCostDesc(capacities []interfaces.VariantCapacity) []interfaces.VariantCapacity {
-	sorted := make([]interfaces.VariantCapacity, len(capacities))
-	copy(sorted, capacities)
-	sort.Slice(sorted, func(i, j int) bool {
-		if sorted[i].Cost != sorted[j].Cost {
-			return sorted[i].Cost > sorted[j].Cost
-		}
-		return sorted[i].PerReplicaCapacity < sorted[j].PerReplicaCapacity
-	})
-	return sorted
-}
-
 // costEfficiency returns the cost per unit of capacity.
 func costEfficiency(vc interfaces.VariantCapacity) float64 {
 	if vc.PerReplicaCapacity <= 0 {
@@ -335,38 +257,35 @@ func buildDecisionsWithOptimizer(
 		switch {
 		case target > state.CurrentReplicas:
 			action = interfaces.ActionScaleUp
-			reason = fmt.Sprintf("V2 scale-up (optimizer: %s, required: %.0f)", optimizerName, req.Result.RequiredCapacity)
+			reason = fmt.Sprintf("V2 scale-up (optimizer: %s)", optimizerName)
 		case target < state.CurrentReplicas:
 			action = interfaces.ActionScaleDown
-			reason = fmt.Sprintf("V2 scale-down (optimizer: %s, spare: %.0f)", optimizerName, req.Result.SpareCapacity)
+			reason = fmt.Sprintf("V2 scale-down (optimizer: %s)", optimizerName)
 		default:
 			action = interfaces.ActionNoChange
 			reason = "V2 steady state"
 		}
 
 		decisions = append(decisions, interfaces.VariantDecision{
-			VariantName:      name,
-			ModelID:          req.ModelID,
-			Namespace:        req.Namespace,
-			AcceleratorName:  vc.AcceleratorName,
-			Cost:             vc.Cost,
-			Role:             state.Role,
-			CurrentReplicas:  state.CurrentReplicas,
-			TargetReplicas:   target,
-			Action:           action,
-			Reason:           reason,
-			MinReplicas:      state.MinReplicas,
-			MaxReplicas:      state.MaxReplicas,
-			Utilization:      vc.Utilization,
-			SpareCapacity:    1.0 - vc.Utilization,
-			RequiredCapacity: req.Result.RequiredCapacity,
+			VariantName:     name,
+			ModelID:         req.ModelID,
+			Namespace:       req.Namespace,
+			AcceleratorName: vc.AcceleratorName,
+			Cost:            vc.Cost,
+			Role:            state.Role,
+			CurrentReplicas: state.CurrentReplicas,
+			TargetReplicas:  target,
+			Action:          action,
+			Reason:          reason,
+			MinReplicas:     state.MinReplicas,
+			MaxReplicas:     state.MaxReplicas,
 		})
 	}
 	return decisions
 }
 
-// mergeConstraints combines constraints from multiple providers.
-// Currently unused in CostAwareOptimizer but available for limited mode.
+// mergeConstraints combines GPU budget constraints from multiple providers.
+// Used by GreedyByScoreOptimizer; lives here since CostAwareOptimizer owns the shared helpers.
 func mergeConstraints(constraints []*ResourceConstraints) map[string]int {
 	merged := make(map[string]int)
 	for _, c := range constraints {
@@ -380,6 +299,54 @@ func mergeConstraints(constraints []*ResourceConstraints) map[string]int {
 		}
 	}
 	return merged
+}
+
+// scaleDownRoleIterated removes replicas role-by-role using the generalized
+// scaleDownVariantSet primitive. Roles are sorted for determinism.
+// Arity-1 (roles=["both"]) handles non-disaggregated models.
+func scaleDownRoleIterated(
+	ctx context.Context,
+	s []NamedAnalyzerResult,
+	variants []interfaces.VariantCapacity,
+	targets map[string]int,
+	stateMap ...map[string]interfaces.VariantReplicaState,
+) {
+	var states map[string]interfaces.VariantReplicaState
+	if len(stateMap) > 0 {
+		states = stateMap[0]
+	}
+	rolesSet := make(map[string]struct{})
+	for _, vc := range variants {
+		role := vc.Role
+		if role == "" {
+			role = interfaces.RoleBoth
+		}
+		rolesSet[role] = struct{}{}
+	}
+	roles := make([]string, 0, len(rolesSet))
+	for role := range rolesSet {
+		roles = append(roles, role)
+	}
+	sort.Strings(roles)
+
+	for _, role := range roles {
+		if !needsScaleDownForRole(s, role) {
+			continue
+		}
+		roleVCs := variantsForRole(variants, role)
+		if len(roleVCs) == 0 {
+			continue
+		}
+		sorted := sortVariantsForScaleDown(s, roleVCs)
+		scaleDownVariantSet(ctx, sorted, targets, states,
+			func(vc interfaces.VariantCapacity) int {
+				return safeRemovalReplicasForRole(s, vc.VariantName, role)
+			},
+			func(vc interfaces.VariantCapacity, n int) {
+				applyDeallocationForRole(s, vc.VariantName, role, n)
+			},
+		)
+	}
 }
 
 // Ensure CostAwareOptimizer implements ScalingOptimizer

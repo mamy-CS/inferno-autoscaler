@@ -27,6 +27,7 @@ func (e *Engine) runV2AnalysisOnly(
 	variantStates []interfaces.VariantReplicaState,
 	scaleTargets map[string]scaletarget.ScaleTargetAccessor,
 	variantAutoscalings map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling,
+	schedulerQueue *interfaces.SchedulerQueueMetrics,
 ) (*interfaces.AnalyzerResult, error) {
 	logger := ctrl.LoggerFrom(ctx)
 
@@ -54,7 +55,7 @@ func (e *Engine) runV2AnalysisOnly(
 		ReplicaMetrics: replicaMetrics,
 		VariantStates:  variantStates,
 		Config:         &config,
-		// TODO: populate SchedulerQueue when flow control metrics are collected
+		SchedulerQueue: schedulerQueue,
 	}
 
 	// 3. Run V2 analyzer
@@ -79,13 +80,11 @@ func (e *Engine) runV2AnalysisOnly(
 // overrides where set), and computes the weighted composite score from
 // saturation's signal and the model's priority.
 //
-// The engine applies applyUniversalThreshold to every analyzer — saturation and
-// all registered non-saturation analyzers. Per-analyzer ScaleUpThreshold /
-// ScaleDownBoundary overrides from AnalyzerScoreConfig are resolved and used for
-// each analyzer's calibration call. Non-saturation results are calibrated but
-// intentionally discarded on this branch; the optimizer only receives saturation's
-// result. Combine semantics and per-analyzer score consumption land in a follow-up
-// PR (multi-analyzer-optimizer).
+// The engine applies applyUniversalThreshold to every analyzer (saturation and
+// all registered non-saturation analyzers) and collects the calibrated results
+// into a per-analyzer slice returned to the optimizer. Saturation is always the
+// first entry; it is the keeper of per-variant metadata (Cost, AcceleratorName,
+// Role) until a future pre-analysis-extraction PR separates that concern.
 func (e *Engine) runAnalyzersAndScore(
 	ctx context.Context,
 	modelID, namespace string,
@@ -94,12 +93,13 @@ func (e *Engine) runAnalyzersAndScore(
 	variantStates []interfaces.VariantReplicaState,
 	scaleTargets map[string]scaletarget.ScaleTargetAccessor,
 	variantAutoscalings map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling,
-) (*interfaces.AnalyzerResult, error) {
+	schedulerQueue *interfaces.SchedulerQueueMetrics,
+) ([]pipeline.NamedAnalyzerResult, error) {
 	logger := ctrl.LoggerFrom(ctx)
 
 	// Run saturation analyzer (always needed for PerReplicaCapacity).
 	baseResult, err := e.runV2AnalysisOnly(ctx, modelID, namespace, replicaMetrics, config,
-		variantStates, scaleTargets, variantAutoscalings)
+		variantStates, scaleTargets, variantAutoscalings, schedulerQueue)
 	if err != nil {
 		return nil, err
 	}
@@ -122,41 +122,55 @@ func (e *Engine) runAnalyzersAndScore(
 		ReplicaMetrics: replicaMetrics,
 		VariantStates:  variantStates,
 		Config:         &config,
-		// SchedulerQueue: nil — wired in a later PR
+		SchedulerQueue: schedulerQueue,
 	}
 
-	// Iterate every registered non-saturation analyzer. Each result is
-	// calibrated with the universal threshold post-step (using per-analyzer
-	// config overrides where set), then discarded on this branch — combine /
-	// per-analyzer-result consumption lands in follow-up PRs.
-	e.runRegisteredAnalyzers(ctx, logger, modelID, input, config)
-
-	// Compute weighted score from enabled analyzers.
-	// On this branch only saturation drives the score; non-saturation results
-	// are not yet consumed by the optimizer (see multi-analyzer-optimizer PR).
-	totalWeighted := 0.0
-	for _, aw := range config.Analyzers {
-		if aw.Enabled != nil && !*aw.Enabled {
+	// Collect per-analyzer results. Saturation is first; each non-saturation
+	// analyzer is run, calibrated with its resolved thresholds, and appended.
+	namedResults := []pipeline.NamedAnalyzerResult{{
+		Name:      interfaces.SaturationAnalyzerName,
+		Result:    baseResult,
+		Score:     scoreForAnalyzer(interfaces.SaturationAnalyzerName, config),
+		Remaining: baseResult.RequiredCapacity,
+		Spare:     baseResult.SpareCapacity,
+	}}
+	for _, entry := range e.analyzersSnapshot {
+		if entry.name == interfaces.SaturationAnalyzerName {
 			continue
 		}
-		if aw.Name == interfaces.SaturationAnalyzerName {
-			totalWeighted += baseResult.RequiredCapacity * aw.Score
-			// future: add "throughput", "slo" cases
+		result := runRegisteredAnalyzer(ctx, logger, entry, modelID, input)
+		if result == nil {
+			continue
 		}
+		up, down := resolveThresholds(entry.name, config)
+		applyUniversalThreshold(result, up, down)
+		namedResults = append(namedResults, pipeline.NamedAnalyzerResult{
+			Name:      entry.name,
+			Result:    result,
+			Score:     scoreForAnalyzer(entry.name, config),
+			Remaining: result.RequiredCapacity,
+			Spare:     result.SpareCapacity,
+		})
 	}
-
-	// Score = priority * weighted sum; used by GreedyByScoreOptimizer for
-	// fair-share ordering across models. Computed from saturation's calibrated
-	// RC only; will be recomputed per-analyzer in the multi-analyzer-optimizer PR.
-	baseResult.Score = config.Priority * totalWeighted
-	return baseResult, nil
+	return namedResults, nil
 }
 
-// resolveThresholds returns the effective scaleUp and scaleDown threshold values
-// for the named analyzer. If config.Analyzers contains an entry for that name,
-// its per-entry overrides (ScaleUpThreshold / ScaleDownBoundary) take precedence
-// over the model-level globals. Falls back to the global values when no matching
-// entry exists or the override fields are nil.
+// scoreForAnalyzer returns the AnalyzerScoreConfig.Score for the named analyzer,
+// defaulting to 1.0 when the analyzer has no explicit entry in cfg.Analyzers.
+// This value is the per-analyzer weight used by GreedyByScoreOptimizer for
+// fair-share priority ordering across models.
+func scoreForAnalyzer(analyzerName string, cfg config.SaturationScalingConfig) float64 {
+	for _, aw := range cfg.Analyzers {
+		if aw.Name == analyzerName {
+			if aw.Score > 0 {
+				return aw.Score
+			}
+			return 1.0
+		}
+	}
+	return 1.0
+}
+
 func resolveThresholds(analyzerName string, cfg config.SaturationScalingConfig) (scaleUp, scaleDown float64) {
 	for _, aw := range cfg.Analyzers {
 		if aw.Name == analyzerName {
@@ -287,14 +301,21 @@ func applyUniversalThreshold(r *interfaces.AnalyzerResult, scaleUp, scaleDown fl
 func computeCurrentGPUUsage(requests []pipeline.ModelScalingRequest) map[string]int {
 	usage := make(map[string]int)
 	for _, req := range requests {
-		if req.Result == nil {
+		var satEntry *interfaces.AnalyzerResult
+		for _, e := range req.AnalyzerResults {
+			if e.Name == interfaces.SaturationAnalyzerName {
+				satEntry = e.Result
+				break
+			}
+		}
+		if satEntry == nil {
 			continue
 		}
 		stateMap := make(map[string]interfaces.VariantReplicaState, len(req.VariantStates))
 		for _, s := range req.VariantStates {
 			stateMap[s.VariantName] = s
 		}
-		for _, vc := range req.Result.VariantCapacities {
+		for _, vc := range satEntry.VariantCapacities {
 			state := stateMap[vc.VariantName]
 			gpusPerReplica := state.GPUsPerReplica
 			if gpusPerReplica <= 0 {
@@ -316,9 +337,10 @@ func (e *Engine) collectV2ModelRequest(
 	variantStates []interfaces.VariantReplicaState,
 	scaleTargets map[string]scaletarget.ScaleTargetAccessor,
 	variantAutoscalings map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling,
+	schedulerQueue *interfaces.SchedulerQueueMetrics,
 ) (*pipeline.ModelScalingRequest, error) {
-	result, err := e.runAnalyzersAndScore(ctx, modelID, namespace, replicaMetrics, config,
-		variantStates, scaleTargets, variantAutoscalings)
+	namedResults, err := e.runAnalyzersAndScore(ctx, modelID, namespace, replicaMetrics, config,
+		variantStates, scaleTargets, variantAutoscalings, schedulerQueue)
 	if err != nil {
 		return nil, fmt.Errorf("collecting V2 model request for %s/%s: %w", namespace, modelID, err)
 	}
@@ -333,11 +355,11 @@ func (e *Engine) collectV2ModelRequest(
 	}
 
 	return &pipeline.ModelScalingRequest{
-		ModelID:       modelID,
-		Namespace:     namespace,
-		Result:        result,
-		VariantStates: variantStates,
-		Priority:      config.Priority,
-		Disaggregated: disaggregated,
+		ModelID:         modelID,
+		Namespace:       namespace,
+		AnalyzerResults: namedResults,
+		VariantStates:   variantStates,
+		Priority:        config.Priority,
+		Disaggregated:   disaggregated,
 	}, nil
 }

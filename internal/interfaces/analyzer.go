@@ -117,11 +117,6 @@ type AnalyzerResult struct {
 	RequiredCapacity float64 // >0 means scale-up needed
 	SpareCapacity    float64 // >0 means scale-down possible
 
-	// Score is the composite priority score for this model.
-	// Computed as: priority * sum(requiredCapacity_i * analyzerScore_i)
-	// Used by GreedyByScoreOptimizer for fair-share ordering.
-	Score float64
-
 	// RoleCapacities holds per-role capacity aggregation for P/D disaggregated models.
 	// nil when no disaggregation is active (all variants are role "both").
 	RoleCapacities map[string]RoleCapacity

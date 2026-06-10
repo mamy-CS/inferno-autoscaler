@@ -35,7 +35,6 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/collector/source"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/collector/source/prometheus"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/config"
-	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/pipeline"
 	interfaces "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/interfaces"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/logging"
 	utils "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils"
@@ -578,7 +577,7 @@ var _ = Describe("Saturation Engine", func() {
 			By("Running optimize() with EnableLimiter=false")
 			err := engine.optimize(ctx)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(engine.optimizer.Name()).To(Equal(pipeline.CostAwareOptimizerName),
+			Expect(engine.optimizer.Name()).To(Equal("cost-aware"),
 				"Expected CostAwareOptimizer when EnableLimiter=false")
 
 			By("Updating config to EnableLimiter=true")
@@ -592,7 +591,7 @@ var _ = Describe("Saturation Engine", func() {
 			By("Running optimize() with EnableLimiter=true")
 			err = engine.optimize(ctx)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(engine.optimizer.Name()).To(Equal(pipeline.GreedyByScoreOptimizerName),
+			Expect(engine.optimizer.Name()).To(Equal("greedy-by-score"),
 				"Expected GreedyByScoreOptimizer when EnableLimiter=true")
 
 			By("Updating config back to EnableLimiter=false")
@@ -606,7 +605,7 @@ var _ = Describe("Saturation Engine", func() {
 			By("Running optimize() with EnableLimiter=false again")
 			err = engine.optimize(ctx)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(engine.optimizer.Name()).To(Equal(pipeline.CostAwareOptimizerName),
+			Expect(engine.optimizer.Name()).To(Equal("cost-aware"),
 				"Expected CostAwareOptimizer when EnableLimiter=false (second toggle)")
 		})
 	})

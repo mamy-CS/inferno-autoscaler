@@ -296,10 +296,7 @@ func (e *Engine) StartOptimizeLoop(ctx context.Context) {
 
 func (e *Engine) recordActiveOptimizer() {
 	// Record metrics for which optimizer is active
-	optimizerNames := []string{
-		pipeline.GreedyByScoreOptimizerName,
-		pipeline.CostAwareOptimizerName,
-	}
+	optimizerNames := []string{"greedy-by-score", "cost-aware"}
 	for _, name := range optimizerNames {
 		isActive := false // default is false
 		if name == e.optimizer.Name() {
@@ -794,7 +791,7 @@ func (e *Engine) optimizeV2(
 
 		req, err := e.collectV2ModelRequest(ctx, modelID, namespace,
 			data.replicaMetrics, saturationConfig, data.variantStates,
-			data.scaleTargets, data.variantAutoscalings)
+			data.scaleTargets, data.variantAutoscalings, data.schedulerQueue)
 		if err != nil {
 			msg := "V2 analysis failed"
 			logger.Error(err, msg, "modelID", modelID)
@@ -1198,6 +1195,7 @@ type modelData struct {
 	variantAutoscalings map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling
 	variantCosts        map[string]float64
 	variantStates       []interfaces.VariantReplicaState
+	schedulerQueue      *interfaces.SchedulerQueueMetrics
 }
 
 // prepareModelData collects metrics and builds lookup maps for a model's VAs.
@@ -1271,6 +1269,7 @@ func (e *Engine) prepareModelData(
 	}
 
 	variantStates := e.BuildVariantStates(ctx, modelVAs, scaleTargets, k8sClient)
+	schedulerQueue := e.ReplicaMetricsCollector.CollectSchedulerQueueMetrics(ctx, modelID)
 
 	return &modelData{
 		modelID:             modelID,
@@ -1280,6 +1279,7 @@ func (e *Engine) prepareModelData(
 		variantAutoscalings: variantAutoscalings,
 		variantCosts:        variantCosts,
 		variantStates:       variantStates,
+		schedulerQueue:      schedulerQueue,
 	}, nil
 }
 
