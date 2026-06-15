@@ -146,7 +146,8 @@ type Engine struct {
 
 	// saturationV2Analyzer is the V2 token-based saturation analyzer (initialized once).
 	// Also pre-registered in analyzers under interfaces.SaturationAnalyzerName.
-	saturationV2Analyzer *saturation_v2.SaturationAnalyzer
+	// Typed as interfaces.Analyzer to allow injection in tests.
+	saturationV2Analyzer interfaces.Analyzer
 
 	// queueingModelAnalyzer is the queueing model-based analyzer (initialized once).
 	// Selected via analyzerName: "queueing-model" in SaturationScalingConfig.
