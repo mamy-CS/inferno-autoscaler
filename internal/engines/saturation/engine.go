@@ -863,6 +863,7 @@ func (e *Engine) optimizeV2(
 	// Stage 2: Compute GPU constraints and call optimizer
 	optimizer, constraints := e.selectV2Optimizer(ctx, requests)
 	allDecisions := optimizer.Optimize(ctx, requests, constraints)
+	logScalingDecisions(ctx, requests, allDecisions)
 
 	logger.Info("V2 optimizer produced decisions",
 		"optimizer", optimizer.Name(),
