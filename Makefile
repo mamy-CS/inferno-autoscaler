@@ -24,7 +24,6 @@ ENVIRONMENT                 ?= kind-emulator
 USE_SIMULATOR               ?= true
 SCALE_TO_ZERO_ENABLED       ?= false
 SCALER_BACKEND              ?= prometheus-adapter  # prometheus-adapter (HPA), keda (ScaledObject), or none (skip, use pre-installed backend)
-LLM_D_RELEASE               ?= v0.8.1
 LLM_D_ROUTER_VERSION        ?= v0.9.0
 GAIE_VERSION                ?= v1.5.0
 KV_SPARE_TRIGGER           ?=
@@ -216,7 +215,6 @@ deploy-e2e-infra: ## Deploy e2e test infrastructure (WVA + EPP; no model server 
 		./deploy/install.sh; \
 	fi
 	@ENVIRONMENT=$(ENVIRONMENT) \
-		LLM_D_RELEASE=$(LLM_D_RELEASE) \
 		LLM_D_ROUTER_VERSION=$(LLM_D_ROUTER_VERSION) \
 		GAIE_VERSION=$(GAIE_VERSION) \
 		LLMD_NS=$${LLMD_NS:-$(E2E_EMULATED_LLMD_NAMESPACE)} \

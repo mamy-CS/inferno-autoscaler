@@ -5,7 +5,6 @@ POC_DIR      := config/samples/hpa/co-ordinator
 POC_WVA_NS  := workload-variant-autoscaler-system
 POC_MON_NS  := workload-variant-autoscaler-monitoring
 GAIE_VERSION ?= v1.5.0
-LLM_D_RELEASE ?= v0.8.1
 LLM_D_ROUTER_VERSION ?= v0.9.0
 
 .PHONY: poc-install
