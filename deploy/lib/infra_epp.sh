@@ -3,10 +3,8 @@
 # EPP and InferencePool setup for all environments (kind-emulator, kubernetes, openshift).
 # Installs Gateway API CRDs, GAIE CRDs, and the llm-d-router-standalone chart (EPP + InferencePool).
 #
-# Required vars: LLM_D_RELEASE, LLM_D_ROUTER_VERSION, GAIE_VERSION, LLMD_NS
-#   LLM_D_RELEASE         — guide values ref under llm-d/llm-d (e.g. v0.8.1)
-#   LLM_D_ROUTER_VERSION  — chart + EPP image tag from llm-d/llm-d-router
-#                            (e.g. v0.9.0; released independently of LLM_D_RELEASE)
+# Required vars: LLM_D_ROUTER_VERSION, GAIE_VERSION, LLMD_NS
+#   LLM_D_ROUTER_VERSION  — chart + EPP image tag from llm-d/llm-d-router (e.g. v0.9.0)
 #   GAIE_VERSION          — kubernetes-sigs GAIE CRDs ref (e.g. v1.5.0)
 # Required funcs: log_info, log_success, log_warning
 #
@@ -28,26 +26,10 @@ install_inference_crds() {
 }
 
 deploy_epp() {
-    log_info "Deploying EPP infrastructure (llm-d-router-standalone chart ${LLM_D_ROUTER_VERSION}, llm-d guide values ${LLM_D_RELEASE}, GAIE CRDs ${GAIE_VERSION})..."
+    log_info "Deploying EPP infrastructure (llm-d-router-standalone chart ${LLM_D_ROUTER_VERSION}, GAIE CRDs ${GAIE_VERSION})..."
 
     local _lib_dir
     _lib_dir="$(dirname "${BASH_SOURCE[0]}")"
-
-    # Download guide values files pinned to LLM_D_RELEASE — version-coupled to
-    # the llm-d-router-standalone chart published from the same release. From
-    # v0.8.0 onward the upstream guide values target the llm-d Router chart
-    # family (rebrand: Inference Scheduler → llm-d Router) and live under a
-    # `router:` wrapper. Earlier releases (v0.7.x) used a different chart
-    # (kubernetes-sigs GAIE standalone) with a flat schema and lived under
-    # guides/.../scheduler/; those are not supported here anymore.
-    local _llmd_raw="https://raw.githubusercontent.com/llm-d/llm-d/${LLM_D_RELEASE}"
-    local _tmpdir
-    _tmpdir="$(mktemp -d)"
-    log_info "Fetching llm-d guide values (ref=${LLM_D_RELEASE})..."
-    curl -fsSL "$_llmd_raw/guides/recipes/router/base.values.yaml" \
-        -o "$_tmpdir/epp-base.values.yaml"
-    curl -fsSL "$_llmd_raw/guides/optimized-baseline/router/optimized-baseline.values.yaml" \
-        -o "$_tmpdir/epp-optimized-baseline.values.yaml"
 
     # CRD installation — skipped on shared clusters where CRDs are pre-installed
     # (e.g. OpenShift e2e). Set SKIP_CLUSTER_CRDS=true to skip.
@@ -78,10 +60,7 @@ deploy_epp() {
     fi
 
     # llm-d-router-standalone chart — bundles EPP + Envoy proxy; no external
-    # gateway controller needed. Chart + EPP image are released from
-    # llm-d/llm-d-router on its own cadence (LLM_D_ROUTER_VERSION), separate
-    # from the llm-d/llm-d umbrella release that produces the guide values
-    # (LLM_D_RELEASE).
+    # gateway controller needed. Chart + EPP image version is LLM_D_ROUTER_VERSION.
     # Override chart's production resource requests (4CPU/8Gi per container)
     # to fit a kind cluster.
     log_info "Installing llm-d-router-standalone chart (release=optimized-baseline, version=${LLM_D_ROUTER_VERSION})..."
@@ -96,8 +75,8 @@ deploy_epp() {
 
     helm upgrade --install optimized-baseline \
         oci://ghcr.io/llm-d/charts/llm-d-router-standalone \
-        -f "$_tmpdir/epp-base.values.yaml" \
-        -f "$_tmpdir/epp-optimized-baseline.values.yaml" \
+        -f "$_lib_dir/epp-base.values.yaml" \
+        -f "$_lib_dir/epp-optimized-baseline.values.yaml" \
         "${extra_helm_args[@]}" \
         --set router.epp.resources.requests.cpu=100m \
         --set router.epp.resources.requests.memory=256Mi \
@@ -124,7 +103,7 @@ deploy_epp() {
         -n "$LLMD_NS" --timeout=120s || \
         log_warning "EPP not ready yet — check 'kubectl get pods -n $LLMD_NS'"
 
-    log_success "EPP infrastructure deployed (llm-d-router-standalone ${LLM_D_ROUTER_VERSION}, guide values ${LLM_D_RELEASE})"
+    log_success "EPP infrastructure deployed (llm-d-router-standalone ${LLM_D_ROUTER_VERSION})"
 }
 
 undeploy_epp() {

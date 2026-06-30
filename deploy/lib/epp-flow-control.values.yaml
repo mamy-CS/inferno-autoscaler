@@ -5,14 +5,10 @@
 # engine reads to detect pending requests.
 #
 # The plugins and schedulingProfiles below are NOT new — they are copied verbatim from
-# llm-d/guides/optimized-baseline/router/optimized-baseline.values.yaml (fetched at
-# install time). They must be repeated here because pluginsCustomConfig is a string value
-# in the Helm chart; Helm's last-(-f)-wins semantics replace the entire string, so the
-# overlay must carry the full config. The only addition over the guide values is the
-# featureGates entry.
-#
-# v0.8.0+ note: keys live under `router.epp.*` (was top-level `inferenceExtension.*`)
-# following the upstream rebrand to llm-d Router.
+# deploy/lib/epp-optimized-baseline.values.yaml. They must be repeated here because
+# pluginsCustomConfig is a string value in the Helm chart; Helm's last-(-f)-wins
+# semantics replace the entire string, so the overlay must carry the full config.
+# The only addition over the base values is the featureGates entry.
 router:
   epp:
     pluginsCustomConfig:
