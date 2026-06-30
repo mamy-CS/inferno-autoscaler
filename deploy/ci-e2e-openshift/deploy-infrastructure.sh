@@ -35,13 +35,14 @@ kubectl patch deployment "$MODELSERVICE" -n "$LLMD_NAMESPACE" --type=json \
 [ -n "${VLLM_MAX_NUM_SEQS:-}" ] && kubectl patch deployment "$MODELSERVICE" -n "$LLMD_NAMESPACE" --type=json \
   -p="[{\"op\":\"add\",\"path\":\"/spec/template/spec/containers/0/args/-\",\"value\":\"--max-num-seqs=$VLLM_MAX_NUM_SEQS\"}]"
 
-# EPP / scheduler via install-epp.sh (handles GAIE standalone chart +
+# EPP / scheduler via install-epp.sh (handles llm-d-router-standalone chart +
 # flowControl feature gate + tokenreview RBAC).  llm-d is already
 # checked out at $GITHUB_WORKSPACE/llm-d so the script reuses it.
 WVA_PROJECT="$GITHUB_WORKSPACE" \
 LLMD_NS="$LLMD_NAMESPACE" \
 GAIE_VERSION="$GAIE_VERSION" \
 LLM_D_RELEASE="$LLM_D_RELEASE" \
+LLM_D_ROUTER_VERSION="$LLM_D_ROUTER_VERSION" \
 ENVIRONMENT=openshift \
 ENABLE_SCALE_TO_ZERO=true \
 SKIP_CLUSTER_CRDS=true \
