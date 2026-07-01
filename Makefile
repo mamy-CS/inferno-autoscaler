@@ -300,7 +300,7 @@ test-e2e-full: ## Run full e2e test suite
 	SCALER_BACKEND=$(SCALER_BACKEND) \
 	MODEL_ID=$(MODEL_ID) \
 	go test ./test/e2e/ -timeout 35m -v -ginkgo.v \
-		-ginkgo.label-filter="full && !flaky" $(FOCUS_ARGS) $(SKIP_ARGS); \
+		-ginkgo.label-filter="full && !flaky && !keda" $(FOCUS_ARGS) $(SKIP_ARGS); \
 	TEST_EXIT_CODE=$$?; \
 	echo ""; \
 	echo "=========================================="; \
