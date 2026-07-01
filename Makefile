@@ -248,13 +248,42 @@ test-e2e-smoke: ## Run smoke e2e tests
 	SCALER_BACKEND=$(SCALER_BACKEND) \
 	MODEL_ID=$(MODEL_ID) \
 	go test ./test/e2e/ -timeout 35m -v -ginkgo.v \
-		-ginkgo.label-filter="smoke" $(FOCUS_ARGS) $(SKIP_ARGS); \
+		-ginkgo.label-filter="smoke && !keda" $(FOCUS_ARGS) $(SKIP_ARGS); \
 	TEST_EXIT_CODE=$$?; \
 	echo ""; \
 	echo "=========================================="; \
 	echo "Test execution completed. Exit code: $$TEST_EXIT_CODE"; \
 	echo "=========================================="; \
 	exit $$TEST_EXIT_CODE
+
+.PHONY: test-e2e-smoke-keda
+test-e2e-smoke-keda: ## Run KEDA smoke e2e tests (requires SCALER_BACKEND=keda infra)
+	@echo "Running KEDA smoke e2e tests..."
+	$(eval FOCUS_ARGS := $(if $(FOCUS),-ginkgo.focus="$(FOCUS)",))
+	$(eval SKIP_ARGS := $(if $(SKIP),-ginkgo.skip="$(SKIP)",))
+	KUBECONFIG=$(KUBECONFIG) \
+	ENVIRONMENT=$(ENVIRONMENT) \
+	WVA_NAMESPACE=$(CONTROLLER_NAMESPACE) \
+	LLMD_NAMESPACE=$(E2E_EMULATED_LLMD_NAMESPACE) \
+	MONITORING_NAMESPACE=$(E2E_MONITORING_NAMESPACE) \
+	WVA_E2E_SECONDARY_OVERLAY_PATH=$${WVA_E2E_SECONDARY_OVERLAY_PATH:-$(E2E_WVA_SECONDARY_OVERLAY_PATH)} \
+	USE_SIMULATOR=$(USE_SIMULATOR) \
+	SCALE_TO_ZERO_ENABLED=$(SCALE_TO_ZERO_ENABLED) \
+	SCALER_BACKEND=keda \
+	MODEL_ID=$(MODEL_ID) \
+	go test ./test/e2e/ -timeout 35m -v -ginkgo.v \
+		-ginkgo.label-filter="smoke && keda" $(FOCUS_ARGS) $(SKIP_ARGS); \
+	TEST_EXIT_CODE=$$?; \
+	echo ""; \
+	echo "=========================================="; \
+	echo "Test execution completed. Exit code: $$TEST_EXIT_CODE"; \
+	echo "=========================================="; \
+	exit $$TEST_EXIT_CODE
+
+.PHONY: test-e2e-smoke-keda-with-setup
+test-e2e-smoke-keda-with-setup: ## Deploy KEDA infra and run KEDA smoke e2e tests
+	$(MAKE) deploy-e2e-infra SCALER_BACKEND=keda
+	$(MAKE) test-e2e-smoke-keda
 
 # Runs the complete e2e test suite (excluding flaky tests).
 .PHONY: test-e2e-full
@@ -281,7 +310,7 @@ test-e2e-full: ## Run full e2e test suite
 
 # Convenience targets for local e2e testing
 
-# Convenience target that deploys infra + runs smoke tests.
+# Convenience target that deploys infra + runs smoke tests (HPA / Prometheus Adapter path).
 # Set DELETE_CLUSTER=true to delete Kind cluster after tests (default: keep cluster for debugging).
 .PHONY: test-e2e-smoke-with-setup
 test-e2e-smoke-with-setup: deploy-e2e-infra test-e2e-smoke
