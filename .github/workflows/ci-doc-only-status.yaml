@@ -39,26 +39,12 @@ jobs:
               - '!OWNERS'
               - '!PROJECT'
 
-      - name: Post success status for doc-only PR
+      - name: Log doc-only skip
         if: steps.filter.outputs.code != 'true'
         uses: actions/github-script@v7
         with:
           script: |
-            const sha = context.payload.pull_request.head.sha;
-            const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            const contexts = [
-              'CI - PR Checks / e2e (comment trigger)',
-              'CI - OpenShift E2E Tests / e2e (comment trigger)'
-            ];
-            for (const ctx of contexts) {
-              await github.rest.repos.createCommitStatus({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                sha,
-                state: 'success',
-                target_url: runUrl,
-                description: 'Skipped — doc-only PR',
-                context: ctx
-              });
-            }
-            console.log('Doc-only status posted successfully');
+            // Kind smoke/full and OpenShift tests all use GitHub Actions check runs now.
+            // GitHub treats skipped jobs as passing for branch protection, so no commit
+            // statuses need to be posted here for doc-only PRs.
+            console.log('Doc-only PR detected — Kind and OpenShift checks will be skipped (passes branch protection automatically).');
