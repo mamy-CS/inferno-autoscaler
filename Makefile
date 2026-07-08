@@ -30,6 +30,7 @@ KV_SPARE_TRIGGER           ?=
 QUEUE_SPARE_TRIGGER         ?=
 E2E_MONITORING_NAMESPACE    ?= workload-variant-autoscaler-monitoring
 E2E_EMULATED_LLMD_NAMESPACE ?= llm-d-sim
+E2E_KEDA_NAMESPACE          ?= keda-system
 E2E_WVA_SECONDARY_OVERLAY_PATH ?= $(CURDIR)/test/e2e/testdata/secondary-controller
 # llm-d-benchmark CLI configuration
 # Ensure brew-installed tools (helm >=3.19) take precedence over Rancher Desktop
@@ -351,6 +352,36 @@ test-e2e-multi-controller-with-setup: deploy-e2e-infra test-e2e-multi-controller
 test-e2e-full-with-setup:
 	DEPLOY_LWS=true $(MAKE) deploy-e2e-infra
 	$(MAKE) test-e2e-full
+
+# Runs the full e2e suite against a KEDA backend (no Prometheus Adapter).
+# Label filter includes keda-labeled tests since KEDA is installed on the cluster.
+.PHONY: test-e2e-full-keda
+test-e2e-full-keda: ## Run full e2e test suite against KEDA backend
+	@echo "Running full e2e test suite (KEDA backend)..."
+	$(eval FOCUS_ARGS := $(if $(FOCUS),-ginkgo.focus="$(FOCUS)",))
+	$(eval SKIP_ARGS := $(if $(SKIP),-ginkgo.skip="$(SKIP)",))
+	KUBECONFIG=$(KUBECONFIG) \
+	ENVIRONMENT=$(ENVIRONMENT) \
+	WVA_NAMESPACE=$(CONTROLLER_NAMESPACE) \
+	WVA_E2E_SECONDARY_OVERLAY_PATH=$${WVA_E2E_SECONDARY_OVERLAY_PATH:-$(E2E_WVA_SECONDARY_OVERLAY_PATH)} \
+	USE_SIMULATOR=$(USE_SIMULATOR) \
+	SCALE_TO_ZERO_ENABLED=$(SCALE_TO_ZERO_ENABLED) \
+	SCALER_BACKEND=keda \
+	KEDA_NAMESPACE=$(E2E_KEDA_NAMESPACE) \
+	MODEL_ID=$(MODEL_ID) \
+	go test ./test/e2e/ -timeout 35m -v -ginkgo.v \
+		-ginkgo.label-filter="full && !flaky" $(FOCUS_ARGS) $(SKIP_ARGS); \
+	TEST_EXIT_CODE=$$?; \
+	echo ""; \
+	echo "=========================================="; \
+	echo "Test execution completed. Exit code: $$TEST_EXIT_CODE"; \
+	echo "=========================================="; \
+	exit $$TEST_EXIT_CODE
+
+.PHONY: test-e2e-full-keda-with-setup
+test-e2e-full-keda-with-setup: ## Deploy KEDA infra and run full e2e test suite
+	DEPLOY_LWS=true SCALER_BACKEND=keda $(MAKE) deploy-e2e-infra
+	$(MAKE) test-e2e-full-keda
 
 
 ##@ llm-d-benchmark CLI (standup / run / teardown)

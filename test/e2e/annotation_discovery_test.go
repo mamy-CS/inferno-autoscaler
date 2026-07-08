@@ -7,6 +7,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -34,44 +35,49 @@ var _ = Describe("Annotation-based variant discovery", Serial, func() {
 			// WVA discovers that HPA and uses its object name as variant_name in wva_desired_replicas.
 			hpaBaseName = "ann-disc-basic"
 			hpaName     = hpaBaseName + "-hpa"
+			ns          string
 		)
 
 		BeforeAll(func() {
-			By("Creating model service deployment")
-			err := fixtures.EnsureModelService(ctx, k8sClient, cfg.LLMDNamespace, modelServiceName, poolName, cfg.ModelID, "", cfg.UseSimulator, cfg.MaxNumSeqs)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create model service")
-
+			nsObj, err := k8sClient.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{GenerateName: "ann-disc-a-"},
+			}, metav1.CreateOptions{})
+			Expect(err).NotTo(HaveOccurred(), "Failed to create isolated test namespace")
+			ns = nsObj.Name
+			By("Using isolated test namespace " + ns)
 			DeferCleanup(func() {
-				_ = k8sClient.AppsV1().Deployments(cfg.LLMDNamespace).Delete(ctx, deploymentName, metav1.DeleteOptions{})
-				_ = k8sClient.CoreV1().Services(cfg.LLMDNamespace).Delete(ctx, modelServiceName+"-service", metav1.DeleteOptions{})
+				By("Deleting isolated namespace " + ns)
+				if err := k8sClient.CoreV1().Namespaces().Delete(ctx, ns, metav1.DeleteOptions{}); err != nil {
+					GinkgoWriter.Printf("Warning: failed to delete namespace %s: %v\n", ns, err)
+				}
 			})
+
+			By("Creating model service deployment")
+			err = fixtures.EnsureModelService(ctx, k8sClient, ns, modelServiceName, poolName, cfg.ModelID, "", cfg.UseSimulator, cfg.MaxNumSeqs)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create model service")
 
 			By("Waiting for deployment to be ready")
 			Eventually(func(g Gomega) {
-				d, err := k8sClient.AppsV1().Deployments(cfg.LLMDNamespace).Get(ctx, deploymentName, metav1.GetOptions{})
+				d, err := k8sClient.AppsV1().Deployments(ns).Get(ctx, deploymentName, metav1.GetOptions{})
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(d.Status.ReadyReplicas).To(Equal(int32(1)))
 			}, time.Duration(cfg.PodReadyTimeout)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
 
 			By("Creating annotated scaler (no VA CR)")
 			if cfg.ScalerBackend == scalerBackendKeda {
-				err = fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace, hpaBaseName, deploymentName, hpaName, 1, 10, cfg.MonitoringNS,
+				err = fixtures.EnsureScaledObject(ctx, crClient, ns, hpaBaseName, deploymentName, hpaName, 1, 10, cfg.MonitoringNS,
 					fixtures.WithScaledObjectWVAAnnotations(cfg.ModelID, "30.0"))
 				Expect(err).NotTo(HaveOccurred(), "Failed to create annotated ScaledObject")
-				DeferCleanup(func() { _ = fixtures.DeleteScaledObject(ctx, crClient, cfg.LLMDNamespace, hpaBaseName) })
 			} else {
-				err = fixtures.EnsureHPA(ctx, k8sClient, cfg.LLMDNamespace, hpaBaseName, deploymentName, hpaName, 1, 10,
+				err = fixtures.EnsureHPA(ctx, k8sClient, ns, hpaBaseName, deploymentName, hpaName, 1, 10,
 					fixtures.WithWVAAnnotations(cfg.ModelID, "30.0"))
 				Expect(err).NotTo(HaveOccurred(), "Failed to create annotated HPA")
-				DeferCleanup(func() {
-					_ = k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Delete(ctx, hpaName, metav1.DeleteOptions{})
-				})
 			}
 		})
 
 		It("should not create a VariantAutoscaling CR", func() {
 			vaList := &variantautoscalingv1alpha1.VariantAutoscalingList{}
-			err := crClient.List(ctx, vaList, client.InNamespace(cfg.LLMDNamespace))
+			err := crClient.List(ctx, vaList, client.InNamespace(ns))
 			Expect(err).NotTo(HaveOccurred())
 			for _, va := range vaList.Items {
 				Expect(va.Name).NotTo(Equal(hpaName),
@@ -88,7 +94,7 @@ var _ = Describe("Annotation-based variant discovery", Serial, func() {
 			if cfg.ScalerBackend == scalerBackendKeda {
 				By("Verifying KEDA has read wva_desired_replicas from Prometheus")
 				Eventually(func(g Gomega) {
-					hpaList, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).List(ctx, metav1.ListOptions{})
+					hpaList, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(ns).List(ctx, metav1.ListOptions{})
 					g.Expect(err).NotTo(HaveOccurred())
 					var kedaHPA *autoscalingv2.HorizontalPodAutoscaler
 					for i := range hpaList.Items {
@@ -108,7 +114,7 @@ var _ = Describe("Annotation-based variant discovery", Serial, func() {
 				Eventually(func(g Gomega) {
 					result, err := k8sClient.RESTClient().
 						Get().
-						AbsPath("/apis/external.metrics.k8s.io/v1beta1/namespaces/" + cfg.LLMDNamespace + "/" + constants.WVADesiredReplicas).
+						AbsPath("/apis/external.metrics.k8s.io/v1beta1/namespaces/" + ns + "/" + constants.WVADesiredReplicas).
 						DoRaw(ctx)
 					if err != nil {
 						if errors.IsNotFound(err) {
@@ -140,22 +146,31 @@ var _ = Describe("Annotation-based variant discovery", Serial, func() {
 			deploymentName   = modelServiceName + "-decode"
 			hpaBaseName      = "ann-disc-label"
 			hpaName          = hpaBaseName + "-hpa"
+			ns               string
 		)
 
 		BeforeAll(func() {
+			nsObj, err := k8sClient.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{GenerateName: "ann-disc-b-"},
+			}, metav1.CreateOptions{})
+			Expect(err).NotTo(HaveOccurred(), "Failed to create isolated test namespace")
+			ns = nsObj.Name
+			By("Using isolated test namespace " + ns)
+			DeferCleanup(func() {
+				By("Deleting isolated namespace " + ns)
+				if err := k8sClient.CoreV1().Namespaces().Delete(ctx, ns, metav1.DeleteOptions{}); err != nil {
+					GinkgoWriter.Printf("Warning: failed to delete namespace %s: %v\n", ns, err)
+				}
+			})
+
 			By("Creating model service deployment WITH llm-d.ai/variant label")
 			// Pass hpaName as vaName so the pod template carries llm-d.ai/variant=<hpaName>.
-			err := fixtures.EnsureModelService(ctx, k8sClient, cfg.LLMDNamespace, modelServiceName, poolName, cfg.ModelID, hpaName, cfg.UseSimulator, cfg.MaxNumSeqs)
+			err = fixtures.EnsureModelService(ctx, k8sClient, ns, modelServiceName, poolName, cfg.ModelID, hpaName, cfg.UseSimulator, cfg.MaxNumSeqs)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create model service")
-
-			DeferCleanup(func() {
-				_ = k8sClient.AppsV1().Deployments(cfg.LLMDNamespace).Delete(ctx, deploymentName, metav1.DeleteOptions{})
-				_ = k8sClient.CoreV1().Services(cfg.LLMDNamespace).Delete(ctx, modelServiceName+"-service", metav1.DeleteOptions{})
-			})
 
 			By("Verifying pod template carries llm-d.ai/variant label")
 			Eventually(func(g Gomega) {
-				d, err := k8sClient.AppsV1().Deployments(cfg.LLMDNamespace).Get(ctx, deploymentName, metav1.GetOptions{})
+				d, err := k8sClient.AppsV1().Deployments(ns).Get(ctx, deploymentName, metav1.GetOptions{})
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(d.Spec.Template.Labels).To(HaveKeyWithValue("llm-d.ai/variant", hpaName),
 					"Pod template must carry llm-d.ai/variant=%s", hpaName)
@@ -163,30 +178,26 @@ var _ = Describe("Annotation-based variant discovery", Serial, func() {
 
 			By("Waiting for deployment to be ready")
 			Eventually(func(g Gomega) {
-				d, err := k8sClient.AppsV1().Deployments(cfg.LLMDNamespace).Get(ctx, deploymentName, metav1.GetOptions{})
+				d, err := k8sClient.AppsV1().Deployments(ns).Get(ctx, deploymentName, metav1.GetOptions{})
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(d.Status.ReadyReplicas).To(Equal(int32(1)))
 			}, time.Duration(cfg.PodReadyTimeout)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
 
 			By("Creating annotated scaler (no VA CR)")
 			if cfg.ScalerBackend == scalerBackendKeda {
-				err = fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace, hpaBaseName, deploymentName, hpaName, 1, 10, cfg.MonitoringNS,
+				err = fixtures.EnsureScaledObject(ctx, crClient, ns, hpaBaseName, deploymentName, hpaName, 1, 10, cfg.MonitoringNS,
 					fixtures.WithScaledObjectWVAAnnotations(cfg.ModelID, "30.0"))
 				Expect(err).NotTo(HaveOccurred(), "Failed to create annotated ScaledObject")
-				DeferCleanup(func() { _ = fixtures.DeleteScaledObject(ctx, crClient, cfg.LLMDNamespace, hpaBaseName) })
 			} else {
-				err = fixtures.EnsureHPA(ctx, k8sClient, cfg.LLMDNamespace, hpaBaseName, deploymentName, hpaName, 1, 10,
+				err = fixtures.EnsureHPA(ctx, k8sClient, ns, hpaBaseName, deploymentName, hpaName, 1, 10,
 					fixtures.WithWVAAnnotations(cfg.ModelID, "30.0"))
 				Expect(err).NotTo(HaveOccurred(), "Failed to create annotated HPA")
-				DeferCleanup(func() {
-					_ = k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Delete(ctx, hpaName, metav1.DeleteOptions{})
-				})
 			}
 		})
 
 		It("should not create a VariantAutoscaling CR", func() {
 			vaList := &variantautoscalingv1alpha1.VariantAutoscalingList{}
-			err := crClient.List(ctx, vaList, client.InNamespace(cfg.LLMDNamespace))
+			err := crClient.List(ctx, vaList, client.InNamespace(ns))
 			Expect(err).NotTo(HaveOccurred())
 			for _, va := range vaList.Items {
 				Expect(va.Name).NotTo(Equal(hpaName),
@@ -198,7 +209,7 @@ var _ = Describe("Annotation-based variant discovery", Serial, func() {
 			if cfg.ScalerBackend == scalerBackendKeda {
 				By("Verifying KEDA has read wva_desired_replicas from Prometheus")
 				Eventually(func(g Gomega) {
-					hpaList, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).List(ctx, metav1.ListOptions{})
+					hpaList, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(ns).List(ctx, metav1.ListOptions{})
 					g.Expect(err).NotTo(HaveOccurred())
 					var kedaHPA *autoscalingv2.HorizontalPodAutoscaler
 					for i := range hpaList.Items {
@@ -217,7 +228,7 @@ var _ = Describe("Annotation-based variant discovery", Serial, func() {
 				Eventually(func(g Gomega) {
 					result, err := k8sClient.RESTClient().
 						Get().
-						AbsPath("/apis/external.metrics.k8s.io/v1beta1/namespaces/" + cfg.LLMDNamespace + "/" + constants.WVADesiredReplicas).
+						AbsPath("/apis/external.metrics.k8s.io/v1beta1/namespaces/" + ns + "/" + constants.WVADesiredReplicas).
 						DoRaw(ctx)
 					if err != nil {
 						if errors.IsNotFound(err) {
