@@ -107,15 +107,19 @@ var _ = Describe("KEDA Smoke Tests - Basic Autoscaling", Label("smoke", "keda", 
 		By("Using isolated test namespace " + ns)
 
 		DeferCleanup(func() {
-			_ = k8sClient.CoreV1().Namespaces().Delete(ctx, ns, metav1.DeleteOptions{})
+			By("Deleting isolated namespace " + ns)
+			if err := k8sClient.CoreV1().Namespaces().Delete(ctx, ns, metav1.DeleteOptions{}); err != nil {
+				GinkgoWriter.Printf("WARNING: failed to delete namespace %s: %v\n", ns, err)
+			}
 		})
 		DeferCleanup(func() {
-			_ = crClient.Delete(ctx, &promoperator.ServiceMonitor{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      modelServiceName + "-monitor",
-					Namespace: cfg.MonitoringNS,
-				},
-			})
+			smName := modelServiceName + "-monitor"
+			By("Deleting ServiceMonitor " + smName)
+			if err := crClient.Delete(ctx, &promoperator.ServiceMonitor{
+				ObjectMeta: metav1.ObjectMeta{Name: smName, Namespace: cfg.MonitoringNS},
+			}); err != nil {
+				GinkgoWriter.Printf("WARNING: failed to delete ServiceMonitor %s: %v\n", smName, err)
+			}
 		})
 
 		if cfg.ScaleToZeroEnabled {
@@ -277,7 +281,10 @@ var _ = Describe("KEDA Smoke Tests - Error Handling", Label("smoke", "keda", "fu
 		By("Using isolated test namespace " + ns)
 
 		DeferCleanup(func() {
-			_ = k8sClient.CoreV1().Namespaces().Delete(ctx, ns, metav1.DeleteOptions{})
+			By("Deleting isolated namespace " + ns)
+			if err := k8sClient.CoreV1().Namespaces().Delete(ctx, ns, metav1.DeleteOptions{}); err != nil {
+				GinkgoWriter.Printf("WARNING: failed to delete namespace %s: %v\n", ns, err)
+			}
 		})
 
 		By("Creating model service deployment for error handling tests")
