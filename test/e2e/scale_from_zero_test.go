@@ -56,16 +56,14 @@ func cleanupScaleFromZeroResources() {
 	}
 
 	// Delete all ScaledObjects with scale-from-zero prefix (KEDA)
-	if cfg.ScalerBackend == scalerBackendKeda {
-		soList := &unstructured.UnstructuredList{}
-		soList.SetAPIVersion("keda.sh/v1alpha1")
-		soList.SetKind("ScaledObjectList")
-		if err := crClient.List(ctx, soList, client.InNamespace(cfg.LLMDNamespace)); err == nil {
-			for _, so := range soList.Items {
-				if isScaleFromZeroResource(so.GetName()) {
-					GinkgoWriter.Printf("  Deleting ScaledObject: %s\n", so.GetName())
-					_ = crClient.Delete(ctx, &so)
-				}
+	soList := &unstructured.UnstructuredList{}
+	soList.SetAPIVersion("keda.sh/v1alpha1")
+	soList.SetKind("ScaledObjectList")
+	if err := crClient.List(ctx, soList, client.InNamespace(cfg.LLMDNamespace)); err == nil {
+		for _, so := range soList.Items {
+			if isScaleFromZeroResource(so.GetName()) {
+				GinkgoWriter.Printf("  Deleting ScaledObject: %s\n", so.GetName())
+				_ = crClient.Delete(ctx, &so)
 			}
 		}
 	}
@@ -153,14 +151,10 @@ var _ = Describe("Scale-From-Zero Feature", Serial, Label("full"), Ordered, func
 	)
 
 	BeforeAll(func() {
-		// Scale-from-zero requires GIE flow control and an InferenceObjective.
-		// On platforms where HPA rejects minReplicas=0 (e.g. OpenShift without
-		// HPAScaleToZero feature gate), SCALER_BACKEND=keda must be set so the
-		// test creates a KEDA ScaledObject instead of a native HPA.
-		if cfg.ScalerBackend != scalerBackendKeda && !cfg.ScaleToZeroEnabled {
-			Skip("This suite needs minReplicas=0 on the scaler: set SCALER_BACKEND=\"keda\" " +
-				"or SCALE_TO_ZERO_ENABLED=true (ignored on OpenShift without HPAScaleToZero — use KEDA); " +
-				"current configuration does not support that scaler shape")
+		// Scale-from-zero requires GIE flow control queuing (EPP flowControl feature gate).
+		if !cfg.ScaleToZeroEnabled {
+			Skip("This suite requires EPP flow-control queuing: " +
+				"set SCALE_TO_ZERO_ENABLED=true (required for EPP flow-control queuing)")
 		}
 
 		By("Cleaning up any existing scale-from-zero test resources")
@@ -278,15 +272,9 @@ var _ = Describe("Scale-From-Zero Feature", Serial, Label("full"), Ordered, func
 		)
 		Expect(err).NotTo(HaveOccurred(), "Failed to create VariantAutoscaling")
 
-		By("Creating scaler with minReplicas=0 (HPA or ScaledObject per backend)")
-		if cfg.ScalerBackend == scalerBackendKeda {
-			_ = k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Delete(ctx, hpaName+"-hpa", metav1.DeleteOptions{})
-			err = fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace, hpaName, modelServiceName+"-decode", vaName, 0, 10, cfg.MonitoringNS)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create ScaledObject with scale-to-zero")
-		} else {
-			err = fixtures.EnsureHPA(ctx, k8sClient, cfg.LLMDNamespace, hpaName, modelServiceName+"-decode", vaName, 0, 10)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create HPA with scale-to-zero")
-		}
+		By("Creating scaler with minReplicas=0 (ScaledObject)")
+		err = fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace, hpaName, modelServiceName+"-decode", vaName, 0, 10, cfg.MonitoringNS)
+		Expect(err).NotTo(HaveOccurred(), "Failed to create ScaledObject with scale-to-zero")
 
 		By("Waiting for VA to reconcile (avoid fixed sleeps)")
 		// Historically this test used a long fixed sleep to allow the controller and its
@@ -307,12 +295,8 @@ var _ = Describe("Scale-From-Zero Feature", Serial, Label("full"), Ordered, func
 	AfterAll(func() {
 		By("Cleaning up scale-from-zero test resources")
 
-		// Delete scaler (HPA or ScaledObject)
-		if cfg.ScalerBackend == scalerBackendKeda {
-			_ = fixtures.DeleteScaledObject(ctx, crClient, cfg.LLMDNamespace, hpaName)
-		} else {
-			_ = k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Delete(ctx, hpaName+"-hpa", metav1.DeleteOptions{})
-		}
+		// Delete scaler (ScaledObject)
+		_ = fixtures.DeleteScaledObject(ctx, crClient, cfg.LLMDNamespace, hpaName)
 
 		// Delete VA
 		va := &variantautoscalingv1alpha1.VariantAutoscaling{
@@ -360,24 +344,16 @@ var _ = Describe("Scale-From-Zero Feature", Serial, Label("full"), Ordered, func
 		})
 
 		It("should have scaler configured with minReplicas=0", func() {
-			if cfg.ScalerBackend == scalerBackendKeda {
-				By("Verifying ScaledObject allows scale-to-zero")
-				so := &unstructured.Unstructured{}
-				so.SetAPIVersion("keda.sh/v1alpha1")
-				so.SetKind("ScaledObject")
-				err := crClient.Get(ctx, client.ObjectKey{Namespace: cfg.LLMDNamespace, Name: hpaName + "-so"}, so)
-				Expect(err).NotTo(HaveOccurred())
-				minReplicas, found, err := unstructured.NestedInt64(so.Object, "spec", "minReplicaCount")
-				Expect(err).NotTo(HaveOccurred())
-				Expect(found).To(BeTrue(), "ScaledObject should have minReplicaCount")
-				Expect(minReplicas).To(Equal(int64(0)), "ScaledObject should allow scale-to-zero")
-			} else {
-				By("Verifying HPA allows scale-to-zero")
-				hpa, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Get(ctx, hpaName+"-hpa", metav1.GetOptions{})
-				Expect(err).NotTo(HaveOccurred())
-				Expect(hpa.Spec.MinReplicas).NotTo(BeNil(), "HPA should have MinReplicas set")
-				Expect(*hpa.Spec.MinReplicas).To(Equal(int32(0)), "HPA should allow scale-to-zero")
-			}
+			By("Verifying ScaledObject allows scale-to-zero")
+			so := &unstructured.Unstructured{}
+			so.SetAPIVersion("keda.sh/v1alpha1")
+			so.SetKind("ScaledObject")
+			err := crClient.Get(ctx, client.ObjectKey{Namespace: cfg.LLMDNamespace, Name: hpaName + "-so"}, so)
+			Expect(err).NotTo(HaveOccurred())
+			minReplicas, found, err := unstructured.NestedInt64(so.Object, "spec", "minReplicaCount")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue(), "ScaledObject should have minReplicaCount")
+			Expect(minReplicas).To(Equal(int64(0)), "ScaledObject should allow scale-to-zero")
 		})
 	})
 
@@ -629,14 +605,10 @@ var _ = Describe("Scale-From-Zero Feature with LeaderWorkerSet", Serial, Label("
 	)
 
 	BeforeAll(func() {
-		// Scale-from-zero requires GIE flow control and an InferenceObjective.
-		// On platforms where HPA rejects minReplicas=0 (e.g. OpenShift without
-		// HPAScaleToZero feature gate), SCALER_BACKEND=keda must be set so the
-		// test creates a KEDA ScaledObject instead of a native HPA.
-		if cfg.ScalerBackend != scalerBackendKeda && !cfg.ScaleToZeroEnabled {
-			Skip("This suite needs minReplicas=0 on the scaler: set SCALER_BACKEND=\"keda\" " +
-				"or SCALE_TO_ZERO_ENABLED=true (ignored on OpenShift without HPAScaleToZero — use KEDA); " +
-				"current configuration does not support that scaler shape")
+		// Scale-from-zero requires GIE flow control queuing (EPP flowControl feature gate).
+		if !cfg.ScaleToZeroEnabled {
+			Skip("This suite requires EPP flow-control queuing: " +
+				"set SCALE_TO_ZERO_ENABLED=true (required for EPP flow-control queuing)")
 		}
 
 		By("Cleaning up any existing scale-from-zero test resources")
@@ -794,35 +766,16 @@ var _ = Describe("Scale-From-Zero Feature with LeaderWorkerSet", Serial, Label("
 				})
 		})
 
-		By("Creating scaler with minReplicas=0 (HPA or ScaledObject per backend)")
-		if cfg.ScalerBackend == scalerBackendKeda {
-			_ = k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Delete(ctx, hpaName+"-hpa", metav1.DeleteOptions{})
-			err = fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace, hpaName, lwsName, vaName, 0, 10, cfg.MonitoringNS,
-				fixtures.WithScaledObjectScaleTargetKind("LeaderWorkerSet"))
-			Expect(err).NotTo(HaveOccurred(), "Failed to create ScaledObject with scale-to-zero")
-		} else {
-			err = fixtures.EnsureHPA(ctx, k8sClient, cfg.LLMDNamespace, hpaName, lwsName, vaName, 0, 10,
-				fixtures.WithScaleTargetRefKind("LeaderWorkerSet"))
-			Expect(err).NotTo(HaveOccurred(), "Failed to create HPA with scale-to-zero")
-		}
+		By("Creating scaler with minReplicas=0 (ScaledObject)")
+		err = fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace, hpaName, lwsName, vaName, 0, 10, cfg.MonitoringNS,
+			fixtures.WithScaledObjectScaleTargetKind("LeaderWorkerSet"))
+		Expect(err).NotTo(HaveOccurred(), "Failed to create ScaledObject with scale-to-zero")
 
 		// Register cleanup for scaler
 		DeferCleanup(func() {
-			if cfg.ScalerBackend == scalerBackendKeda {
-				err := fixtures.DeleteScaledObject(ctx, crClient, cfg.LLMDNamespace, hpaName)
-				if err != nil && !errors.IsNotFound(err) {
-					GinkgoWriter.Printf("Warning: failed to delete ScaledObject: %v\n", err)
-				}
-			} else {
-				hpaNameFull := hpaName + "-hpa"
-				cleanupResource(ctx, "HPA", cfg.LLMDNamespace, hpaNameFull,
-					func() error {
-						return k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Delete(ctx, hpaNameFull, metav1.DeleteOptions{})
-					},
-					func() bool {
-						_, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Get(ctx, hpaNameFull, metav1.GetOptions{})
-						return errors.IsNotFound(err)
-					})
+			err := fixtures.DeleteScaledObject(ctx, crClient, cfg.LLMDNamespace, hpaName)
+			if err != nil && !errors.IsNotFound(err) {
+				GinkgoWriter.Printf("Warning: failed to delete ScaledObject: %v\n", err)
 			}
 		})
 
@@ -876,32 +829,23 @@ var _ = Describe("Scale-From-Zero Feature with LeaderWorkerSet", Serial, Label("
 		})
 
 		It("should have scaler configured with minReplicas=0 for LWS", func() {
-			if cfg.ScalerBackend == scalerBackendKeda {
-				By("Verifying ScaledObject allows scale-to-zero for LWS")
-				so := &unstructured.Unstructured{}
-				so.SetAPIVersion("keda.sh/v1alpha1")
-				so.SetKind("ScaledObject")
-				err := crClient.Get(ctx, client.ObjectKey{Namespace: cfg.LLMDNamespace, Name: hpaName + "-so"}, so)
-				Expect(err).NotTo(HaveOccurred())
+			By("Verifying ScaledObject allows scale-to-zero for LWS")
+			so := &unstructured.Unstructured{}
+			so.SetAPIVersion("keda.sh/v1alpha1")
+			so.SetKind("ScaledObject")
+			err := crClient.Get(ctx, client.ObjectKey{Namespace: cfg.LLMDNamespace, Name: hpaName + "-so"}, so)
+			Expect(err).NotTo(HaveOccurred())
 
-				minReplicas, found, err := unstructured.NestedInt64(so.Object, "spec", "minReplicaCount")
-				Expect(err).NotTo(HaveOccurred())
-				Expect(found).To(BeTrue(), "ScaledObject should have minReplicaCount")
-				Expect(minReplicas).To(Equal(int64(0)), "ScaledObject should allow scale-to-zero")
+			minReplicas, found, err := unstructured.NestedInt64(so.Object, "spec", "minReplicaCount")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue(), "ScaledObject should have minReplicaCount")
+			Expect(minReplicas).To(Equal(int64(0)), "ScaledObject should allow scale-to-zero")
 
-				// Verify ScaledObject targets LeaderWorkerSet
-				scaleTargetRef, found, err := unstructured.NestedMap(so.Object, "spec", "scaleTargetRef")
-				Expect(err).NotTo(HaveOccurred())
-				Expect(found).To(BeTrue(), "ScaledObject should have scaleTargetRef")
-				Expect(scaleTargetRef["kind"]).To(Equal("LeaderWorkerSet"), "ScaledObject should target LeaderWorkerSet")
-			} else {
-				By("Verifying HPA allows scale-to-zero for LWS")
-				hpa, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Get(ctx, hpaName+"-hpa", metav1.GetOptions{})
-				Expect(err).NotTo(HaveOccurred())
-				Expect(hpa.Spec.MinReplicas).NotTo(BeNil(), "HPA should have MinReplicas set")
-				Expect(*hpa.Spec.MinReplicas).To(Equal(int32(0)), "HPA should allow scale-to-zero")
-				Expect(hpa.Spec.ScaleTargetRef.Kind).To(Equal("LeaderWorkerSet"), "HPA should target LeaderWorkerSet")
-			}
+			// Verify ScaledObject targets LeaderWorkerSet
+			scaleTargetRef, found, err := unstructured.NestedMap(so.Object, "spec", "scaleTargetRef")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue(), "ScaledObject should have scaleTargetRef")
+			Expect(scaleTargetRef["kind"]).To(Equal("LeaderWorkerSet"), "ScaledObject should target LeaderWorkerSet")
 		})
 	})
 
@@ -1059,14 +1003,10 @@ var _ = Describe("Scale-From-Zero Feature with LeaderWorkerSet (single-node)", S
 	)
 
 	BeforeAll(func() {
-		// Scale-from-zero requires GIE flow control and an InferenceObjective.
-		// On platforms where HPA rejects minReplicas=0 (e.g. OpenShift without
-		// HPAScaleToZero feature gate), SCALER_BACKEND=keda must be set so the
-		// test creates a KEDA ScaledObject instead of a native HPA.
-		if cfg.ScalerBackend != scalerBackendKeda && !cfg.ScaleToZeroEnabled {
-			Skip("This suite needs minReplicas=0 on the scaler: set SCALER_BACKEND=\"keda\" " +
-				"or SCALE_TO_ZERO_ENABLED=true (ignored on OpenShift without HPAScaleToZero — use KEDA); " +
-				"current configuration does not support that scaler shape")
+		// Scale-from-zero requires GIE flow control queuing (EPP flowControl feature gate).
+		if !cfg.ScaleToZeroEnabled {
+			Skip("This suite requires EPP flow-control queuing: " +
+				"set SCALE_TO_ZERO_ENABLED=true (required for EPP flow-control queuing)")
 		}
 
 		By("Cleaning up any existing scale-from-zero test resources")
@@ -1224,35 +1164,16 @@ var _ = Describe("Scale-From-Zero Feature with LeaderWorkerSet (single-node)", S
 				})
 		})
 
-		By("Creating scaler with minReplicas=0 (HPA or ScaledObject per backend)")
-		if cfg.ScalerBackend == scalerBackendKeda {
-			_ = k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Delete(ctx, hpaName+"-hpa", metav1.DeleteOptions{})
-			err = fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace, hpaName, lwsName, vaName, 0, 10, cfg.MonitoringNS,
-				fixtures.WithScaledObjectScaleTargetKind("LeaderWorkerSet"))
-			Expect(err).NotTo(HaveOccurred(), "Failed to create ScaledObject with scale-to-zero")
-		} else {
-			err = fixtures.EnsureHPA(ctx, k8sClient, cfg.LLMDNamespace, hpaName, lwsName, vaName, 0, 10,
-				fixtures.WithScaleTargetRefKind("LeaderWorkerSet"))
-			Expect(err).NotTo(HaveOccurred(), "Failed to create HPA with scale-to-zero")
-		}
+		By("Creating scaler with minReplicas=0 (ScaledObject)")
+		err = fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace, hpaName, lwsName, vaName, 0, 10, cfg.MonitoringNS,
+			fixtures.WithScaledObjectScaleTargetKind("LeaderWorkerSet"))
+		Expect(err).NotTo(HaveOccurred(), "Failed to create ScaledObject with scale-to-zero")
 
 		// Register cleanup for scaler
 		DeferCleanup(func() {
-			if cfg.ScalerBackend == scalerBackendKeda {
-				err := fixtures.DeleteScaledObject(ctx, crClient, cfg.LLMDNamespace, hpaName)
-				if err != nil && !errors.IsNotFound(err) {
-					GinkgoWriter.Printf("Warning: failed to delete ScaledObject: %v\n", err)
-				}
-			} else {
-				hpaNameFull := hpaName + "-hpa"
-				cleanupResource(ctx, "HPA", cfg.LLMDNamespace, hpaNameFull,
-					func() error {
-						return k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Delete(ctx, hpaNameFull, metav1.DeleteOptions{})
-					},
-					func() bool {
-						_, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Get(ctx, hpaNameFull, metav1.GetOptions{})
-						return errors.IsNotFound(err)
-					})
+			err := fixtures.DeleteScaledObject(ctx, crClient, cfg.LLMDNamespace, hpaName)
+			if err != nil && !errors.IsNotFound(err) {
+				GinkgoWriter.Printf("Warning: failed to delete ScaledObject: %v\n", err)
 			}
 		})
 
@@ -1306,32 +1227,23 @@ var _ = Describe("Scale-From-Zero Feature with LeaderWorkerSet (single-node)", S
 		})
 
 		It("should have scaler configured with minReplicas=0 for single-node LWS", func() {
-			if cfg.ScalerBackend == scalerBackendKeda {
-				By("Verifying ScaledObject allows scale-to-zero for single-node LWS")
-				so := &unstructured.Unstructured{}
-				so.SetAPIVersion("keda.sh/v1alpha1")
-				so.SetKind("ScaledObject")
-				err := crClient.Get(ctx, client.ObjectKey{Namespace: cfg.LLMDNamespace, Name: hpaName + "-so"}, so)
-				Expect(err).NotTo(HaveOccurred())
+			By("Verifying ScaledObject allows scale-to-zero for single-node LWS")
+			so := &unstructured.Unstructured{}
+			so.SetAPIVersion("keda.sh/v1alpha1")
+			so.SetKind("ScaledObject")
+			err := crClient.Get(ctx, client.ObjectKey{Namespace: cfg.LLMDNamespace, Name: hpaName + "-so"}, so)
+			Expect(err).NotTo(HaveOccurred())
 
-				minReplicas, found, err := unstructured.NestedInt64(so.Object, "spec", "minReplicaCount")
-				Expect(err).NotTo(HaveOccurred())
-				Expect(found).To(BeTrue(), "ScaledObject should have minReplicaCount")
-				Expect(minReplicas).To(Equal(int64(0)), "ScaledObject should allow scale-to-zero")
+			minReplicas, found, err := unstructured.NestedInt64(so.Object, "spec", "minReplicaCount")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue(), "ScaledObject should have minReplicaCount")
+			Expect(minReplicas).To(Equal(int64(0)), "ScaledObject should allow scale-to-zero")
 
-				// Verify ScaledObject targets LeaderWorkerSet
-				scaleTargetRef, found, err := unstructured.NestedMap(so.Object, "spec", "scaleTargetRef")
-				Expect(err).NotTo(HaveOccurred())
-				Expect(found).To(BeTrue(), "ScaledObject should have scaleTargetRef")
-				Expect(scaleTargetRef["kind"]).To(Equal("LeaderWorkerSet"), "ScaledObject should target LeaderWorkerSet")
-			} else {
-				By("Verifying HPA allows scale-to-zero for single-node LWS")
-				hpa, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Get(ctx, hpaName+"-hpa", metav1.GetOptions{})
-				Expect(err).NotTo(HaveOccurred())
-				Expect(hpa.Spec.MinReplicas).NotTo(BeNil(), "HPA should have MinReplicas set")
-				Expect(*hpa.Spec.MinReplicas).To(Equal(int32(0)), "HPA should allow scale-to-zero")
-				Expect(hpa.Spec.ScaleTargetRef.Kind).To(Equal("LeaderWorkerSet"), "HPA should target LeaderWorkerSet")
-			}
+			// Verify ScaledObject targets LeaderWorkerSet
+			scaleTargetRef, found, err := unstructured.NestedMap(so.Object, "spec", "scaleTargetRef")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue(), "ScaledObject should have scaleTargetRef")
+			Expect(scaleTargetRef["kind"]).To(Equal("LeaderWorkerSet"), "ScaledObject should target LeaderWorkerSet")
 		})
 	})
 

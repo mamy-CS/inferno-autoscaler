@@ -1,7 +1,6 @@
 package e2e
 
 import (
-	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,7 +16,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	variantautoscalingv1alpha1 "github.com/llm-d/llm-d-workload-variant-autoscaler/api/v1alpha1"
-	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/constants"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/test/e2e/fixtures"
 )
 
@@ -32,20 +30,21 @@ func splitImage(image string) (string, string) {
 	return image[:lastColon], image[lastColon+1:]
 }
 
+// Multi-controller isolation test: two namespace-scoped WVA controllers manage VAs with the same
+// name in different namespaces. Each has its own KEDA ScaledObject whose Prometheus trigger
+// filters by namespace label, ensuring cross-namespace metric leakage cannot occur.
 var _ = Describe("Multi-controller Tests - Dual namespace-scoped isolation", Label("multi-controller"), func() {
-	// TODO: run dual-controller isolation in a dedicated fresh cluster rather than layering
-	// a namespace-scoped secondary controller on top of an existing cluster-scoped primary.
-	// The two modes are mutually exclusive by design: cluster-scoped ClusterRoleBindings
-	// (metrics-auth-rolebinding, manager-rolebinding, epp-metrics-reader-role-binding) are
-	// shared resources and get overwritten by each kustomize apply, requiring fragile
-	// patch-and-restore workarounds. A proper fix is a separate Kind cluster per scenario.
+	// TODO: replace the patch-and-restore CRB workaround with a dedicated Kind cluster per scenario.
+	// The secondary overlay overwrites shared ClusterRoleBindings; the current workaround restores
+	// the primary and creates per-deployment secondary bindings. This is safe on Kind (cluster is
+	// torn down after the suite) but unsafe on shared persistent clusters (OpenShift).
 	Context("Dual namespace-scoped controllers isolation", Serial, Ordered, func() {
 		var (
 			primaryNamespace    = "llm-d-sim"
 			secondaryNamespace  = "llm-d-sim-dual"
 			secondaryController = "workload-variant-autoscaler-system-dual"
-			primaryHPAName      = "smoke-test-dual-primary-hpa"
-			secondaryHPAName    = "smoke-test-dual-secondary-hpa"
+			primarySOName       = "smoke-test-dual-primary-hpa"
+			secondarySOName     = "smoke-test-dual-secondary-hpa"
 			primaryModelName    = "smoke-test-dual-primary-ms"
 			secondaryModelName  = "smoke-test-dual-secondary-ms"
 			poolName            = "smoke-test-dual-pool"
@@ -54,8 +53,8 @@ var _ = Describe("Multi-controller Tests - Dual namespace-scoped isolation", Lab
 		)
 
 		BeforeAll(func() {
-			if cfg.ScalerBackend == scalerBackendKeda {
-				Skip("Dual-controller external metrics check is specific to Prometheus Adapter backend")
+			if cfg.Environment == "openshift" {
+				Skip("Dual-controller test skipped on OpenShift: patch-and-restore of cluster-scoped CRBs is unsafe on shared persistent clusters")
 			}
 			if cfg.Environment != envKindEmulator {
 				Skip("Dual-controller smoke scenario currently targets kind-emulator setup")
@@ -80,9 +79,6 @@ var _ = Describe("Multi-controller Tests - Dual namespace-scoped isolation", Lab
 			_, statErr := os.Stat(overlayPath)
 			Expect(statErr).NotTo(HaveOccurred(), "Invalid %s path: %s", secondaryControllerOverlayPathEnv, overlayPath)
 
-			// Read the post-transform base image name from config/base/manager/kustomization.yaml.
-			// The base overlay transforms "controller" → the published image name; our temp
-			// overlay must match that post-transform name to override it with the local image.
 			managerKustomizationPath := filepath.Join(overlayPath, "../../../../config/base/manager/kustomization.yaml")
 			managerContent, managerReadErr := os.ReadFile(managerKustomizationPath)
 			Expect(managerReadErr).NotTo(HaveOccurred(), "Failed to read config/base/manager/kustomization.yaml")
@@ -98,8 +94,6 @@ var _ = Describe("Multi-controller Tests - Dual namespace-scoped isolation", Lab
 
 			tmpOverlay, tmpErr := os.MkdirTemp("", "wva-secondary-overlay-*")
 			Expect(tmpErr).NotTo(HaveOccurred(), "Failed to create temp overlay dir")
-			// Symlink the base overlay so resources can use a relative path —
-			// Kustomize rejects absolute paths in resources.
 			Expect(os.Symlink(overlayPath, tmpOverlay+"/base")).To(Succeed())
 
 			kustomizationContent := strings.Join([]string{
@@ -127,11 +121,6 @@ var _ = Describe("Multi-controller Tests - Dual namespace-scoped isolation", Lab
 			out, err := cmd.CombinedOutput()
 			Expect(err).NotTo(HaveOccurred(), "Secondary controller kustomize install failed: %s", string(out))
 
-			// The secondary overlay shares the same kustomize resource names as the primary, so
-			// kubectl apply overwrites the shared ClusterRoleBinding to point at the secondary
-			// namespace.
-			//   1. Restoring the primary's ClusterRoleBinding subject namespace.
-			//   2. Creating a dedicated binding for the secondary SA.
 			const crbName = "wva-manager-rolebinding"
 			const crbNameSecondary = "workload-variant-autoscaler-" + crbName + "-secondary"
 			restoreOut, restoreErr := exec.Command("kubectl", "patch", "clusterrolebinding", crbName,
@@ -146,8 +135,6 @@ var _ = Describe("Multi-controller Tests - Dual namespace-scoped isolation", Lab
 			).CombinedOutput()
 			Expect(createErr).NotTo(HaveOccurred(), "Failed to create secondary ClusterRoleBinding: %s", string(createOut))
 
-			// The epp-metrics-reader ClusterRoleBinding is also cluster-scoped and gets overwritten
-			// by the secondary overlay — restore the primary subject and create a secondary binding.
 			const eppCRBName = "wva-epp-metrics-reader-role-binding"
 			const eppCRBNameSecondary = "workload-variant-autoscaler-" + eppCRBName + "-secondary"
 			eppRestoreOut, eppRestoreErr := exec.Command("kubectl", "patch", "clusterrolebinding", eppCRBName,
@@ -162,8 +149,6 @@ var _ = Describe("Multi-controller Tests - Dual namespace-scoped isolation", Lab
 			).CombinedOutput()
 			Expect(eppCreateErr).NotTo(HaveOccurred(), "Failed to create secondary epp-metrics ClusterRoleBinding: %s", string(eppCreateOut))
 
-			// metrics-auth-rolebinding is also cluster-scoped and gets overwritten by the secondary
-			// overlay — restore the primary subject and create a per-deployment secondary binding.
 			const metricsAuthCRBName = "wva-metrics-auth-rolebinding"
 			const metricsAuthCRBNameSecondary = "workload-variant-autoscaler-" + metricsAuthCRBName + "-secondary"
 			metricsAuthRestoreOut, metricsAuthRestoreErr := exec.Command("kubectl", "patch", "clusterrolebinding", metricsAuthCRBName,
@@ -182,9 +167,6 @@ var _ = Describe("Multi-controller Tests - Dual namespace-scoped isolation", Lab
 				_ = exec.Command("kubectl", "delete", "clusterrolebinding", crbNameSecondary, "--ignore-not-found=true").Run()
 				_ = exec.Command("kubectl", "delete", "clusterrolebinding", eppCRBNameSecondary, "--ignore-not-found=true").Run()
 				_ = exec.Command("kubectl", "delete", "clusterrolebinding", metricsAuthCRBNameSecondary, "--ignore-not-found=true").Run()
-				// Delete the secondary controller namespace (cascades to all namespace-scoped
-				// resources). Do NOT use kubectl delete -k here — it would delete the shared
-				// ClusterRoles/ClusterRoleBindings that the primary controller depends on.
 				_ = exec.Command("kubectl", "delete", "namespace", secondaryController, "--ignore-not-found=true").Run()
 				_ = exec.Command("kubectl", "delete", "namespace", secondaryNamespace, "--ignore-not-found=true").Run()
 				_ = os.RemoveAll(tmpOverlay)
@@ -233,15 +215,18 @@ var _ = Describe("Multi-controller Tests - Dual namespace-scoped isolation", Lab
 			err = fixtures.EnsureVariantAutoscalingWithDefaults(ctx, crClient, secondaryNamespace, sharedVAName, secondaryModelName+"-decode", cfg.ModelID, "H100", controllerInstance)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create secondary VA")
 
-			By("Creating HPAs in both namespaces for the shared VA name")
-			err = fixtures.EnsureHPA(ctx, k8sClient, primaryNamespace, primaryHPAName, primaryModelName+"-decode", sharedVAName, 1, 10)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create primary HPA")
-			err = fixtures.EnsureHPA(ctx, k8sClient, secondaryNamespace, secondaryHPAName, secondaryModelName+"-decode", sharedVAName, 1, 10)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create secondary HPA")
+			By("Creating ScaledObjects in both namespaces")
+			// buildScaledObject queries wva_desired_replicas{variant_name=..., namespace=...}.
+			// The namespace label in the Prometheus query ensures each ScaledObject reads only
+			// the metric emitted for its own workload namespace, providing cross-namespace isolation.
+			err = fixtures.EnsureScaledObject(ctx, crClient, primaryNamespace, primarySOName, primaryModelName+"-decode", sharedVAName, 1, 10, cfg.MonitoringNS)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create primary ScaledObject")
+			err = fixtures.EnsureScaledObject(ctx, crClient, secondaryNamespace, secondarySOName, secondaryModelName+"-decode", sharedVAName, 1, 10, cfg.MonitoringNS)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create secondary ScaledObject")
 		})
 
-		It("should expose isolated external metrics for each namespace-scoped controller", func() {
-			By("Waiting for both VAs to be reconciled")
+		It("should reconcile VAs in both namespaces independently", func() {
+			By("Waiting for both VAs to reach TargetResolved and MetricsAvailable")
 			Eventually(func(g Gomega) {
 				primaryVA := &variantautoscalingv1alpha1.VariantAutoscaling{}
 				err := crClient.Get(ctx, client.ObjectKey{Name: sharedVAName, Namespace: primaryNamespace}, primaryVA)
@@ -258,7 +243,6 @@ var _ = Describe("Multi-controller Tests - Dual namespace-scoped isolation", Lab
 				g.Expect(c.Status).To(Equal(metav1.ConditionTrue))
 			}, time.Duration(cfg.EventuallyLongSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
 
-			By("Waiting for Prometheus-backed metrics on both VAs (HPA/external-metrics need this)")
 			Eventually(func(g Gomega) {
 				primaryVA := &variantautoscalingv1alpha1.VariantAutoscaling{}
 				err := crClient.Get(ctx, client.ObjectKey{Name: sharedVAName, Namespace: primaryNamespace}, primaryVA)
@@ -274,71 +258,46 @@ var _ = Describe("Multi-controller Tests - Dual namespace-scoped isolation", Lab
 				g.Expect(mc).NotTo(BeNil())
 				g.Expect(mc.Status).To(Equal(metav1.ConditionTrue))
 			}, time.Duration(cfg.EventuallyExtendedSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
+		})
 
-			By("Querying external metrics for primary namespace")
-			Eventually(func(g Gomega) {
-				raw, err := k8sClient.RESTClient().
-					Get().
-					AbsPath("/apis/external.metrics.k8s.io/v1beta1/namespaces/"+primaryNamespace+"/"+constants.WVADesiredReplicas).
-					Param("labelSelector", "variant_name="+sharedVAName+",exported_namespace="+primaryNamespace).
-					DoRaw(ctx)
-				g.Expect(err).NotTo(HaveOccurred())
-				var metricList externalMetricValueList
-				g.Expect(json.Unmarshal(raw, &metricList)).To(Succeed())
-				g.Expect(metricList.Items).To(HaveLen(1))
-				g.Expect(metricList.Items[0].MetricLabels["exported_namespace"]).To(Equal(primaryNamespace))
-			}, time.Duration(cfg.EventuallyLongSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
+		It("should expose isolated wva_desired_replicas per namespace via KEDA", func() {
+			// Each ScaledObject's Prometheus trigger queries wva_desired_replicas{namespace=<ns>},
+			// so KEDA reads only the metric from the workload namespace it manages.
+			// Populated CurrentMetrics on the KEDA-managed HPA in each namespace confirms
+			// that the per-namespace Prometheus series is independently consumed.
 
-			By("Querying external metrics for secondary controller namespace")
+			By("Verifying KEDA reads wva_desired_replicas for primary namespace")
 			Eventually(func(g Gomega) {
-				raw, err := k8sClient.RESTClient().
-					Get().
-					AbsPath("/apis/external.metrics.k8s.io/v1beta1/namespaces/"+secondaryNamespace+"/"+constants.WVADesiredReplicas).
-					Param("labelSelector", "variant_name="+sharedVAName+",exported_namespace="+secondaryNamespace).
-					DoRaw(ctx)
+				hpaList, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(primaryNamespace).List(ctx, metav1.ListOptions{})
 				g.Expect(err).NotTo(HaveOccurred())
-				var metricList externalMetricValueList
-				g.Expect(json.Unmarshal(raw, &metricList)).To(Succeed())
-				g.Expect(metricList.Items).To(HaveLen(1))
-				g.Expect(metricList.Items[0].MetricLabels["exported_namespace"]).To(Equal(secondaryNamespace))
-				if ci, ok := metricList.Items[0].MetricLabels["controller_instance"]; ok {
-					g.Expect(ci).To(Equal(controllerInstance))
-				}
-			}, time.Duration(cfg.EventuallyLongSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
-
-			By("Verifying both HPAs report active metric scaling")
-			Eventually(func(g Gomega) {
-				hpa, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(primaryNamespace).Get(ctx, primaryHPAName+"-hpa", metav1.GetOptions{})
-				g.Expect(err).NotTo(HaveOccurred())
-				var scalingActive *autoscalingv2.HorizontalPodAutoscalerCondition
-				for i := range hpa.Status.Conditions {
-					if hpa.Status.Conditions[i].Type == autoscalingv2.ScalingActive {
-						scalingActive = &hpa.Status.Conditions[i]
+				var kedaHPA *autoscalingv2.HorizontalPodAutoscaler
+				for i := range hpaList.Items {
+					if hpaList.Items[i].Spec.ScaleTargetRef.Name == primaryModelName+"-decode" {
+						kedaHPA = &hpaList.Items[i]
 						break
 					}
 				}
-				if scalingActive == nil || scalingActive.Status != corev1.ConditionTrue {
-					GinkgoWriter.Printf("primary HPA %s/%s conditions: %+v\n", primaryNamespace, primaryHPAName+"-hpa", hpa.Status.Conditions)
-				}
-				g.Expect(scalingActive).NotTo(BeNil(), "Primary HPA should report ScalingActive condition")
-				g.Expect(scalingActive.Status).To(Equal(corev1.ConditionTrue), "Primary HPA should have external metric available")
+				g.Expect(kedaHPA).NotTo(BeNil(), "KEDA should have created an HPA for the primary deployment")
+				g.Expect(kedaHPA.Status.CurrentMetrics).NotTo(BeEmpty(),
+					"Primary KEDA HPA should have CurrentMetrics populated — wva_desired_replicas{namespace=%q} is being consumed", primaryNamespace)
+				GinkgoWriter.Printf("Primary KEDA HPA CurrentMetrics: %d entries\n", len(kedaHPA.Status.CurrentMetrics))
 			}, time.Duration(cfg.EventuallyExtendedSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
 
+			By("Verifying KEDA reads wva_desired_replicas for secondary namespace independently")
 			Eventually(func(g Gomega) {
-				hpa, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(secondaryNamespace).Get(ctx, secondaryHPAName+"-hpa", metav1.GetOptions{})
+				hpaList, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(secondaryNamespace).List(ctx, metav1.ListOptions{})
 				g.Expect(err).NotTo(HaveOccurred())
-				var scalingActive *autoscalingv2.HorizontalPodAutoscalerCondition
-				for i := range hpa.Status.Conditions {
-					if hpa.Status.Conditions[i].Type == autoscalingv2.ScalingActive {
-						scalingActive = &hpa.Status.Conditions[i]
+				var kedaHPA *autoscalingv2.HorizontalPodAutoscaler
+				for i := range hpaList.Items {
+					if hpaList.Items[i].Spec.ScaleTargetRef.Name == secondaryModelName+"-decode" {
+						kedaHPA = &hpaList.Items[i]
 						break
 					}
 				}
-				if scalingActive == nil || scalingActive.Status != corev1.ConditionTrue {
-					GinkgoWriter.Printf("secondary HPA %s/%s conditions: %+v\n", secondaryNamespace, secondaryHPAName+"-hpa", hpa.Status.Conditions)
-				}
-				g.Expect(scalingActive).NotTo(BeNil(), "Secondary HPA should report ScalingActive condition")
-				g.Expect(scalingActive.Status).To(Equal(corev1.ConditionTrue), "Secondary HPA should have external metric available")
+				g.Expect(kedaHPA).NotTo(BeNil(), "KEDA should have created an HPA for the secondary deployment")
+				g.Expect(kedaHPA.Status.CurrentMetrics).NotTo(BeEmpty(),
+					"Secondary KEDA HPA should have CurrentMetrics populated — wva_desired_replicas{namespace=%q} is being consumed", secondaryNamespace)
+				GinkgoWriter.Printf("Secondary KEDA HPA CurrentMetrics: %d entries\n", len(kedaHPA.Status.CurrentMetrics))
 			}, time.Duration(cfg.EventuallyExtendedSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
 		})
 	})

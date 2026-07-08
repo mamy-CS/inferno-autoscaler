@@ -118,20 +118,11 @@ var _ = Describe("GPU Limiter Feature", Label("full"), Ordered, func() {
 		)
 		Expect(err).NotTo(HaveOccurred(), "Failed to create VA B")
 
-		By("Creating scalers for both deployments (HPA or ScaledObject per backend)")
-		if cfg.ScalerBackend == scalerBackendKeda {
-			_ = k8sClient.AutoscalingV2().HorizontalPodAutoscalers(ns).Delete(ctx, hpaA+"-hpa", metav1.DeleteOptions{})
-			_ = k8sClient.AutoscalingV2().HorizontalPodAutoscalers(ns).Delete(ctx, hpaB+"-hpa", metav1.DeleteOptions{})
-			err = fixtures.EnsureScaledObject(ctx, crClient, ns, hpaA, modelServiceA+"-decode", vaA, 1, 10, cfg.MonitoringNS)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create ScaledObject A")
-			err = fixtures.EnsureScaledObject(ctx, crClient, ns, hpaB, modelServiceB+"-decode", vaB, 1, 10, cfg.MonitoringNS)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create ScaledObject B")
-		} else {
-			err = fixtures.EnsureHPA(ctx, k8sClient, ns, hpaA, modelServiceA+"-decode", vaA, 1, 10)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create HPA A")
-			err = fixtures.EnsureHPA(ctx, k8sClient, ns, hpaB, modelServiceB+"-decode", vaB, 1, 10)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create HPA B")
-		}
+		By("Creating ScaledObjects for both deployments")
+		err = fixtures.EnsureScaledObject(ctx, crClient, ns, hpaA, modelServiceA+"-decode", vaA, 1, 10, cfg.MonitoringNS)
+		Expect(err).NotTo(HaveOccurred(), "Failed to create ScaledObject A")
+		err = fixtures.EnsureScaledObject(ctx, crClient, ns, hpaB, modelServiceB+"-decode", vaB, 1, 10, cfg.MonitoringNS)
+		Expect(err).NotTo(HaveOccurred(), "Failed to create ScaledObject B")
 
 		GinkgoWriter.Println("GPU Limiter test setup complete with two VAs (NVIDIA and AMD accelerators)")
 	})
