@@ -244,7 +244,7 @@ var _ = Describe("Smoke Tests - Infrastructure Readiness", Label("smoke", "full"
 			By("Creating annotated HPAs in both namespaces with the same base name (overlapping variant name)")
 			// Both HPAs share sharedHPABase, so each is named sharedVariantName within
 			// its namespace and WVA emits wva_desired_replicas{variant_name=sharedVariantName}
-			// for both — isolated only by exported_namespace. The vaName arg wires the
+			// for both — isolated only by exported_namespace. The variantName arg wires the
 			// HPA's own external-metric selector to the same variant_name/namespace.
 			err = fixtures.EnsureHPA(ctx, k8sClient, primaryNamespace, sharedHPABase, primaryModelName+"-decode", sharedVariantName, 1, 10,
 				fixtures.WithWVAAnnotations(cfg.ModelID, "30.0"))

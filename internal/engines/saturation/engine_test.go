@@ -228,11 +228,15 @@ var _ = Describe("Saturation Engine", func() {
 			engine := NewEngine(k8sClient, k8sClient, k8sClient.Scheme(), fakeRecorder, sourceRegistry, testConfig)
 
 			By("Performing optimization loop")
-			// The variants are discovered from the annotated HPAs created above;
-			// the loop must complete without error. Metric emission (not CRD status)
-			// is the engine's output, so there is no VA status to assert on.
 			err := engine.optimize(ctx)
 			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying Prometheus was queried for the discovered variants")
+			// Each annotated HPA is synthesized into an in-memory variant; the engine
+			// queries Prometheus for saturation metrics for each. Non-empty QueryCallCounts
+			// proves the variants were discovered and fed through the saturation pipeline.
+			Expect(mockPromAPI.QueryCallCounts).NotTo(BeEmpty(),
+				"engine should have queried Prometheus for at least one discovered variant")
 		})
 	})
 

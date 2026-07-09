@@ -26,7 +26,7 @@ const (
 // sglangEmitterScript is served at :8000/metrics. Counters grow with elapsed time
 // so rate()/increase() are non-zero; gauges hold a fixed saturated operating
 // point. The served model name is read from the MODEL env var so it matches the
-// VariantAutoscaling's modelID.
+// model ID annotation on the annotated scaler.
 const sglangEmitterScript = `import os, time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -84,11 +84,10 @@ HTTPServer(("0.0.0.0", 8000), H).serve_forever()
 // it as SGLang. It creates a ConfigMap ("<name>-sglang-script") and a Deployment
 // ("<name>-decode").
 //
-// Pair it with CreateService/EnsureServiceMonitor (appLabel "<name>-decode") and a
-// VariantAutoscaling whose ScaleTargetRef.Name is "<name>-decode". vaName is
-// stamped as the llm-d.ai/variant pod label for metric attribution (pass "" to
-// skip). The emitted metrics carry model_name == modelID.
-func CreateSGLangEmulator(ctx context.Context, k8sClient *kubernetes.Clientset, namespace, name, modelID, vaName string) error {
+// Pair it with CreateService/EnsureServiceMonitor (appLabel "<name>-decode").
+// variantName is stamped as the llm-d.ai/variant pod label for metric attribution
+// (pass "" to skip). The emitted metrics carry model_name == modelID.
+func CreateSGLangEmulator(ctx context.Context, k8sClient *kubernetes.Clientset, namespace, name, modelID, variantName string) error {
 	appLabel := name + decodeNameSuffix
 	cmName := name + sglangScriptSuffix
 
@@ -109,8 +108,8 @@ func CreateSGLangEmulator(ctx context.Context, k8sClient *kubernetes.Clientset, 
 		"llm-d.ai/inferenceServing": defaultLabelValueTrue,
 		"test-resource":             defaultTestResourceLabelValue,
 	}
-	if vaName != "" {
-		labels["llm-d.ai/variant"] = vaName
+	if variantName != "" {
+		labels["llm-d.ai/variant"] = variantName
 	}
 
 	deployment := &appsv1.Deployment{

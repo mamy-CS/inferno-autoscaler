@@ -251,7 +251,7 @@ var _ = BeforeSuite(func() {
 	GinkgoWriter.Println("BeforeSuite completed successfully - infrastructure ready")
 })
 
-// ReportAfterEach dumps controller logs and VA status after a failed test.
+// ReportAfterEach dumps controller logs and managed scaler state after a failed test.
 // This makes E2E failures self-contained and easier to debug (why scaling happened / didn't happen).
 var _ = ReportAfterEach(func(report SpecReport) {
 	if !report.Failed() {

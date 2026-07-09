@@ -57,12 +57,12 @@ func WithScaledObjectWVAAnnotations(modelID, cost string) ScaledObjectOption {
 func CreateScaledObject(
 	ctx context.Context,
 	crClient client.Client,
-	namespace, name, scaleTargetName, vaName string,
+	namespace, name, scaleTargetName, variantName string,
 	minReplicas, maxReplicas int32,
 	monitoringNamespace string,
 	opts ...ScaledObjectOption,
 ) error {
-	return crClient.Create(ctx, buildScaledObject(namespace, name, scaleTargetName, vaName, minReplicas, maxReplicas, monitoringNamespace, opts...))
+	return crClient.Create(ctx, buildScaledObject(namespace, name, scaleTargetName, variantName, minReplicas, maxReplicas, monitoringNamespace, opts...))
 }
 
 // scaledObjectRef returns a minimal typed object for ScaledObject identity (Get/Delete).
@@ -89,12 +89,12 @@ func DeleteScaledObject(ctx context.Context, crClient client.Client, namespace, 
 func EnsureScaledObject(
 	ctx context.Context,
 	crClient client.Client,
-	namespace, name, scaleTargetName, vaName string,
+	namespace, name, scaleTargetName, variantName string,
 	minReplicas, maxReplicas int32,
 	monitoringNamespace string,
 	opts ...ScaledObjectOption,
 ) error {
-	obj := buildScaledObject(namespace, name, scaleTargetName, vaName, minReplicas, maxReplicas, monitoringNamespace, opts...)
+	obj := buildScaledObject(namespace, name, scaleTargetName, variantName, minReplicas, maxReplicas, monitoringNamespace, opts...)
 	existing := scaledObjectRef(namespace, name)
 	key := client.ObjectKey{Namespace: namespace, Name: obj.GetName()}
 	err := crClient.Get(ctx, key, existing)
@@ -119,12 +119,12 @@ func EnsureScaledObject(
 	return crClient.Create(ctx, obj)
 }
 
-func buildScaledObject(namespace, name, scaleTargetName, vaName string, minReplicas, maxReplicas int32, monitoringNamespace string, opts ...ScaledObjectOption) *kedav1alpha1.ScaledObject {
+func buildScaledObject(namespace, name, scaleTargetName, variantName string, minReplicas, maxReplicas int32, monitoringNamespace string, opts ...ScaledObjectOption) *kedav1alpha1.ScaledObject {
 	objName := name + scaledObjectSuffix
 	prometheusURL := "https://kube-prometheus-stack-prometheus." + monitoringNamespace + ".svc.cluster.local:9090"
 	// Use "namespace" not "exported_namespace": WVA controller emits the metric with label namespace;
 	// exported_namespace is only used by Prometheus Adapter for the external metrics API.
-	query := fmt.Sprintf("wva_desired_replicas{variant_name=%q,namespace=%q}", vaName, namespace)
+	query := fmt.Sprintf("wva_desired_replicas{variant_name=%q,namespace=%q}", variantName, namespace)
 
 	spec := kedav1alpha1.ScaledObjectSpec{
 		ScaleTargetRef: &kedav1alpha1.ScaleTarget{

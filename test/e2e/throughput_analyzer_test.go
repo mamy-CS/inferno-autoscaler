@@ -232,9 +232,9 @@ var _ = Describe("ThroughputAnalyzer wiring health check", Label("smoke", "throu
 		cmExistedBefore bool
 		cmKey           string
 		cmNamespace     string
-		// vaName is the variant_name — the annotated scaler's OBJECT name — stamped
+		// variantName is the variant_name — the annotated scaler's OBJECT name — stamped
 		// as the decode pods' llm-d.ai/variant label for metric attribution.
-		vaName string
+		variantName string
 	)
 
 	BeforeAll(func() {
@@ -243,9 +243,9 @@ var _ = Describe("ThroughputAnalyzer wiring health check", Label("smoke", "throu
 		cmNamespace = cfg.WVANamespace
 		cmKey = defaultConfigKey
 		if cfg.ScalerBackend == scalerBackendKeda {
-			vaName = modelSvcName + "-so"
+			variantName = modelSvcName + "-so"
 		} else {
-			vaName = modelSvcName + "-hpa"
+			variantName = modelSvcName + "-hpa"
 		}
 
 		cm, err := k8sClient.CoreV1().ConfigMaps(cmNamespace).Get(ctx, cmName, metav1.GetOptions{})
@@ -266,7 +266,7 @@ var _ = Describe("ThroughputAnalyzer wiring health check", Label("smoke", "throu
 
 		By("Creating model service for throughput smoke test")
 		_ = fixtures.DeleteModelService(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName)
-		Expect(fixtures.CreateModelService(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName, poolName, modelID, vaName, cfg.UseSimulator, 2)).To(Succeed())
+		Expect(fixtures.CreateModelService(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName, poolName, modelID, variantName, cfg.UseSimulator, 2)).To(Succeed())
 		Expect(fixtures.EnsureService(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName, modelDecodeDeployment, 8000)).To(Succeed())
 		Expect(fixtures.EnsureServiceMonitor(ctx, crClient, cfg.MonitoringNS, cfg.LLMDNamespace, modelSvcName, modelDecodeDeployment)).To(Succeed())
 
@@ -279,11 +279,11 @@ var _ = Describe("ThroughputAnalyzer wiring health check", Label("smoke", "throu
 
 		By("Registering the deployment with WVA via an annotated scaler (both analyzers enabled)")
 		if cfg.ScalerBackend == scalerBackendKeda {
-			Expect(fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace, modelSvcName, modelDecodeDeployment, vaName, 1, 10, cfg.MonitoringNS,
+			Expect(fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace, modelSvcName, modelDecodeDeployment, variantName, 1, 10, cfg.MonitoringNS,
 				fixtures.WithScaledObjectWVAAnnotations(modelID, "30.0"))).To(Succeed())
 			DeferCleanup(func() { _ = fixtures.DeleteScaledObject(ctx, crClient, cfg.LLMDNamespace, modelSvcName) })
 		} else {
-			Expect(fixtures.EnsureHPA(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName, modelDecodeDeployment, vaName, 1, 10,
+			Expect(fixtures.EnsureHPA(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName, modelDecodeDeployment, variantName, 1, 10,
 				fixtures.WithWVAAnnotations(modelID, "30.0"))).To(Succeed())
 			DeferCleanup(func() {
 				_ = k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Delete(ctx, modelSvcName+"-hpa", metav1.DeleteOptions{})
@@ -358,7 +358,7 @@ var _ = Describe("ThroughputAnalyzer wiring health check", Label("smoke", "throu
 // ─── Scenario 2: Multi-Analyzer Engine Scale-Up (full/throughput) ─────────────
 //
 // Validates the multi-analyzer engine end-to-end: with BOTH analyzers registered,
-// the engine produces a scale-up decision that propagates to VA status. Scale-up is
+// the engine produces a scale-up decision that propagates to wva_desired_replicas. Scale-up is
 // driven by the SATURATION analyzer via a faked kv-cache-usage gauge — the throughput
 // analyzer's inputs are rates of counters/histograms that static --fake-metrics cannot
 // drive (zero rate), so throughput cannot be exercised here. Its own scale-up math is
@@ -381,11 +381,11 @@ var _ = Describe("Multi-analyzer engine scale-up (saturation-driven, throughput 
 		cmExistedBefore bool
 		cmKey           string
 		cmNamespace     string
-		// vaName is the variant_name — the annotated scaler's OBJECT name
+		// variantName is the variant_name — the annotated scaler's OBJECT name
 		// (modelSvcName+"-so" for KEDA, +"-hpa" for the adapter) — stamped as the
 		// decode pods' llm-d.ai/variant label so the collector attributes their
 		// metrics to the variant. Set from the backend below.
-		vaName string
+		variantName string
 	)
 
 	BeforeAll(func() {
@@ -394,9 +394,9 @@ var _ = Describe("Multi-analyzer engine scale-up (saturation-driven, throughput 
 		cmNamespace = cfg.WVANamespace
 		cmKey = defaultConfigKey
 		if cfg.ScalerBackend == scalerBackendKeda {
-			vaName = modelSvcName + "-so"
+			variantName = modelSvcName + "-so"
 		} else {
-			vaName = modelSvcName + "-hpa"
+			variantName = modelSvcName + "-hpa"
 		}
 
 		cm, err := k8sClient.CoreV1().ConfigMaps(cmNamespace).Get(ctx, cmName, metav1.GetOptions{})
@@ -422,7 +422,7 @@ var _ = Describe("Multi-analyzer engine scale-up (saturation-driven, throughput 
 
 		By("Creating model service with faked saturation metrics for scale-up")
 		_ = fixtures.DeleteModelService(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName)
-		Expect(fixtures.CreateModelServiceWithExtraArgs(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName, poolName, modelID, vaName,
+		Expect(fixtures.CreateModelServiceWithExtraArgs(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName, poolName, modelID, variantName,
 			cfg.UseSimulator, 2, []string{"--fake-metrics", throughputScaleUpFakeMetricsJSON})).To(Succeed())
 		Expect(fixtures.EnsureService(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName, modelDecodeDeployment, 8000)).To(Succeed())
 		Expect(fixtures.EnsureServiceMonitor(ctx, crClient, cfg.MonitoringNS, cfg.LLMDNamespace, modelSvcName, modelDecodeDeployment)).To(Succeed())
@@ -436,11 +436,11 @@ var _ = Describe("Multi-analyzer engine scale-up (saturation-driven, throughput 
 
 		By("Registering the deployment with WVA via an annotated scaler (both analyzers enabled)")
 		if cfg.ScalerBackend == scalerBackendKeda {
-			Expect(fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace, modelSvcName, modelDecodeDeployment, vaName, 1, 10, cfg.MonitoringNS,
+			Expect(fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace, modelSvcName, modelDecodeDeployment, variantName, 1, 10, cfg.MonitoringNS,
 				fixtures.WithScaledObjectWVAAnnotations(modelID, "30.0"))).To(Succeed())
 			DeferCleanup(func() { _ = fixtures.DeleteScaledObject(ctx, crClient, cfg.LLMDNamespace, modelSvcName) })
 		} else {
-			Expect(fixtures.EnsureHPA(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName, modelDecodeDeployment, vaName, 1, 10,
+			Expect(fixtures.EnsureHPA(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName, modelDecodeDeployment, variantName, 1, 10,
 				fixtures.WithWVAAnnotations(modelID, "30.0"))).To(Succeed())
 			DeferCleanup(func() {
 				_ = k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Delete(ctx, modelSvcName+"-hpa", metav1.DeleteOptions{})
@@ -481,7 +481,7 @@ var _ = Describe("Multi-analyzer engine scale-up (saturation-driven, throughput 
 		// (formerly VariantAutoscaling.Status.DesiredOptimizedAlloc), decoupled from
 		// the separate scaler actuation loop.
 		Eventually(func(g Gomega) {
-			expectWVARaisesDesiredReplicas(g, cfg.LLMDNamespace, vaName, modelDecodeDeployment, 1)
+			expectWVARaisesDesiredReplicas(g, cfg.LLMDNamespace, variantName, modelDecodeDeployment, 1)
 		}, time.Duration(cfg.EventuallyExtendedSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
 	})
 })
@@ -505,9 +505,9 @@ var _ = Describe("ThroughputAnalyzer TA-only mode", Label("full", "throughput"),
 		cmExistedBefore bool
 		cmKey           string
 		cmNamespace     string
-		// vaName is the variant_name — the annotated scaler's OBJECT name — stamped
+		// variantName is the variant_name — the annotated scaler's OBJECT name — stamped
 		// as the decode pods' llm-d.ai/variant label for metric attribution.
-		vaName string
+		variantName string
 	)
 
 	BeforeAll(func() {
@@ -516,9 +516,9 @@ var _ = Describe("ThroughputAnalyzer TA-only mode", Label("full", "throughput"),
 		cmNamespace = cfg.WVANamespace
 		cmKey = defaultConfigKey
 		if cfg.ScalerBackend == scalerBackendKeda {
-			vaName = modelSvcName + "-so"
+			variantName = modelSvcName + "-so"
 		} else {
-			vaName = modelSvcName + "-hpa"
+			variantName = modelSvcName + "-hpa"
 		}
 
 		cm, err := k8sClient.CoreV1().ConfigMaps(cmNamespace).Get(ctx, cmName, metav1.GetOptions{})
@@ -539,7 +539,7 @@ var _ = Describe("ThroughputAnalyzer TA-only mode", Label("full", "throughput"),
 
 		By("Creating model service for TA-only test")
 		_ = fixtures.DeleteModelService(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName)
-		Expect(fixtures.CreateModelService(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName, poolName, modelID, vaName, cfg.UseSimulator, 2)).To(Succeed())
+		Expect(fixtures.CreateModelService(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName, poolName, modelID, variantName, cfg.UseSimulator, 2)).To(Succeed())
 		Expect(fixtures.EnsureService(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName, modelDecodeDeployment, 8000)).To(Succeed())
 		Expect(fixtures.EnsureServiceMonitor(ctx, crClient, cfg.MonitoringNS, cfg.LLMDNamespace, modelSvcName, modelDecodeDeployment)).To(Succeed())
 
@@ -552,11 +552,11 @@ var _ = Describe("ThroughputAnalyzer TA-only mode", Label("full", "throughput"),
 
 		By("Registering the deployment with WVA via an annotated scaler (TA-only config)")
 		if cfg.ScalerBackend == scalerBackendKeda {
-			Expect(fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace, modelSvcName, modelDecodeDeployment, vaName, 1, 10, cfg.MonitoringNS,
+			Expect(fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace, modelSvcName, modelDecodeDeployment, variantName, 1, 10, cfg.MonitoringNS,
 				fixtures.WithScaledObjectWVAAnnotations(modelID, "30.0"))).To(Succeed())
 			DeferCleanup(func() { _ = fixtures.DeleteScaledObject(ctx, crClient, cfg.LLMDNamespace, modelSvcName) })
 		} else {
-			Expect(fixtures.EnsureHPA(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName, modelDecodeDeployment, vaName, 1, 10,
+			Expect(fixtures.EnsureHPA(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName, modelDecodeDeployment, variantName, 1, 10,
 				fixtures.WithWVAAnnotations(modelID, "30.0"))).To(Succeed())
 			DeferCleanup(func() {
 				_ = k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Delete(ctx, modelSvcName+"-hpa", metav1.DeleteOptions{})

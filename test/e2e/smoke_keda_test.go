@@ -93,10 +93,10 @@ var _ = Describe("KEDA Smoke Tests - Basic Autoscaling", Label("smoke", "keda", 
 		poolName         = "smoke-test-pool"
 		modelServiceName = "smoke-test-ms"
 		deploymentName   = modelServiceName + "-decode"
-		// vaName is the variant name: it is used as the ScaledObject's variantName
-		// (the variant_name label on wva_desired_replicas) and as the
-		// llm-d.ai/variant pod label on the model service. The two must match.
-		vaName      = "smoke-test-va"
+		// variantName is both the ScaledObject's variant_name label selector value
+		// (on wva_desired_replicas) and the model service's llm-d.ai/variant pod
+		// label. The two must match for metric attribution.
+		variantName = "smoke-test-va"
 		scalerName  = "smoke-test-hpa" // base name; ScaledObject will be scalerName+"-so"
 		minReplicas = int32(1)
 	)
@@ -130,7 +130,7 @@ var _ = Describe("KEDA Smoke Tests - Basic Autoscaling", Label("smoke", "keda", 
 		}
 
 		By("Creating model service deployment")
-		err = fixtures.EnsureModelService(ctx, k8sClient, ns, modelServiceName, poolName, cfg.ModelID, vaName, cfg.UseSimulator, cfg.MaxNumSeqs)
+		err = fixtures.EnsureModelService(ctx, k8sClient, ns, modelServiceName, poolName, cfg.ModelID, variantName, cfg.UseSimulator, cfg.MaxNumSeqs)
 		Expect(err).NotTo(HaveOccurred(), "Failed to create model service")
 
 		By("Creating service to expose model server")
@@ -149,7 +149,7 @@ var _ = Describe("KEDA Smoke Tests - Basic Autoscaling", Label("smoke", "keda", 
 		}, time.Duration(cfg.PodReadyTimeout)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
 
 		By("Creating annotated ScaledObject (both WVA discovery source and scaler)")
-		err = fixtures.EnsureScaledObject(ctx, crClient, ns, scalerName, deploymentName, vaName, minReplicas, 10, cfg.MonitoringNS,
+		err = fixtures.EnsureScaledObject(ctx, crClient, ns, scalerName, deploymentName, variantName, minReplicas, 10, cfg.MonitoringNS,
 			fixtures.WithScaledObjectWVAAnnotations(cfg.ModelID, "30.0"))
 		Expect(err).NotTo(HaveOccurred(), "Failed to create ScaledObject")
 	})
@@ -242,10 +242,10 @@ var _ = Describe("KEDA Smoke Tests - Error Handling", Label("smoke", "keda", "fu
 		errorTestPoolName         = "error-test-pool"
 		errorTestModelServiceName = "error-test-ms"
 		errorTestDeploymentName   = errorTestModelServiceName + "-decode"
-		// errorTestVAName is the variant name used as the ScaledObject's
+		// errorTestVariantName is the variant name used as the ScaledObject's
 		// variantName and the model service's llm-d.ai/variant pod label.
-		errorTestVAName = "error-test-va"
-		errorScalerName = "error-test-hpa" // base name; ScaledObject will be errorScalerName+"-so"
+		errorTestVariantName = "error-test-va"
+		errorScalerName      = "error-test-hpa" // base name; ScaledObject will be errorScalerName+"-so"
 	)
 
 	BeforeAll(func() {
@@ -264,7 +264,7 @@ var _ = Describe("KEDA Smoke Tests - Error Handling", Label("smoke", "keda", "fu
 		})
 
 		By("Creating model service deployment for error handling tests")
-		err = fixtures.EnsureModelService(ctx, k8sClient, ns, errorTestModelServiceName, errorTestPoolName, cfg.ModelID, errorTestVAName, cfg.UseSimulator, cfg.MaxNumSeqs)
+		err = fixtures.EnsureModelService(ctx, k8sClient, ns, errorTestModelServiceName, errorTestPoolName, cfg.ModelID, errorTestVariantName, cfg.UseSimulator, cfg.MaxNumSeqs)
 		Expect(err).NotTo(HaveOccurred(), "Failed to create model service")
 
 		By("Waiting for model service to be ready")
@@ -275,7 +275,7 @@ var _ = Describe("KEDA Smoke Tests - Error Handling", Label("smoke", "keda", "fu
 		}, time.Duration(cfg.PodReadyTimeout)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
 
 		By("Creating annotated ScaledObject (both WVA discovery source and scaler)")
-		err = fixtures.EnsureScaledObject(ctx, crClient, ns, errorScalerName, errorTestDeploymentName, errorTestVAName, 1, 10, cfg.MonitoringNS,
+		err = fixtures.EnsureScaledObject(ctx, crClient, ns, errorScalerName, errorTestDeploymentName, errorTestVariantName, 1, 10, cfg.MonitoringNS,
 			fixtures.WithScaledObjectWVAAnnotations(cfg.ModelID, "30.0"))
 		Expect(err).NotTo(HaveOccurred(), "Failed to create ScaledObject")
 	})
@@ -302,7 +302,7 @@ var _ = Describe("KEDA Smoke Tests - Error Handling", Label("smoke", "keda", "fu
 		Expect(err).NotTo(HaveOccurred(), "ScaledObject should continue to exist after deployment deletion")
 
 		By("Recreating the deployment")
-		err = fixtures.EnsureModelService(ctx, k8sClient, ns, errorTestModelServiceName, errorTestPoolName, cfg.ModelID, errorTestVAName, cfg.UseSimulator, cfg.MaxNumSeqs)
+		err = fixtures.EnsureModelService(ctx, k8sClient, ns, errorTestModelServiceName, errorTestPoolName, cfg.ModelID, errorTestVariantName, cfg.UseSimulator, cfg.MaxNumSeqs)
 		Expect(err).NotTo(HaveOccurred(), "Failed to recreate model service")
 
 		By("Waiting for deployment to be ready after recreation")

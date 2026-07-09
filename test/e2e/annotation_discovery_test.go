@@ -151,7 +151,7 @@ var _ = Describe("Annotation-based variant discovery", Serial, func() {
 			})
 
 			By("Creating model service deployment WITH llm-d.ai/variant label")
-			// Pass hpaName as vaName so the pod template carries llm-d.ai/variant=<hpaName>.
+			// Pass hpaName as variantName so the pod template carries llm-d.ai/variant=<hpaName>.
 			err = fixtures.EnsureModelService(ctx, k8sClient, ns, modelServiceName, poolName, cfg.ModelID, hpaName, cfg.UseSimulator, cfg.MaxNumSeqs)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create model service")
 

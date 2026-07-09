@@ -59,11 +59,11 @@ func WithScaleTargetRefKind(kind string) HPAOption {
 func CreateHPA(
 	ctx context.Context,
 	k8sClient *kubernetes.Clientset,
-	namespace, name, deploymentName, vaName string,
+	namespace, name, deploymentName, variantName string,
 	minReplicas, maxReplicas int32,
 	opts ...HPAOption,
 ) error {
-	hpa := buildHPA(namespace, name, deploymentName, vaName, minReplicas, maxReplicas, opts...)
+	hpa := buildHPA(namespace, name, deploymentName, variantName, minReplicas, maxReplicas, opts...)
 	_, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(namespace).Create(ctx, hpa, metav1.CreateOptions{})
 	return err
 }
@@ -82,11 +82,11 @@ func DeleteHPA(ctx context.Context, k8sClient *kubernetes.Clientset, namespace, 
 func EnsureHPA(
 	ctx context.Context,
 	k8sClient *kubernetes.Clientset,
-	namespace, name, deploymentName, vaName string,
+	namespace, name, deploymentName, variantName string,
 	minReplicas, maxReplicas int32,
 	opts ...HPAOption,
 ) error {
-	hpa := buildHPA(namespace, name, deploymentName, vaName, minReplicas, maxReplicas, opts...)
+	hpa := buildHPA(namespace, name, deploymentName, variantName, minReplicas, maxReplicas, opts...)
 	_, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(namespace).Get(ctx, hpa.Name, metav1.GetOptions{})
 	if err != nil {
 		if !errors.IsNotFound(err) {
@@ -109,7 +109,7 @@ func EnsureHPA(
 	return err
 }
 
-func buildHPA(namespace, name, deploymentName, vaName string, minReplicas, maxReplicas int32, opts ...HPAOption) *autoscalingv2.HorizontalPodAutoscaler {
+func buildHPA(namespace, name, deploymentName, variantName string, minReplicas, maxReplicas int32, opts ...HPAOption) *autoscalingv2.HorizontalPodAutoscaler {
 	hpa := &autoscalingv2.HorizontalPodAutoscaler{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name + "-hpa",
@@ -132,7 +132,7 @@ func buildHPA(namespace, name, deploymentName, vaName string, minReplicas, maxRe
 							Name: "wva_desired_replicas",
 							Selector: &metav1.LabelSelector{
 								MatchLabels: map[string]string{
-									"variant_name":       vaName,
+									"variant_name":       variantName,
 									"exported_namespace": namespace,
 								},
 							},

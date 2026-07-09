@@ -250,10 +250,9 @@ var _ = Describe("Multi-controller Tests - Dual namespace-scoped isolation", Lab
 			})
 
 			// Stamp the controller-instance label on the secondary HPA so WVA's
-			// annotation discovery attributes its synthesized variant to the secondary
-			// controller (VariantAutoscalingFromHPA copies HPA labels; readyVariantAutoscalings
-			// filters by wva.llmd.ai/controller-instance). The primary HPA is left
-			// unlabeled so the cluster-scoped primary controller owns it.
+			// annotation discovery scopes it to the secondary controller.
+			// readyVariantAutoscalings filters synthesized variants by this label;
+			// the primary HPA is left unlabeled so the cluster-scoped primary controller owns it.
 			By("Labeling the secondary HPA with the controller-instance for isolation")
 			secondaryHPA, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(secondaryNamespace).Get(ctx, sharedVariantName, metav1.GetOptions{})
 			Expect(err).NotTo(HaveOccurred(), "Failed to read secondary HPA for labeling")
@@ -297,9 +296,7 @@ var _ = Describe("Multi-controller Tests - Dual namespace-scoped isolation", Lab
 				g.Expect(json.Unmarshal(raw, &metricList)).To(Succeed())
 				g.Expect(metricList.Items).To(HaveLen(1))
 				g.Expect(metricList.Items[0].MetricLabels["exported_namespace"]).To(Equal(secondaryNamespace))
-				if ci, ok := metricList.Items[0].MetricLabels["controller_instance"]; ok {
-					g.Expect(ci).To(Equal(controllerInstance))
-				}
+				g.Expect(metricList.Items[0].MetricLabels["controller_instance"]).To(Equal(controllerInstance))
 			}, time.Duration(cfg.EventuallyLongSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
 
 			By("Verifying both HPAs report active metric scaling")

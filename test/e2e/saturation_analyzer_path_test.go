@@ -10,13 +10,11 @@ import (
 	. "github.com/onsi/gomega"
 	promoperator "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	appsv1 "k8s.io/api/apps/v1"
-	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/config"
-	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/constants"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/test/e2e/fixtures"
 	testutils "github.com/llm-d/llm-d-workload-variant-autoscaler/test/utils"
 )
@@ -141,7 +139,7 @@ var _ = Describe("Saturation analyzer path and status propagation", Label("full"
 		// scaler and uses its OBJECT name as the variant_name label on
 		// wva_desired_replicas — that is base+"-so" for a KEDA ScaledObject and
 		// base+"-hpa" for an HPA. The decode pods must carry
-		// llm-d.ai/variant=<scaler object name> for metric attribution, so vaName is
+		// llm-d.ai/variant=<scaler object name> for metric attribution, so variantName is
 		// derived from the backend below.
 		scalerBaseName = "saturation-path"
 		hpaObjectName  = scalerBaseName + "-hpa"
@@ -155,10 +153,10 @@ var _ = Describe("Saturation analyzer path and status propagation", Label("full"
 		cmExistedBefore bool
 		cmKey           string
 		cmNamespace     string
-		// vaName is the variant_name — the scaler's object name — stamped as the
+		// variantName is the variant_name — the scaler's object name — stamped as the
 		// decode pods' llm-d.ai/variant label so the collector attributes their
 		// metrics to the variant. Set from the backend in BeforeAll.
-		vaName string
+		variantName string
 	)
 
 	BeforeAll(func() {
@@ -168,9 +166,9 @@ var _ = Describe("Saturation analyzer path and status propagation", Label("full"
 		}
 
 		if cfg.ScalerBackend == scalerBackendKeda {
-			vaName = soObjectName
+			variantName = soObjectName
 		} else {
-			vaName = hpaObjectName
+			variantName = hpaObjectName
 		}
 
 		modelID = cfg.ModelID
@@ -191,7 +189,7 @@ var _ = Describe("Saturation analyzer path and status propagation", Label("full"
 
 		By("Creating model service + service + ServiceMonitor for saturation path test")
 		_ = fixtures.DeleteModelService(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName)
-		err = fixtures.CreateModelServiceWithExtraArgs(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName, poolName, modelID, vaName,
+		err = fixtures.CreateModelServiceWithExtraArgs(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName, poolName, modelID, variantName,
 			cfg.UseSimulator, cfg.MaxNumSeqs, []string{"--fake-metrics", v1FakeMetricsJSON})
 		Expect(err).NotTo(HaveOccurred())
 		err = fixtures.EnsureService(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName, modelDecodeDeployment, 8000)
@@ -207,15 +205,15 @@ var _ = Describe("Saturation analyzer path and status propagation", Label("full"
 		}, time.Duration(cfg.PodReadyTimeout)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
 
 		By("Registering the saturation-path deployment with WVA via an annotated scaler")
-		// The scaler's vaName (variant name) matches the model service's vaName so the
+		// The scaler's variantName (variant name) matches the model service's variantName so the
 		// decode pods' llm-d.ai/variant label and wva_desired_replicas variant_name align.
 		if cfg.ScalerBackend == scalerBackendKeda {
-			err = fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace, scalerBaseName, modelDecodeDeployment, vaName, 1, 10, cfg.MonitoringNS,
+			err = fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace, scalerBaseName, modelDecodeDeployment, variantName, 1, 10, cfg.MonitoringNS,
 				fixtures.WithScaledObjectWVAAnnotations(modelID, "30.0"))
 			Expect(err).NotTo(HaveOccurred())
 			DeferCleanup(func() { _ = fixtures.DeleteScaledObject(ctx, crClient, cfg.LLMDNamespace, scalerBaseName) })
 		} else {
-			err = fixtures.EnsureHPA(ctx, k8sClient, cfg.LLMDNamespace, scalerBaseName, modelDecodeDeployment, vaName, 1, 10,
+			err = fixtures.EnsureHPA(ctx, k8sClient, cfg.LLMDNamespace, scalerBaseName, modelDecodeDeployment, variantName, 1, 10,
 				fixtures.WithWVAAnnotations(modelID, "30.0"))
 			Expect(err).NotTo(HaveOccurred())
 			DeferCleanup(func() {
@@ -272,45 +270,14 @@ var _ = Describe("Saturation analyzer path and status propagation", Label("full"
 
 	It("propagates saturation results into wva_desired_replicas for the variant", func() {
 		// WVA no longer writes VA .status; its sole output is wva_desired_replicas.
-		// We observe that through the scaler surface rather than a VA status field:
+		// expectWVARaisesDesiredReplicas observes that through the scaler surface:
 		// for KEDA via the managed HPA's CurrentMetrics, for the Prometheus-adapter
-		// backend via the external metrics API.
-		if cfg.ScalerBackend == scalerBackendKeda {
-			By("Verifying KEDA read wva_desired_replicas for the saturation-path variant")
-			Eventually(func(g Gomega) {
-				hpaList, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).List(ctx, metav1.ListOptions{})
-				g.Expect(err).NotTo(HaveOccurred())
-				var kedaHPA *autoscalingv2.HorizontalPodAutoscaler
-				for i := range hpaList.Items {
-					if hpaList.Items[i].Spec.ScaleTargetRef.Name == modelDecodeDeployment {
-						kedaHPA = &hpaList.Items[i]
-						break
-					}
-				}
-				g.Expect(kedaHPA).NotTo(BeNil(), "KEDA should have created an HPA for the saturation-path deployment")
-				g.Expect(kedaHPA.Status.CurrentMetrics).NotTo(BeEmpty(),
-					"KEDA HPA should have CurrentMetrics populated from wva_desired_replicas")
-			}, time.Duration(cfg.EventuallyExtendedSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
-		} else {
-			By("Querying the external metrics API for wva_desired_replicas")
-			Eventually(func(g Gomega) {
-				result, err := k8sClient.RESTClient().
-					Get().
-					AbsPath("/apis/external.metrics.k8s.io/v1beta1/namespaces/" + cfg.LLMDNamespace + "/" + constants.WVADesiredReplicas).
-					DoRaw(ctx)
-				if err != nil {
-					if errors.IsNotFound(err) {
-						_, discoveryErr := k8sClient.Discovery().ServerResourcesForGroupVersion("external.metrics.k8s.io/v1beta1")
-						g.Expect(discoveryErr).NotTo(HaveOccurred(), "External metrics API should be accessible")
-						return
-					}
-					g.Expect(err).NotTo(HaveOccurred())
-				}
-				g.Expect(strings.Contains(string(result), `"items":[]`)).To(BeFalse(),
-					"wva_desired_replicas should be emitted for the saturation-path variant")
-				g.Expect(string(result)).To(ContainSubstring(constants.WVADesiredReplicas))
-			}, time.Duration(cfg.EventuallyExtendedSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
-		}
+		// backend via the external metrics API. The scaler was created with
+		// minReplicas=1, so the emitted value is floored at 1 and > 0 cannot flake.
+		By("Verifying wva_desired_replicas was emitted and consumed for the saturation-path variant")
+		Eventually(func(g Gomega) {
+			expectWVARaisesDesiredReplicas(g, cfg.LLMDNamespace, variantName, modelDecodeDeployment, 0)
+		}, time.Duration(cfg.EventuallyExtendedSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
 	})
 
 	It("does not scale the target deployment up for bounded below-threshold V1 traffic", func() {
@@ -398,7 +365,7 @@ var _ = Describe("Saturation analyzer path and status propagation", Label("full"
 		// (formerly VariantAutoscaling.Status.DesiredOptimizedAlloc), decoupled from
 		// the separate scaler actuation loop.
 		Eventually(func(g Gomega) {
-			expectWVARaisesDesiredReplicas(g, cfg.LLMDNamespace, vaName, modelDecodeDeployment, int64(baseline))
+			expectWVARaisesDesiredReplicas(g, cfg.LLMDNamespace, variantName, modelDecodeDeployment, int64(baseline))
 		}, time.Duration(cfg.EventuallyExtendedSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
 	})
 
