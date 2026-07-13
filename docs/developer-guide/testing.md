@@ -506,7 +506,7 @@ kubectl logs -n workload-variant-autoscaler-system deployment/controller-manager
 **Symptoms**: External metrics API returns empty or error
 
 **Possible causes**:
-- Prometheus adapter not running
+- KEDA operator not running
 - Metrics not being scraped
 - Incorrect metric labels or selectors
 

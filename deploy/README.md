@@ -131,7 +131,7 @@ The deployment script provides a complete, automated setup including:
 - WVA controller with RBAC configuration
 - Prometheus stack (or connects to existing)
 - llm-d infrastructure (Gateway, Scheduler, vLLM)
-- Prometheus Adapter for external metrics
+- KEDA for external metrics (ScaledObject-driven)
 - ServiceMonitors for metric collection
 - VariantAutoscaling custom resources
 - HPA configuration
@@ -230,7 +230,7 @@ make deploy-e2e-infra ENVIRONMENT=kind-emulator IMG=localhost/llm-d-workload-var
 export DEPLOY_WVA=true
 export DEPLOY_PROMETHEUS=true
 export DEPLOY_OPERATIONAL_DASHBOARD=true
-export DEPLOY_PROMETHEUS_ADAPTER=true
+export SCALER_BACKEND=keda
 ./deploy/install.sh -e kubernetes
 ```
 
@@ -321,10 +321,9 @@ Each guide includes platform-specific examples, troubleshooting, and quick start
 | `DEPLOY_PROMETHEUS` | Deploy Prometheus stack | `true` |
 | `DEPLOY_OPERATIONAL_DASHBOARD` | Deploy Grafana and operational dashboard | `true` |
 | `DEPLOY_WVA` | Deploy WVA controller | `true` |
-| `DEPLOY_PROMETHEUS_ADAPTER` | Deploy Prometheus Adapter (when `SCALER_BACKEND=prometheus-adapter`) | `true` |
 | `DEPLOY_LWS` | Deploy LeaderWorkerSet (needed only for full e2e suite; skip for smoke, benchmarks, or pre-installed clusters) | `false` |
 | `SKIP_CHECKS` | Skip prerequisite checks | `false` |
-| `SCALER_BACKEND` | `prometheus-adapter`, `keda`, or `none` | `prometheus-adapter` |
+| `SCALER_BACKEND` | `keda` or `none` (use a pre-installed backend) | `keda` |
 
 VariantAutoscaling, HPA stabilization, and vLLM ModelService tuning are not controlled by `install.sh`; manage them via `kubectl apply` directly (see the [llm-d guides](https://github.com/llm-d/llm-d/tree/main/guides/optimized-baseline) for reference manifests).
 
@@ -356,10 +355,11 @@ kubectl logs -n workload-variant-autoscaler-system -l app.kubernetes.io/name=wor
 kubectl get variantautoscaling -A
 kubectl describe variantautoscaling <name> -n <namespace>
 
-# HPA (if deployed)
+# ScaledObjects and the HPAs KEDA manages for them
+kubectl get scaledobject -A
 kubectl get hpa -A
 
-# External metrics (if Prometheus Adapter deployed)
+# External metrics (served by KEDA)
 kubectl get --raw "/apis/external.metrics.k8s.io/v1beta1" | jq
 ```
 
@@ -377,7 +377,7 @@ kubectl port-forward -n <monitoring-namespace> svc/prometheus-k8s 9090:9090
 # 3. Verify WVA is collecting metrics
 kubectl logs -n workload-variant-autoscaler-system -l app.kubernetes.io/name=workload-variant-autoscaler | grep "Collected metrics"
 
-# 4. Verify external metrics API (if using HPA)
+# 4. Verify external metrics API (served by KEDA)
 kubectl get --raw "/apis/external.metrics.k8s.io/v1beta1/namespaces/<namespace>/wva_desired_replicas" | jq
 ```
 
@@ -575,8 +575,8 @@ kubectl describe hpa <name> -n <namespace>
 # Check external metrics API on the specified namespace
 kubectl get --raw "/apis/external.metrics.k8s.io/v1beta1/namespaces/<your-namespace>/wva_desired_replicas" | jq
 
-# Check Prometheus Adapter logs
-kubectl logs -n <monitoring-namespace> deployment/prometheus-adapter
+# Check KEDA operator logs
+kubectl logs -n keda-system -l app=keda-operator
 
 # Check if WVA is emitting the metric
 kubectl logs -n workload-variant-autoscaler-system -l app.kubernetes.io/name=workload-variant-autoscaler | \
@@ -585,9 +585,9 @@ kubectl logs -n workload-variant-autoscaler-system -l app.kubernetes.io/name=wor
 
 **Common causes**:
 
-- Prometheus Adapter not deployed
+- KEDA not deployed
 - External metrics API not registered
-- Metric selector doesn't match emitted labels
+- ScaledObject trigger query doesn't match emitted labels
 - WVA not emitting metrics (due to metrics unavailability)
 
 **Solutions**:
@@ -596,8 +596,8 @@ kubectl logs -n workload-variant-autoscaler-system -l app.kubernetes.io/name=wor
 # Verify external metrics API
 kubectl api-resources | grep external.metrics
 
-# Check Prometheus Adapter configuration
-kubectl get configmap prometheus-adapter -n <monitoring-namespace> -o yaml
+# Check ScaledObject status (Active / Ready conditions)
+kubectl describe scaledobject <name> -n <namespace>
 
 # Verify metric exists in Prometheus
 kubectl port-forward -n <monitoring-namespace> svc/prometheus-k8s 9090:9090
@@ -608,8 +608,8 @@ kubectl port-forward -n <monitoring-namespace> svc/prometheus-k8s 9090:9090
 
 If you encounter issues not covered here:
 
-1. **Check logs**: WVA, Prometheus, Prometheus Adapter, vLLM
-2. **Verify configuration**: VariantAutoscaling spec, ServiceMonitor, HPA
+1. **Check logs**: WVA, Prometheus, KEDA operator, vLLM
+2. **Verify configuration**: VariantAutoscaling spec, ServiceMonitor, ScaledObject
 3. **Test components individually**: Metrics exposure, Prometheus scraping, external metrics API
 4. **Review documentation**: Platform-specific READMEs
 5. **Open an issue**: Include logs, configuration, and environment details
@@ -632,14 +632,15 @@ kubectl get servicemonitor -A
 kubectl get --raw "/apis/external.metrics.k8s.io/v1beta1" | jq
 kubectl port-forward -n <monitoring-namespace> svc/prometheus-k8s 9090:9090
 
-# === HPA ===
+# === ScaledObjects / HPA ===
+kubectl get scaledobject -A
+kubectl describe scaledobject <name> -n <namespace>
 kubectl get hpa -A
 kubectl describe hpa <name> -n <namespace>
-kubectl get hpa <name> -n <namespace> -o yaml
 
-# === Prometheus Adapter ===
-kubectl get pods -n <monitoring-namespace> | grep prometheus-adapter
-kubectl logs -n <monitoring-namespace> deployment/prometheus-adapter
+# === KEDA ===
+kubectl get pods -n keda-system
+kubectl logs -n keda-system -l app=keda-operator
 
 # === vLLM / Application ===
 kubectl get pods -n <app-namespace>

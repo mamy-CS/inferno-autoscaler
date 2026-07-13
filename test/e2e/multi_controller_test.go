@@ -306,9 +306,7 @@ var _ = Describe("Multi-controller Tests - Dual namespace-scoped isolation", Lab
 			// namespace ownership overlaps). Restoring a real attribution assertion
 			// therefore needs infrastructure work — scrape the secondary controller's
 			// metrics and resolve the cluster-scoped-primary overlap — tracked as a
-			// follow-up rather than gated here. The old Prometheus-adapter test asserted
-			// this via the external.metrics.k8s.io API, which KEDA does not expose the
-			// same way.
+			// follow-up rather than gated here.
 		})
 	})
 })

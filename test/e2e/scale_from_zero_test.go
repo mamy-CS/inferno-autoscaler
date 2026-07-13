@@ -322,8 +322,8 @@ var _ = Describe("Scale-From-Zero Feature", Serial, Label("full"), Ordered, func
 	// TODO(scale-from-zero-keda-flaky): The KEDA scale-from-zero flow is flaky — the
 	// engine intermittently logs "Inferencepool datastore is empty - skipping processing
 	// inactive variant" and the target never scales up from zero within the timeout.
-	// This was tolerated on main because the KEDA full-e2e job was non-blocking; it became
-	// blocking when prom-adapter was retired and KEDA became the sole backend. Labeled
+	// This was tolerated while the KEDA full-e2e job was non-blocking; it became blocking
+	// once KEDA became the sole backend. Labeled
 	// "flaky" to keep it out of the required `full && !smoke && !flaky` gate until the
 	// root cause (InferencePool datastore not populated for inactive variants) is fixed.
 	// Tracking issue: TODO(file issue and reference here).

@@ -34,11 +34,10 @@ import (
 // exercises V2's decision logic against deterministic inputs.
 //
 // WVA no longer writes a VariantAutoscaling .status; its only output is the
-// wva_desired_replicas external metric. The annotated scaler (KEDA
-// ScaledObject or Prometheus-adapter HPA) both registers the variant with WVA
-// and actuates the recommendation, so the V2 scale-up/scale-down intent is
-// observed through the managed Deployment's replica count rather than a VA
-// status field.
+// wva_desired_replicas external metric. The annotated KEDA ScaledObject
+// registers the variant with WVA and actuates the recommendation, so the V2
+// scale-up/scale-down intent is observed through the managed Deployment's
+// replica count rather than a VA status field.
 //
 // --fake-metrics format:
 //
@@ -71,9 +70,8 @@ var _ = Describe("Saturation V2 engine", Label("smoke", "full"), Ordered, func()
 		serviceName           = modelSvcName + "-service"
 		smName                = modelSvcName + "-monitor"
 
-		// scalerBaseName is the logical base for the annotated scaler; the scaler
-		// object name is scalerBaseName+"-so" for KEDA and scalerBaseName+"-hpa"
-		// for the Prometheus-adapter backend.
+		// scalerBaseName is the logical base for the annotated scaler; the KEDA
+		// ScaledObject name is scalerBaseName+"-so".
 		scalerBaseName = "v2-smoke"
 	)
 

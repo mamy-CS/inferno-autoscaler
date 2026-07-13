@@ -45,7 +45,6 @@ import (
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
@@ -841,72 +840,6 @@ func CreateVariantAutoscalingResource(namespace, resourceName, scaleTargetRefNam
 	}
 }
 
-// CreateHPAOnDesiredReplicaMetrics creates a HorizontalPodAutoscaler for a deployment that scales based on the wva_desired_replicas metric
-// Needs the Prometheus Adapter to be installed and configured in the cluster to correctly map the external metric.
-func CreateHPAOnDesiredReplicaMetrics(name, namespace, deploymentName, variantName string, maxReplicas int32) *autoscalingv2.HorizontalPodAutoscaler {
-	stabilizationWindowSeconds := int32(0)
-	podsValue := int32(10)
-	periodSeconds := int32(15)
-	targetAverageValue := resource.MustParse("1")
-
-	return &autoscalingv2.HorizontalPodAutoscaler{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: namespace,
-		},
-		Spec: autoscalingv2.HorizontalPodAutoscalerSpec{
-			ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{
-				APIVersion: "apps/v1",
-				Kind:       "Deployment",
-				Name:       deploymentName,
-			},
-			MaxReplicas: maxReplicas,
-			Behavior: &autoscalingv2.HorizontalPodAutoscalerBehavior{
-				ScaleUp: &autoscalingv2.HPAScalingRules{
-					StabilizationWindowSeconds: &stabilizationWindowSeconds,
-					Policies: []autoscalingv2.HPAScalingPolicy{
-						{
-							Type:          autoscalingv2.PodsScalingPolicy,
-							Value:         podsValue,
-							PeriodSeconds: periodSeconds,
-						},
-					},
-				},
-				ScaleDown: &autoscalingv2.HPAScalingRules{
-					StabilizationWindowSeconds: &stabilizationWindowSeconds,
-					Policies: []autoscalingv2.HPAScalingPolicy{
-						{
-							Type:          autoscalingv2.PodsScalingPolicy,
-							Value:         podsValue,
-							PeriodSeconds: periodSeconds,
-						},
-					},
-				},
-			},
-			Metrics: []autoscalingv2.MetricSpec{
-				{
-					Type: autoscalingv2.ExternalMetricSourceType,
-					External: &autoscalingv2.ExternalMetricSource{
-						Metric: autoscalingv2.MetricIdentifier{
-							Name: constants.WVADesiredReplicas,
-							Selector: &metav1.LabelSelector{
-								MatchLabels: map[string]string{
-									"variant_name":       variantName,
-									"exported_namespace": namespace,
-								},
-							},
-						},
-						Target: autoscalingv2.MetricTarget{
-							Type:         autoscalingv2.AverageValueMetricType,
-							AverageValue: &targetAverageValue,
-						},
-					},
-				},
-			},
-		},
-	}
-}
-
 // PrometheusQueryResult represents the response from Prometheus API
 type PrometheusQueryResult struct {
 	Status string `json:"status"`
@@ -1258,10 +1191,9 @@ func SetupTestEnvironment(image string, numNodes, gpusPerNode int, gpuTypes stri
 	gom.Expect(os.Setenv("CREATE_CLUSTER", "true")).To(gom.Succeed())                // Always create a new cluster for E2E tests
 
 	// EPP is deployed by ./deploy/install-epp.sh (via deploy-e2e-infra Makefile target); install.sh deploys WVA only.
-	// Tests apply their own VariantAutoscaling / HPA / model workloads.
+	// Tests apply their own VariantAutoscaling / ScaledObject / model workloads.
 	gom.Expect(os.Setenv("DEPLOY_WVA", "true")).To(gom.Succeed())
 	gom.Expect(os.Setenv("DEPLOY_PROMETHEUS", "true")).To(gom.Succeed())
-	gom.Expect(os.Setenv("DEPLOY_PROMETHEUS_ADAPTER", "true")).To(gom.Succeed())
 	gom.Expect(os.Setenv("WVA_RECONCILE_INTERVAL", "30s")).To(gom.Succeed())
 
 	// Tests deploy their own workloads — skip any model server pre-deploy.

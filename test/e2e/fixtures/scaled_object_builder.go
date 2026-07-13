@@ -17,6 +17,11 @@ import (
 
 const (
 	scaledObjectSuffix = "-so"
+
+	kindLeaderWorkerSet = "LeaderWorkerSet"
+	kindDeployment      = "Deployment"
+	apiVersionLWS       = "leaderworkerset.x-k8s.io/v1"
+	apiVersionAppsV1    = "apps/v1"
 )
 
 // ScaledObjectOption configures a KEDA ScaledObject before it is applied.
@@ -122,8 +127,7 @@ func EnsureScaledObject(
 func buildScaledObject(namespace, name, scaleTargetName, variantName string, minReplicas, maxReplicas int32, monitoringNamespace string, opts ...ScaledObjectOption) *kedav1alpha1.ScaledObject {
 	objName := name + scaledObjectSuffix
 	prometheusURL := "https://kube-prometheus-stack-prometheus." + monitoringNamespace + ".svc.cluster.local:9090"
-	// Use "namespace" not "exported_namespace": WVA controller emits the metric with label namespace;
-	// exported_namespace is only used by Prometheus Adapter for the external metrics API.
+	// Use "namespace" not "exported_namespace": WVA controller emits the metric with label namespace.
 	query := fmt.Sprintf("wva_desired_replicas{variant_name=%q,namespace=%q}", variantName, namespace)
 
 	spec := kedav1alpha1.ScaledObjectSpec{

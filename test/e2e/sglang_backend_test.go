@@ -68,8 +68,7 @@ var _ = Describe("SGLang backend", Label("smoke", "full"), Ordered, func() {
 		// The fixture emits a saturated operating point (token_usage=0.85,
 		// num_queue_reqs=3), so the emitted value drives the managed scaler above a
 		// single replica. We observe that through the scaler surface rather than a
-		// VA status field: for KEDA via the managed HPA's CurrentMetrics, for the
-		// Prometheus-adapter backend via the external metrics API.
+		// VA status field: for KEDA via the managed HPA's CurrentMetrics.
 		By("Verifying KEDA read wva_desired_replicas for the SGLang variant")
 		Eventually(func(g Gomega) {
 			hpaList, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).List(ctx, metav1.ListOptions{})

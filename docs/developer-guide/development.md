@@ -95,7 +95,7 @@ make run
 CREATE_CLUSTER=true make deploy-e2e-infra
 ```
 
-This creates a Kind cluster with emulated GPUs, then deploys the WVA controller, llm-d EPP (GAIE standalone), Prometheus stack, and Prometheus Adapter. No model service is included.
+This creates a Kind cluster with emulated GPUs, then deploys the WVA controller, llm-d EPP (GAIE standalone), Prometheus stack, and KEDA (external metrics). No model service is included.
 
 If you already have a cluster running, omit `CREATE_CLUSTER=true`:
 
