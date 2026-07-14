@@ -347,9 +347,8 @@ var _ = Describe("Saturation analyzer path and status propagation", Label("full"
 		expectAnalyzerPathLog("V1", modelID)
 
 		By("Verifying WVA emits wva_desired_replicas for the scaled-up variant")
-		// The engine's scale-up decision is surfaced via wva_desired_replicas
-		// (formerly VariantAutoscaling.Status.DesiredOptimizedAlloc), decoupled from
-		// the separate scaler actuation loop. This verifies emission/consumption via
+		// The engine's scale-up decision is surfaced via wva_desired_replicas,
+		// decoupled from the separate scaler actuation loop. This verifies emission/consumption via
 		// the KEDA HPA surface; the numeric magnitude relative to baseline is not
 		// asserted here (the HPA surface does not expose it reliably).
 		Eventually(func(g Gomega) {

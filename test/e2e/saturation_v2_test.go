@@ -224,9 +224,8 @@ var _ = Describe("Saturation V2 engine", Label("smoke", "full"), Ordered, func()
 	// scaler driving the Deployment above a single replica.
 	It("should recommend scale-up when token utilization crosses scaleUpThreshold", func() {
 		By("Asserting WVA emits wva_desired_replicas for the scaled-up variant")
-		// The V2 scale-up recommendation is surfaced via wva_desired_replicas
-		// (formerly VariantAutoscaling.Status.DesiredOptimizedAlloc), decoupled from
-		// the separate scaler actuation loop. This verifies emission/consumption via
+		// The V2 scale-up recommendation is surfaced via wva_desired_replicas,
+		// decoupled from the separate scaler actuation loop. This verifies emission/consumption via
 		// the KEDA HPA surface; the numeric magnitude is not asserted here.
 		Eventually(func(g Gomega) {
 			expectWVADesiredReplicasConsumed(g, cfg.LLMDNamespace, modelDecodeDeployment)

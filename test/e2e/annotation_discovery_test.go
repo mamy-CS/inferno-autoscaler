@@ -57,7 +57,7 @@ var _ = Describe("Annotation-based variant discovery", Serial, func() {
 				g.Expect(d.Status.ReadyReplicas).To(Equal(int32(1)))
 			}, time.Duration(cfg.PodReadyTimeout)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
 
-			By("Creating annotated ScaledObject (no VA CR)")
+			By("Creating annotated ScaledObject")
 			err = fixtures.EnsureScaledObject(ctx, crClient, ns, hpaBaseName, deploymentName, hpaName, 1, 10, cfg.MonitoringNS,
 				fixtures.WithScaledObjectWVAAnnotations(cfg.ModelID, "30.0"))
 			Expect(err).NotTo(HaveOccurred(), "Failed to create annotated ScaledObject")
@@ -133,7 +133,7 @@ var _ = Describe("Annotation-based variant discovery", Serial, func() {
 				g.Expect(d.Status.ReadyReplicas).To(Equal(int32(1)))
 			}, time.Duration(cfg.PodReadyTimeout)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
 
-			By("Creating annotated ScaledObject (no VA CR)")
+			By("Creating annotated ScaledObject")
 			err = fixtures.EnsureScaledObject(ctx, crClient, ns, hpaBaseName, deploymentName, hpaName, 1, 10, cfg.MonitoringNS,
 				fixtures.WithScaledObjectWVAAnnotations(cfg.ModelID, "30.0"))
 			Expect(err).NotTo(HaveOccurred(), "Failed to create annotated ScaledObject")
