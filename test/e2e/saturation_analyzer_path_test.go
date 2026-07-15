@@ -297,17 +297,40 @@ var _ = Describe("Saturation analyzer path and status propagation", Label("full"
 		By("Verifying controller is using V1 analyzer path")
 		expectAnalyzerPathLog("V1", modelID)
 
-		By("Waiting for KEDA to read wva_desired_replicas=1 and the HPA to stabilize at minReplicas")
-		// Chain: WVA reconciles (≤15 s) → wva_desired_replicas=1 → KEDA polls (5 s) →
-		// HPA stabilization (30 s window set on this ScaledObject) → Spec.Replicas=1.
-		// EventuallyLongSec (120 s) covers the worst case.
+		By("Waiting for the pipeline to converge to a sustained minReplicas (drain any in-flight scale-up)")
+		// A single Spec.Replicas <= 1 reading is NOT proof of convergence: the deployment
+		// starts at minReplicas, so that check passes on the pre-existing state while a
+		// scale-up recommendation left in flight by the prior It (default config:
+		// queueLengthThreshold=1 vs faked queue=2 → V1 scale-up) is still working through
+		// WVA (≤15 s reconcile) → Prometheus → KEDA (5 s poll) → HPA. That stale
+		// recommendation actuates a scale-up mid-assertion unless it has fully drained.
+		//
+		// Require the deployment to HOLD at <=1 continuously for stableWindow before
+		// trusting it: any bump resets the stability clock, and stableWindow outlasts the
+		// full pipeline latency (reconcile + poll + the 30 s scale-down stabilization set
+		// on this ScaledObject) so the old recommendation is guaranteed drained.
+		const stableWindow = 45 * time.Second
+		var stableSince *time.Time
 		Eventually(func(g Gomega) {
 			dep, getErr := k8sClient.AppsV1().Deployments(cfg.LLMDNamespace).Get(ctx, modelDecodeDeployment, metav1.GetOptions{})
 			g.Expect(getErr).NotTo(HaveOccurred())
 			g.Expect(dep.Spec.Replicas).NotTo(BeNil())
-			g.Expect(*dep.Spec.Replicas).To(BeNumerically("<=", int32(1)),
-				"waiting for KEDA to read updated wva_desired_replicas=1 and scale down to minReplicas")
-		}, time.Duration(cfg.EventuallyLongSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
+			now := time.Now()
+			if *dep.Spec.Replicas > 1 {
+				stableSince = nil // reset the stability clock on any in-flight scale-up
+				GinkgoWriter.Printf("  Convergence (%s): replicas=%d (>1) — resetting stability clock\n", modelDecodeDeployment, *dep.Spec.Replicas)
+				g.Expect(*dep.Spec.Replicas).To(BeNumerically("<=", int32(1)),
+					"waiting for the in-flight scale-up recommendation to drain")
+				return
+			}
+			if stableSince == nil {
+				stableSince = &now
+			}
+			held := now.Sub(*stableSince)
+			GinkgoWriter.Printf("  Convergence (%s): replicas<=1 held for %s (need %s)\n", modelDecodeDeployment, held.Round(time.Second), stableWindow)
+			g.Expect(held).To(BeNumerically(">=", stableWindow),
+				"waiting for minReplicas to hold long enough to confirm the pipeline converged")
+		}, time.Duration(cfg.EventuallyExtendedSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
 
 		By("Capturing baseline target deployment replicas before steady-state assertion")
 		var baseline int32
