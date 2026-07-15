@@ -387,14 +387,18 @@ var _ = Describe("Saturation analyzer path and status propagation", Label("full"
 		By("Verifying controller is using V1 analyzer path")
 		expectAnalyzerPathLog("V1", modelID)
 
-		By("Verifying WVA emits wva_desired_replicas for the scaled-up variant")
-		// The engine's scale-up decision is surfaced via wva_desired_replicas,
-		// decoupled from the separate scaler actuation loop. This verifies emission/consumption via
-		// the KEDA HPA surface; the numeric magnitude relative to baseline is not
-		// asserted here (the HPA surface does not expose it reliably).
+		By("Asserting KEDA actuates scale-up above baseline")
+		// Aggressive V1 thresholds (kvCache=0.05, queue=1) against faked metrics
+		// (kv=0.3, queue=2) deterministically drive a scale-up; KEDA consumes
+		// wva_desired_replicas and drives the Deployment above its baseline. Assert the
+		// observable Deployment replica count — the ground truth — rather than the KEDA
+		// HPA CurrentMetrics surface, which only proves the metric was consumed.
 		Eventually(func(g Gomega) {
-			expectWVADesiredReplicasConsumed(g, cfg.LLMDNamespace, modelDecodeDeployment)
-		}, time.Duration(cfg.EventuallyExtendedSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
+			dep, getErr := k8sClient.AppsV1().Deployments(cfg.LLMDNamespace).Get(ctx, modelDecodeDeployment, metav1.GetOptions{})
+			g.Expect(getErr).NotTo(HaveOccurred())
+			g.Expect(dep.Status.ReadyReplicas).To(BeNumerically(">", baseline),
+				"V1 above-threshold traffic should scale the target Deployment above baseline")
+		}, time.Duration(cfg.ScaleUpTimeout)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
 	})
 
 })

@@ -223,10 +223,20 @@ var _ = Describe("KEDA Smoke Tests - Basic Autoscaling", Label("smoke", "full"),
 	})
 
 	It("should collect saturation metrics without triggering scale-up", func() {
-		By("Verifying the deployment's replica count stays put under steady state")
-		// With no engine-driven pressure the managed deployment should remain at
-		// its baseline replica count; we sample it repeatedly to confirm no
-		// scale-up is triggered.
+		// Guard against a vacuous pass: the Deployment starts at minReplicas, so a bare
+		// Consistently{<=1} would also succeed if WVA were dead and emitting nothing.
+		// First prove the pipeline is live — KEDA is consuming wva_desired_replicas for
+		// this variant — so the steady-state assertion means "WVA is actively
+		// recommending minReplicas under no load", not "nothing happened".
+		By("Confirming WVA is live: KEDA is consuming wva_desired_replicas for the variant")
+		Eventually(func(g Gomega) {
+			expectWVADesiredReplicasConsumed(g, ns, deploymentName)
+		}, time.Duration(cfg.EventuallyLongSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
+
+		By("Verifying the deployment stays at its baseline replica count under no load")
+		// No load and no --fake-metrics pressure: the simulator's near-zero saturation
+		// signals keep WVA recommending minReplicas, so the managed Deployment must not
+		// scale up. Sampled repeatedly to confirm no scale-up is triggered.
 		Consistently(func(g Gomega) {
 			deployment, err := k8sClient.AppsV1().Deployments(ns).Get(ctx, deploymentName, metav1.GetOptions{})
 			g.Expect(err).NotTo(HaveOccurred())

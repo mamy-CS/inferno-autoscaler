@@ -6,7 +6,6 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/test/e2e/fixtures"
@@ -61,29 +60,20 @@ var _ = Describe("SGLang backend", Label("smoke", "full"), Ordered, func() {
 	})
 
 	It("detects SGLang and emits wva_desired_replicas from sglang:* metrics", func() {
-		// A correctly routed SGLang collection must produce wva_desired_replicas
-		// for the variant. vLLM queries would return nothing here, so the metric's
-		// presence proves the SGLang path collected sglang:* metrics.
-		//
-		// The fixture emits a saturated operating point (token_usage=0.85,
-		// num_queue_reqs=3), so the emitted value drives the managed scaler above a
-		// single replica. We observe that through the scaler surface rather than a
-		// VA status field: for KEDA via the managed HPA's CurrentMetrics.
-		By("Verifying KEDA read wva_desired_replicas for the SGLang variant")
+		// A correctly routed SGLang collection must produce wva_desired_replicas for
+		// the variant; vLLM queries would return nothing here, so a scale-up proves
+		// the SGLang path collected sglang:* metrics. The fixture emits a saturated
+		// operating point (token_usage=0.85, num_queue_reqs=3), so WVA recommends
+		// scale-up and KEDA drives the Deployment above a single replica. Assert the
+		// observable Deployment replica count — the ground truth — rather than the
+		// KEDA HPA CurrentMetrics surface, which only proves the metric was consumed.
+		By("Asserting KEDA actuates a scale-up above a single replica for the SGLang variant")
 		Eventually(func(g Gomega) {
-			hpaList, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).List(ctx, metav1.ListOptions{})
+			dep, err := k8sClient.AppsV1().Deployments(cfg.LLMDNamespace).Get(ctx, appLabel, metav1.GetOptions{})
 			g.Expect(err).NotTo(HaveOccurred())
-			var kedaHPA *autoscalingv2.HorizontalPodAutoscaler
-			for i := range hpaList.Items {
-				if hpaList.Items[i].Spec.ScaleTargetRef.Name == appLabel {
-					kedaHPA = &hpaList.Items[i]
-					break
-				}
-			}
-			g.Expect(kedaHPA).NotTo(BeNil(), "KEDA should have created an HPA for the SGLang deployment")
-			g.Expect(kedaHPA.Status.CurrentMetrics).NotTo(BeEmpty(),
-				"KEDA HPA should have CurrentMetrics populated from wva_desired_replicas")
-		}).WithTimeout(time.Duration(cfg.EventuallyExtendedSec) * time.Second).
+			g.Expect(dep.Status.ReadyReplicas).To(BeNumerically(">=", int32(2)),
+				"saturated SGLang metrics (token_usage=0.85, num_queue_reqs=3) should drive the Deployment above a single replica")
+		}).WithTimeout(time.Duration(cfg.ScaleUpTimeout) * time.Second).
 			WithPolling(time.Duration(cfg.PollIntervalSlowSec) * time.Second).
 			Should(Succeed())
 	})
