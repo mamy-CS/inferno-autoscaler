@@ -24,9 +24,14 @@ import (
 var _ = Describe("SGLang backend", Label("smoke", "full"), Ordered, func() {
 	const (
 		baseName = "e2e-sglang"
-		// variantName is the annotated scaler's object name; WVA uses it as the
-		// variant_name label on wva_desired_replicas.
-		variantName = "e2e-sglang-hpa"
+		// variantName MUST equal the annotated scaler's object name, which is
+		// baseName+"-so" for a KEDA ScaledObject (see fixtures.EnsureScaledObject).
+		// WVA uses that object name as the variant identity: it attributes the decode
+		// pods' sglang:* metrics by matching their llm-d.ai/variant label to it, and
+		// emits wva_desired_replicas{variant_name=<object name>}. A mismatch leaves the
+		// pods unattributed, so WVA falls back to a safety-net desiredReplicas=current
+		// and never scales up. (Was the stale "e2e-sglang-hpa" from the HPA era.)
+		variantName = baseName + "-so"
 		// decodeSuffix mirrors the fixtures' "<base>-decode" naming convention.
 		decodeSuffix = "-decode"
 		// sglangEmulatorPort is the container/Service port the emitter serves on.
