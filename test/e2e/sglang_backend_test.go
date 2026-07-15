@@ -21,7 +21,7 @@ import (
 // This exercises the same code path as vLLM, only with SGLang metric names and
 // flags. It runs in the kind-emulator environment (cfg.UseSimulator); a real
 // SGLang server requires a GPU.
-var _ = Describe("SGLang backend", Label("smoke", "full"), Ordered, func() {
+var _ = Describe("SGLang backend", Label("full"), Ordered, func() {
 	const (
 		baseName = "e2e-sglang"
 		// variantName MUST equal the annotated scaler's object name, which is
