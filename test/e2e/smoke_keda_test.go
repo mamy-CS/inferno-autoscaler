@@ -15,7 +15,7 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/test/e2e/fixtures"
 )
 
-var _ = Describe("KEDA Smoke Tests - Infrastructure Readiness", Label("smoke", "keda", "full"), func() {
+var _ = Describe("KEDA Smoke Tests - Infrastructure Readiness", Label("smoke", "full"), func() {
 	Context("Basic infrastructure validation", func() {
 		It("should have WVA controller running and ready", func() {
 			Eventually(func(g Gomega) {
@@ -87,7 +87,7 @@ var _ = Describe("KEDA Smoke Tests - Infrastructure Readiness", Label("smoke", "
 	})
 })
 
-var _ = Describe("KEDA Smoke Tests - Basic Autoscaling", Label("smoke", "keda", "full"), Ordered, func() {
+var _ = Describe("KEDA Smoke Tests - Basic Autoscaling", Label("smoke", "full"), Ordered, func() {
 	var (
 		ns               string
 		poolName         = "smoke-test-pool"
@@ -236,7 +236,7 @@ var _ = Describe("KEDA Smoke Tests - Basic Autoscaling", Label("smoke", "keda", 
 	})
 })
 
-var _ = Describe("KEDA Smoke Tests - Error Handling", Label("smoke", "keda", "full"), Ordered, func() {
+var _ = Describe("KEDA Smoke Tests - Error Handling", Label("smoke", "full"), Ordered, func() {
 	var (
 		ns                        string
 		errorTestPoolName         = "error-test-pool"

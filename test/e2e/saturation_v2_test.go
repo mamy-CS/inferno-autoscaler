@@ -63,7 +63,7 @@ const (
 	v2SmokeScaleDownBoundary = 0.20
 )
 
-var _ = Describe("Saturation V2 engine", Label("smoke", "full", "keda"), Ordered, func() {
+var _ = Describe("Saturation V2 engine", Label("smoke", "full"), Ordered, func() {
 	const (
 		poolName              = "v2-smoke-pool"
 		modelSvcName          = "v2-smoke-ms"
