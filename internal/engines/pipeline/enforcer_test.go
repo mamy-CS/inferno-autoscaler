@@ -13,7 +13,7 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/constants"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/interfaces"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/metrics"
-	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/testutil"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/test/testutil"
 )
 
 // boolPtr is a helper to create a pointer to a bool value
