@@ -22,8 +22,7 @@ make test
 go test -cover ./...
 
 # Run specific package
-go test ./pkg/solver/...
-go test ./pkg/analyzer/...
+go test ./internal/queueing/analyzer/...
 
 # Run with verbose output
 go test -v ./internal/controller/...
@@ -437,13 +436,10 @@ var _ = Describe("Controller", func() {
 
 ```bash
 # Run with verbose output
-go test -v ./pkg/solver/...
-
-# Run specific test
-go test -v ./pkg/solver/... -run TestSolver/should_optimize
+go test -v ./internal/engines/pipeline/...
 
 # Enable Ginkgo trace
-go test -v ./pkg/analyzer/... -ginkgo.trace
+go test -v ./internal/queueing/analyzer/... -ginkgo.trace
 
 # Run with debugger (delve)
 dlv test ./internal/controller/... -- -ginkgo.v

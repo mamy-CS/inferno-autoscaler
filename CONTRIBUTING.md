@@ -205,7 +205,7 @@ Verify all commands and examples work:
 
 ### Performance Modeling
 
-When modifying queue models in `pkg/analyzer/`:
+When modifying queue models in `internal/queueing/analyzer/`:
 - Ensure mathematical correctness
 - Add comprehensive unit tests
 - Validate against real workload data when possible
@@ -213,7 +213,7 @@ When modifying queue models in `pkg/analyzer/`:
 
 ### Optimization Algorithms
 
-When modifying solvers in `pkg/solver/`:
+When modifying optimizers in `internal/engines/pipeline/`:
 - Consider computational complexity
 - Test edge cases (zero load, overload, etc.)
 - Ensure feasibility checking
