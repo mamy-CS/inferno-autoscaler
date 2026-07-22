@@ -44,16 +44,13 @@ internal/
 ├── saturation/
 │   ├── analyzer.go
 │   └── analyzer_test.go
-└── collector/
-    ├── collector.go
-    └── collector_test.go
-
-pkg/
-└── solver/
-    ├── optimizer.go
-    ├── optimizer_test.go
-    ├── solver.go
-    └── solver_test.go
+├── collector/
+│   ├── collector.go
+│   └── collector_test.go
+└── queueing/
+    └── analyzer/
+        ├── queueanalyzer.go
+        └── queueanalyzer_test.go
 ```
 
 ### Writing Unit Tests

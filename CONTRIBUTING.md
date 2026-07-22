@@ -82,17 +82,11 @@ workload-variant-autoscaler/
 ├── internal/             # Private application code
 │   ├── controller/      # Main reconciliation logic
 │   ├── collector/       # Metrics collection
-│   ├── optimizer/       # Optimization engine
+│   ├── engines/         # Scaling engines, analyzers, and optimizers
 │   ├── actuator/        # Metric emission & actuation
-│   ├── modelanalyzer/   # Model performance analysis
+│   ├── queueing/        # Queue theory models & config (analyzer, config)
 │   ├── metrics/         # Metrics definitions
 │   └── utils/           # Utility functions
-├── pkg/                  # Public libraries (inferno optimizer)
-│   ├── analyzer/        # Queue theory models
-│   ├── solver/          # Optimization algorithms
-│   ├── core/            # Core domain models
-│   ├── config/          # Configuration structures
-│   └── manager/         # Optimization manager
 ├── test/                 # Tests
 │   ├── e2e/             # End-to-end tests
 │   └── utils/           # Test utilities

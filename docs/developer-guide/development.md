@@ -62,15 +62,9 @@ workload-variant-autoscaler/
 │   ├── interfaces/       # Interface definitions
 │   ├── logging/          # Logging utilities
 │   ├── metrics/          # Metrics definitions
-│   ├── modelanalyzer/    # Model analysis
+│   ├── queueing/         # Queue theory models & config (analyzer, config)
 │   ├── saturation/       # Saturation detection logic
 │   └── utils/            # Utility functions
-├── pkg/                   # Public libraries
-│   ├── analyzer/         # Queue theory models
-│   ├── solver/           # Optimization algorithms
-│   ├── core/             # Core domain models
-│   ├── config/           # Configuration structures
-│   └── manager/          # Manager utilities
 ├── test/                  # Tests
 │   ├── e2e/                  # E2E tests (consolidated suite: Kind, OpenShift)
 │   └── utils/                 # Test utilities
