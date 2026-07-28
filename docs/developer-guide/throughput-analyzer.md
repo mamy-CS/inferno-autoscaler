@@ -23,10 +23,12 @@ operating point, and scales before demand exceeds that supply.
 > analyzer is not registered and never participates in scaling. The default config ships with
 > saturation only, so throughput is off by default.
 >
-> **Runtime toggling requires a restart.** Registration is frozen after `StartOptimizeLoop`.
-> Editing the configmap to add `throughput` takes effect only after a controller restart.
-> This is a stopgap; the per-cycle consumption gate (effectiveEnabled opt-in fix) is the
-> correct long-term home and will remove the need for a restart when it lands.
+> **Runtime toggling requires a restart.** Registration is frozen after `StartOptimizeLoop`;
+> editing the configmap to add `throughput` takes effect only after a controller restart.
+> This restart requirement is about registration, not participation: the per-cycle
+> `effectiveEnabled` gate (see the [multi-analyzer pipeline guide](multi-analyzer-pipeline.md))
+> governs whether an already-registered analyzer participates in a given cycle, and is
+> independent of this startup-time registration gate.
 
 ## Table of Contents
 
