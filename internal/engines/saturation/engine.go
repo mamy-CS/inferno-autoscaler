@@ -46,7 +46,7 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/inferenceengine"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/logging"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/metrics"
-	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/saturation"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/saturationv1"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils/scaletarget"
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/variant"
@@ -60,7 +60,7 @@ type analyzerEntry struct {
 	analyzer domain.Analyzer
 }
 
-// v1Analyzer is the minimal surface of *saturation.Analyzer that optimizeV1
+// v1Analyzer is the minimal surface of *saturationv1.Analyzer that optimizeV1
 // depends on. Defined here so tests can substitute a stub via Engine's
 // v1AnalyzerFactory field without exposing a public interface.
 type v1Analyzer interface {
@@ -80,7 +80,7 @@ type v1Analyzer interface {
 // defaultV1AnalyzerFactory returns a fresh production V1 saturation analyzer.
 // NewEngine wires this into Engine.v1AnalyzerFactory; tests can swap the
 // factory per-instance without touching shared state.
-func defaultV1AnalyzerFactory() v1Analyzer { return saturation.NewAnalyzer() }
+func defaultV1AnalyzerFactory() v1Analyzer { return saturationv1.NewAnalyzer() }
 
 // safetyNetEmitter reports a per-role analysis failure to the saturation
 // engine's safety-net metrics path. Extracted as a function type so the
@@ -466,10 +466,10 @@ func (e *Engine) optimize(ctx context.Context) (retErr error) {
 
 	// Each analyzer has a separate optimize path because they use fundamentally
 	// different analysis types and target-building flows:
-	//   - V1: saturation.Analyzer → ModelSaturationAnalysis → CalculateSaturationTargets → Enforcer → Limiter
+	//   - V1: saturationv1.Analyzer → ModelSaturationAnalysis → CalculateSaturationTargets → Enforcer → Limiter
 	//   - V2 (saturation): saturation_v2.Analyzer → AnalyzerResult → Optimizer.Optimize → Enforcer bridge
 	//   - Queueing model: QueueingModelAnalyzer → AnalyzerResult → Optimizer.Optimize → Enforcer bridge
-	// V1 will be deprecated once V2 is fully validated.
+	// V1 is deprecated in favor of V2; see issue #1441 for the staged removal plan.
 	// Queueing model is activated by presence of wva-queueing-model-config ConfigMap.
 	mode := modeLabelForAnalyzer(analyzerName)
 	switch analyzerName {
@@ -1409,7 +1409,7 @@ func (e *Engine) prepareModelData(
 			continue
 		}
 
-		cost := saturation.DefaultVariantCost
+		cost := saturationv1.DefaultVariantCost
 		if va.Spec.VariantCost != "" {
 			if parsedCost, err := strconv.ParseFloat(va.Spec.VariantCost, 64); err == nil {
 				cost = parsedCost
