@@ -31,6 +31,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	accel "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/accelerator"
 	actuator "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/actuator"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/collector"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/collector/locator"
@@ -1527,13 +1528,13 @@ func (e *Engine) applySaturationDecisions(
 					var scaleTarget scaletarget.ScaleTargetAccessor
 					var err error
 					if scaleTarget, err = scaletarget.FetchScaleTarget(ctx, e.client, va.Name, va.Spec.ScaleTargetRef.Kind, scaleTargetName, va.Namespace); err == nil {
-						acceleratorName = utils.GetAcceleratorNameFromScaleTarget(&updateVa, scaleTarget)
+						acceleratorName = accel.GetAcceleratorNameFromScaleTarget(&updateVa, scaleTarget)
 						if targetReplicas == 0 && scaleTarget.GetReplicas() != nil {
 							targetReplicas = int(*scaleTarget.GetReplicas())
 						}
 					} else {
 						// If scaleTarget fetch fails, try VA label directly
-						acceleratorName = utils.GetAcceleratorNameFromScaleTarget(&updateVa, nil)
+						acceleratorName = accel.GetAcceleratorNameFromScaleTarget(&updateVa, nil)
 					}
 				}
 			}
@@ -1710,7 +1711,7 @@ func (e *Engine) applySaturationDecisions(
 func (e *Engine) emitAcceleratorNotResolvedEvent(va *llmdVariantAutoscalingV1alpha1.VariantAutoscaling) {
 	e.recordEvent(va, corev1.EventTypeWarning, "AcceleratorNotResolved",
 		"Cannot resolve accelerator type from Deployment nodeSelector/nodeAffinity or VA label "+
-			utils.AcceleratorNameLabel+". "+
+			accel.AcceleratorNameLabel+". "+
 			"Set nodeSelector on Deployment or add the label to the VariantAutoscaling resource. "+
 			"Replica scaling metrics are still emitted with accelerator_type=\"unresolved\" so HPA/KEDA can scale; "+
 			"accelerator-specific saturation/capacity metrics are withheld until the accelerator is resolved.")
@@ -1771,7 +1772,7 @@ func (e *Engine) emitSafetyNetMetrics(
 				logger.V(logging.DEBUG).Info("Safety net: no scale target found for VA",
 					"variant", va.Name)
 			} else {
-				accelerator = utils.GetAcceleratorNameFromScaleTarget(&va, scaleTarget)
+				accelerator = accel.GetAcceleratorNameFromScaleTarget(&va, scaleTarget)
 			}
 		}
 		if !constants.IsAcceleratorResolved(accelerator) {
