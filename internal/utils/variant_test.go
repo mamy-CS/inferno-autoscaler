@@ -32,6 +32,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/accelerator"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/annotations"
 	wvav1alpha1 "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/variant"
 )
@@ -51,7 +52,7 @@ func TestGroupVariantAutoscalingByModel(t *testing.T) {
 						Name:      "va-a100",
 						Namespace: "default",
 						Labels: map[string]string{
-							AcceleratorNameLabel: "A100",
+							accelerator.AcceleratorNameLabel: "A100",
 						},
 					},
 					Spec: wvav1alpha1.VariantAutoscalingSpec{
@@ -63,7 +64,7 @@ func TestGroupVariantAutoscalingByModel(t *testing.T) {
 						Name:      "va-h100",
 						Namespace: "default",
 						Labels: map[string]string{
-							AcceleratorNameLabel: "H100",
+							accelerator.AcceleratorNameLabel: "H100",
 						},
 					},
 					Spec: wvav1alpha1.VariantAutoscalingSpec{

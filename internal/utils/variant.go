@@ -60,9 +60,6 @@ func InactiveVariantAutoscalingByModel(ctx context.Context, client client.Client
 	return GroupVariantAutoscalingByModel(vas), nil
 }
 
-// AcceleratorNameLabel is the label key used to specify the accelerator name for a VA.
-const AcceleratorNameLabel = "inference.optimization/acceleratorName"
-
 // GroupVariantAutoscalingByModel groups VariantAutoscalings by model ID and namespace.
 // Variants of the same model on different accelerators are grouped together to enable
 // cost-based optimization (scale up cheaper variants, scale down expensive variants).

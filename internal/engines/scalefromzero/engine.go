@@ -34,6 +34,7 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
+	accel "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/accelerator"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/actuator"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/collector/source"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/config"
@@ -331,10 +332,10 @@ func (e *Engine) processInactiveVariant(ctx context.Context, scaleTargets map[st
 		// Try to get from deployment/LWS nodeSelector/nodeAffinity, or VA labels
 		key := utils.GetNamespacedKey(va.Namespace, va.GetScaleTargetName())
 		if scaleTarget, found := scaleTargets[key]; found {
-			accelerator = utils.GetAcceleratorNameFromScaleTarget(&va, scaleTarget)
+			accelerator = accel.GetAcceleratorNameFromScaleTarget(&va, scaleTarget)
 		} else {
 			// Deployment/LWS not cached, fall back to VA label via nil deployment/LWS
-			accelerator = utils.GetAcceleratorNameFromScaleTarget(&va, nil)
+			accelerator = accel.GetAcceleratorNameFromScaleTarget(&va, nil)
 		}
 	}
 
