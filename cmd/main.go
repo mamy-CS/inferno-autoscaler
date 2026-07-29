@@ -65,6 +65,7 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/scalefromzero"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/logging"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/metrics"
+	prometheusutil "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/prometheus"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils/crd"
 	poolutil "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils/pool"
@@ -420,7 +421,7 @@ func main() {
 	}
 
 	// Validate Prometheus transport configuration before creating the client.
-	if err := utils.ValidateTLSConfig(cfg); err != nil {
+	if err := prometheusutil.ValidateTLSConfig(cfg); err != nil {
 		setupLog.Error(err, "Prometheus transport configuration validation failed")
 		os.Exit(1)
 	}
@@ -428,12 +429,12 @@ func main() {
 	promURL, _ := url.Parse(cfg.PrometheusBaseURL()) // already validated above
 	setupLog.Info("Initializing Prometheus client",
 		"address", promURL.Redacted(),
-		"tlsEnabled", utils.IsHTTPS(cfg.PrometheusBaseURL()),
+		"tlsEnabled", prometheusutil.IsHTTPS(cfg.PrometheusBaseURL()),
 		"allowHTTP", cfg.PrometheusAllowHTTP(),
 	)
 
 	// Create Prometheus client with TLS support
-	promClientConfig, err := utils.CreatePrometheusClientConfig(cfg)
+	promClientConfig, err := prometheusutil.CreatePrometheusClientConfig(cfg)
 	if err != nil {
 		setupLog.Error(err, "failed to create prometheus client config")
 		os.Exit(1)

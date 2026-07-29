@@ -44,6 +44,7 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/executor"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/logging"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/metrics"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/prometheus"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils"
 	poolutil "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils/pool"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils/scaletarget"
@@ -282,7 +283,7 @@ func (e *Engine) processInactiveVariant(ctx context.Context, scaleTargets map[st
 	metrics.ObserveMetricsCollectionDuration(duration, constants.QueryTypeQueueLength)
 
 	if err != nil {
-		reason := utils.CategorizePrometheusError(err)
+		reason := prometheus.CategorizePrometheusError(err)
 		metrics.IncMetricsCollectionErrors(constants.QueryTypeQueueLength, reason)
 		return err
 	}

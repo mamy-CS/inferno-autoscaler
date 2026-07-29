@@ -324,7 +324,7 @@ func TestReadyVariantAutoscalings(t *testing.T) {
 		if result[0].Name != "hpa-ann" || result[0].Spec.ModelID != "model-ann" {
 			t.Errorf("unexpected synthetic variant: name=%q modelID=%q", result[0].Name, result[0].Spec.ModelID)
 		}
-		if !IsSynthetic(&result[0]) {
+		if !annotations.IsSynthetic(&result[0]) {
 			t.Error("want annotation-sourced variant to be marked synthetic")
 		}
 	})

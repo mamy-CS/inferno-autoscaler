@@ -215,7 +215,7 @@ func annotationSourcedVariants(ctx context.Context, k8sClient client.Client) ([]
 		if !annotations.IsManaged(hpa) || !hpa.DeletionTimestamp.IsZero() {
 			continue
 		}
-		va, err := VariantAutoscalingFromHPA(hpa)
+		va, err := annotations.VariantAutoscalingFromHPA(hpa)
 		if err != nil {
 			logger.V(logging.DEBUG).Info("Skipping HPA with invalid WVA annotations",
 				"namespace", hpa.Namespace, "name", hpa.Name, "error", err)
@@ -246,7 +246,7 @@ func annotationSourcedVariants(ctx context.Context, k8sClient client.Client) ([]
 			if !annotations.IsManaged(so) || !so.DeletionTimestamp.IsZero() {
 				continue
 			}
-			va, err := VariantAutoscalingFromScaledObject(so)
+			va, err := annotations.VariantAutoscalingFromScaledObject(so)
 			if err != nil {
 				logger.V(logging.DEBUG).Info("Skipping ScaledObject with invalid WVA annotations",
 					"namespace", so.Namespace, "name", so.Name, "error", err)
