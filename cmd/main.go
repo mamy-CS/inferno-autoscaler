@@ -66,7 +66,6 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/logging"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/metrics"
 	prometheusutil "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/prometheus"
-	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils/crd"
 	poolutil "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils/pool"
 	promoperator "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
@@ -449,7 +448,7 @@ func main() {
 	promAPI := promv1.NewAPI(promClient)
 
 	// Validate that the API is working by testing a simple query with retry logic
-	if err := utils.ValidatePrometheusAPI(context.Background(), promAPI); err != nil {
+	if err := prometheusutil.ValidatePrometheusAPI(context.Background(), promAPI); err != nil {
 		setupLog.Error(err, "CRITICAL: Failed to connect to Prometheus - WVA requires Prometheus connectivity for autoscaling decisions")
 		os.Exit(1)
 	}

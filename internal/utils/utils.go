@@ -10,9 +10,6 @@ import (
 	"regexp"
 	"slices"
 	"strings"
-	"time"
-
-	"github.com/prometheus/common/model"
 
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/constants"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
@@ -27,8 +24,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-
-	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 )
 
 // Helper functions for common resource types with standard backoff
@@ -112,52 +107,6 @@ func FindModelSLO(cmData map[string]string, targetModel string) (*domain.Service
 
 func Ptr[T any](v T) *T {
 	return &v
-}
-
-func QueryPrometheusWithBackoff(ctx context.Context, promAPI promv1.API, query string) (val model.Value, warn promv1.Warnings, err error) {
-	var lastErr error
-
-	err = wait.ExponentialBackoffWithContext(ctx, constants.PrometheusQueryBackoff, func(ctx context.Context) (bool, error) {
-		val, warn, err = promAPI.Query(ctx, query, time.Now())
-		if err != nil {
-			// Record the last error so that we can surface it if the backoff is exhausted.
-			lastErr = err
-			ctrl.Log.Info("Query Prometheus failed, retrying",
-				"query", query,
-				"error", err.Error())
-			return false, nil
-		}
-		return true, nil
-	})
-	if err != nil {
-		if lastErr != nil {
-			return nil, nil, lastErr
-		}
-		return nil, nil, err
-	}
-
-	return
-}
-
-// ValidatePrometheusAPIWithBackoff validates Prometheus API connectivity with retry logic
-func ValidatePrometheusAPIWithBackoff(ctx context.Context, promAPI promv1.API, backoff wait.Backoff) error {
-	return wait.ExponentialBackoffWithContext(ctx, backoff, func(ctx context.Context) (bool, error) {
-		// Test with a simple query that should always work
-		query := "up"
-		_, _, err := promAPI.Query(ctx, query, time.Now())
-		if err != nil {
-			ctrl.LoggerFrom(ctx).Error(err, "Prometheus API validation failed, retrying - ", "query: ", query)
-			return false, nil // Retry on transient errors
-		}
-
-		ctrl.LoggerFrom(ctx).Info("Prometheus API validation successful with query", "query", query)
-		return true, nil
-	})
-}
-
-// ValidatePrometheusAPI validates Prometheus API connectivity using standard Prometheus backoff
-func ValidatePrometheusAPI(ctx context.Context, promAPI promv1.API) error {
-	return ValidatePrometheusAPIWithBackoff(ctx, promAPI, constants.PrometheusValidationBackoff)
 }
 
 // GetProductKeys returns unique vendor product (node label) keys, in stable (sorted) order
