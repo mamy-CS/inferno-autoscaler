@@ -95,26 +95,6 @@ func init() {
 	// +kubebuilder:scaffold:scheme
 }
 
-// throughputAnalyzerEnabled reports whether any saturation config entry lists
-// the throughput analyzer with enabled != false. Startup-time gate: when no
-// entry enables throughput anywhere, the analyzer is never registered, so it
-// cannot participate in scaling decisions and cannot veto scale-down.
-//
-// This is independent of the per-cycle effectiveEnabled opt-in check in the
-// saturation engine, which governs participation per namespace/model once the
-// analyzer is registered. Runtime enablement after controller start requires a
-// restart because RegisterAnalyzer is frozen after StartOptimizeLoop.
-func throughputAnalyzerEnabled(cfg *config.Config) bool {
-	for _, sc := range cfg.SaturationConfig() {
-		for _, aw := range sc.Analyzers {
-			if aw.EffectiveType() == throughput.AnalyzerName && (aw.Enabled == nil || *aw.Enabled) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 // nolint:gocyclo
 func main() {
 	// Command-line flags
@@ -404,6 +384,13 @@ func main() {
 	}
 	setupLog.Info("Initial ConfigMap bootstrap completed")
 
+	// Frozen registration decision: analyzer registration cannot change without
+	// a controller restart, so this value is captured once (after the bootstrap
+	// above has loaded ConfigMap-backed settings) and shared with the
+	// ConfigMapReconciler so it can detect a later live-config divergence.
+	taRegistered := cfg.ThroughputAnalyzerEnabled()
+	configMapReconciler.ThroughputRegistered = taRegistered
+
 	// Use Prometheus configuration from unified Config (already validated during Load())
 	if cfg.PrometheusBaseURL() == "" {
 		setupLog.Error(nil, "no Prometheus configuration found - this should not happen after validation")
@@ -514,7 +501,7 @@ func main() {
 		engine.SetLimiterBuilder(func() (pipeline.Limiter, error) {
 			return pipeline.NewLimiterFromConfig(cfg, mgr.GetClient())
 		})
-		if throughputAnalyzerEnabled(cfg) {
+		if taRegistered {
 			registration.RegisterThroughputAnalyzerQueries(sourceRegistry)
 			if err := engine.RegisterAnalyzer(throughput.AnalyzerName, throughput.NewThroughputAnalyzer()); err != nil {
 				return err
