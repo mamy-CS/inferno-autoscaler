@@ -169,6 +169,21 @@ type Engine struct {
 	// capacityStore is shared with the V2 analyzer for caching capacity knowledge.
 	capacityStore *saturation_v2.CapacityKnowledgeStore
 
+	// lastGoodAnalysis records, per model (keyed by utils.GetNamespacedKey(namespace,
+	// modelID)) and analyzer name, the AnalyzedAt of the most recent informative
+	// (non-error, capacity-bearing) result. Used to gate the scale-down veto: an
+	// analyzer whose last good analysis for a model is absent or staler than
+	// analyzerLivenessStaleCycles cycles does not participate in that model's vote.
+	// Keyed per model (not just per analyzer name) because one Engine instance
+	// serves all models — a global-by-name map would leak one model's freshness
+	// into another's. In-memory only; reset on process restart / leader failover
+	// (safe: non-live → no scale-down until refreshed).
+	// Unguarded, like vaEventTracker: safe today because PollingExecutor runs
+	// optimize cycles sequentially in one goroutine and models within a cycle
+	// are processed serially. Parallelizing model processing would need to
+	// synchronize this map — the top-level per-model insert would race first.
+	lastGoodAnalysis map[string]map[string]time.Time
+
 	// analyzers is the engine's analyzer registry, mutated only during setup
 	// (NewEngine + RegisterAnalyzer). After StartOptimizeLoop it is frozen —
 	// further RegisterAnalyzer calls return an error. The optimize goroutine reads
@@ -248,6 +263,7 @@ func NewEngine(client client.Client, apiReader client.Reader, scheme *runtime.Sc
 		saturationV2Analyzer:    satV2,
 		queueingModelAnalyzer:   queueingmodel.NewQueueingModelAnalyzer(),
 		capacityStore:           capacityStore,
+		lastGoodAnalysis:        make(map[string]map[string]time.Time),
 		optimizer:               scalingOptimizer,
 		metricsEmitter:          metrics.NewMetricsEmitter(),
 		v1AnalyzerFactory:       defaultV1AnalyzerFactory,
@@ -865,6 +881,18 @@ func (e *Engine) optimizeV2(
 	currentAllocations map[string]*domain.Allocation,
 ) []domain.VariantDecision {
 	logger := ctrl.LoggerFrom(ctx)
+
+	// Prune liveness state for departed models. Any model still present in
+	// modelGroups is active this cycle (config-not-loaded or transient-failure
+	// models are enumerated but skipped below — they have not departed); keys
+	// absent from modelGroups belong to models whose VariantAutoscalings are
+	// gone, so their lastGoodAnalysis entries are evicted here. Keyed identically
+	// to updateLivenessAndSetLive (utils.GetNamespacedKey(namespace, modelID)).
+	activeKeys := make(map[string]bool, len(modelGroups))
+	for _, modelVAs := range modelGroups {
+		activeKeys[utils.GetNamespacedKey(modelVAs[0].Namespace, modelVAs[0].Spec.ModelID)] = true
+	}
+	e.pruneLastGoodAnalysis(activeKeys)
 
 	// Stage 1: Collect ModelScalingRequests for all models
 	requests := make([]pipeline.ModelScalingRequest, 0, len(modelGroups))

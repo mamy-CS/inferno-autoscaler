@@ -23,6 +23,7 @@ func withSatEntryV2(r *domain.AnalyzerResult, req pipeline.ModelScalingRequest) 
 			Result:    r,
 			Remaining: r.RequiredCapacity,
 			Spare:     r.SpareCapacity,
+			Live:      true,
 		}}
 	}
 	return req
