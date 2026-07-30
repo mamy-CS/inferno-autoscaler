@@ -3,6 +3,7 @@ package throughput
 import (
 	"context"
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -2031,5 +2032,44 @@ var _ = Describe("ThroughputAnalyzer", func() {
 			// Shape is derived from the healthy pod.
 			Expect(state.Shape.KVreq).To(BeNumerically(">", 0))
 		})
+	})
+})
+
+var _ = Describe("computeLocalDemand", func() {
+	shape := WorkloadShape{
+		AvgOutputTokens: 50, // above DefaultMinDecodeOLForLocalDemand
+		KVreq:           1024,
+	}
+	model := ITLModel{A: 0.073, B: 0.006}
+
+	replicaAt := func(k float64) domain.ReplicaMetrics {
+		return domain.ReplicaMetrics{
+			KvUsageInstant:        k,
+			TotalKvCapacityTokens: 65536,
+		}
+	}
+
+	It("skips a replica with NaN KvUsageInstant but still counts the others", func() {
+		healthy := replicaAt(0.5)
+		nanReplica := replicaAt(math.NaN())
+
+		total := computeLocalDemand([]domain.ReplicaMetrics{healthy}, shape, model)
+		Expect(total).To(BeNumerically(">", 0))
+
+		withNaN := computeLocalDemand([]domain.ReplicaMetrics{healthy, nanReplica}, shape, model)
+		Expect(withNaN).To(BeNumerically("~", total, 1e-9))
+		Expect(math.IsNaN(withNaN)).To(BeFalse())
+	})
+
+	It("skips a replica with KvUsageInstant > 1", func() {
+		overRange := replicaAt(1.5)
+		total := computeLocalDemand([]domain.ReplicaMetrics{overRange}, shape, model)
+		Expect(total).To(Equal(0.0))
+	})
+
+	It("skips a replica whose model produces a NaN ITL", func() {
+		nanModel := ITLModel{A: math.NaN(), B: 0.006}
+		total := computeLocalDemand([]domain.ReplicaMetrics{replicaAt(0.5)}, shape, nanModel)
+		Expect(total).To(Equal(0.0))
 	})
 })

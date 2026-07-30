@@ -567,7 +567,7 @@ func (a *ThroughputAnalyzer) resolveITLModel(ctx context.Context, state *variant
 	}
 	if n > 0 && sumK2 > 0 {
 		A := numerator / sumK2
-		if A > 0 {
+		if validITLModel(A, baselineB) {
 			ctrl.LoggerFrom(ctx).V(logging.DEBUG).Info("throughput analyzer: tier-2 constrained OLS fit",
 				"namespace", namespace, "modelID", modelID, "variant", variantName,
 				"A", A, "B", baselineB, "replicas", int(n),
@@ -638,11 +638,16 @@ func computeLocalDemand(metrics []domain.ReplicaMetrics, shape WorkloadShape, mo
 	}
 	var total float64
 	for _, m := range metrics {
-		if m.KvUsageInstant <= 0 || m.TotalKvCapacityTokens <= 0 {
+		if math.IsNaN(m.KvUsageInstant) || m.KvUsageInstant <= 0 || m.TotalKvCapacityTokens <= 0 {
+			continue
+		}
+		// KvUsageInstant is a KV-utilization fraction; values > 1 indicate a bad/over-committed
+		// metric. Skip rather than clamp — a single over-range replica shouldn't inflate demand.
+		if m.KvUsageInstant > 1 {
 			continue
 		}
 		itlAtK := model.ITLAt(m.KvUsageInstant)
-		if itlAtK <= 0 {
+		if math.IsNaN(itlAtK) || itlAtK <= 0 {
 			continue
 		}
 		total += m.KvUsageInstant * float64(m.TotalKvCapacityTokens) / shape.KVreq / itlAtK

@@ -210,6 +210,16 @@ namespaced, and model-scoped — correctly isolating traffic to a specific varia
 per-replica λ_dec in the analyzer rather than using a model-level query, which avoids the
 namespace filtering limitation of the scheduler metric.
 
+**Note on metric freshness:** the collector derives each replica's
+`ReplicaMetricsMetadata.Age`/`FreshnessStatus` from the same scrape timestamps used for the
+aggregate `wva_metrics_freshness_status` gauge — the least-fresh status across a pod's *present*
+metrics, and the age of the oldest one. Metrics that are absent by design (e.g. the EPP arrival
+rate when no EPP is deployed, or the prefix-cache metrics when prefix caching is off) leave a zero
+timestamp and are skipped rather than reported as `missing`, so a healthy replica is not
+mislabelled and a genuinely stale metric is not masked. `CheckModelMetrics` (`sanity.go`) flags a
+replica as `SanityIssueStaleMetrics` when `FreshnessStatus == "stale"`. This is currently detection
+only: the stale-metrics sanity issue is reported but not currently used to gate a scaling decision.
+
 ---
 
 ### Query Design Decisions
@@ -410,8 +420,10 @@ utilization k. It is calibrated independently per variant (different hardware �
 
 When `ObservationWindow.Ready()` is true (≥ 10 samples spanning ≥ 30% of the k range),
 `FitITLModel` fits A and B by ordinary least squares, minimizing `Σ(ITL_i − A·k_i − B)²`.
-The fit is accepted only when A > 0 (physically required: more concurrent requests → higher
-latency). On success, the fitted model is used for both supply and demand estimation this cycle.
+The fit is accepted only when the resulting `(A, B)` passes `validITLModel` — finite, a
+meaningfully positive slope, and positive ITL at saturation (physically required: more
+concurrent requests → higher latency). On success, the fitted model is used for both supply
+and demand estimation this cycle.
 
 ### Tier 2 — Constrained OLS
 
@@ -423,8 +435,9 @@ A = Σ((ITL_i − B) · k_i) / Σ(k_i²)
 
 This is least-squares with B fixed, applied to all replicas with k* > 0. For a single replica
 it reduces to the single-point formula `A = (ITL − B) / k*`. For multiple replicas it is
-strictly better — same OLS criterion as tier-1 but with one fewer degree of freedom.
-Accepted only when A > 0.
+strictly better — same OLS criterion as tier-1 but with one fewer degree of freedom. The
+resulting `(A, B)` is accepted through the same `validITLModel` predicate as Tier 1, so Tier 2
+cannot accept a model Tier 1 would reject.
 
 **B selection:** B is taken from `variantState.lastFittedB` when a prior successful Tier-1 fit
 exists for this variant. B reflects hardware/model characteristics (not workload shape), so it
@@ -515,7 +528,10 @@ result now only populates `VariantCapacity.TotalDemand` / `Utilization` (surface
 `λ_dec = Σ RequestRate_r × AvgOutputTokens_r`. Counts only served (completed) requests.
 
 **3. k\*-based local** (scale-up only) — when both above yield zero:
-`λ_local = Σ_r k_r* × KV_max_r / KVreq / ITL(k_r*)`.
+`λ_local = Σ_r k_r* × KV_max_r / KVreq / ITL(k_r*)`. A replica is skipped from the sum (rather
+than counted as zero) when its `KvUsageInstant` or the model's `ITLAt(KvUsageInstant)` is
+missing, non-positive, or NaN, or when `KvUsageInstant` is out of the valid `[0, 1]` range — so a
+single bad metric cannot poison the total.
 
 **Deferred:** with demand model-level, `AnalyzerInput.ArrivalRate` is the sole driver of
 `TotalDemand`'s arrival component. When EPP is absent model-wide, `ArrivalRate` is legitimately

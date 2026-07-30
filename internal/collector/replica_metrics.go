@@ -423,6 +423,19 @@ func (c *ReplicaMetricsCollector) collectReplicaMetrics(
 		requestRate         float64
 	}
 
+	// classifyTimestamp reports the freshness status of a single metric timestamp,
+	// along with its age when non-zero. A zero timestamp means the metric was never
+	// scraped for this pod and is classified "missing". Shared by trackMetricFreshness
+	// (aggregate gauge) and worstFreshnessStatus (per-replica metadata) so the two
+	// cannot drift apart.
+	classifyTimestamp := func(timestamp, collectedAt time.Time, thresholds config.FreshnessThresholds) (status string, age time.Duration, hasTimestamp bool) {
+		if timestamp.IsZero() {
+			return "missing", 0, false
+		}
+		age = collectedAt.Sub(timestamp)
+		return thresholds.DetermineStatus(age), age, true
+	}
+
 	// trackMetricFreshness determines the freshness status of metrics in podMetricData
 	// and increments the corresponding counters in the freshness status map.
 	trackMetricFreshness := func(
@@ -440,13 +453,7 @@ func (c *ReplicaMetricsCollector) collectReplicaMetrics(
 
 		// Helper to track a single timestamp
 		trackTimestamp := func(timestamp time.Time) {
-			var status string
-			if timestamp.IsZero() {
-				status = "missing"
-			} else {
-				age := collectedAt.Sub(timestamp)
-				status = thresholds.DetermineStatus(age)
-			}
+			status, _, _ := classifyTimestamp(timestamp, collectedAt, thresholds)
 			freshnessMap[vaName][status]++
 		}
 
@@ -460,6 +467,60 @@ func (c *ReplicaMetricsCollector) collectReplicaMetrics(
 		trackTimestamp(data.arrivalRateTimestamp)
 		trackTimestamp(data.avgTTFTTimestamp)
 		trackTimestamp(data.avgITLTimestamp)
+	}
+
+	// freshnessSeverity orders freshness statuses from best to worst so
+	// worstFreshnessStatus can pick the single worst status across a pod's
+	// tracked timestamps.
+	freshnessSeverity := map[string]int{"fresh": 0, "stale": 1, "unavailable": 2, "missing": 3}
+
+	// worstFreshnessStatus returns the least-fresh status across data's *present*
+	// timestamps (the same set trackMetricFreshness uses) and the age of the oldest
+	// one, for the per-replica ReplicaMetricsMetadata.
+	//
+	// Absent ("missing") timestamps are skipped rather than allowed to dominate the
+	// rollup: several tracked metrics are legitimately unscraped in common
+	// deployments — arrivalRateTimestamp when no EPP is present, and the
+	// prefix-cache / cache-config timestamps when prefix caching is off. Counting
+	// those as "missing" (the worst severity) would report a healthy replica as
+	// "missing" with a near-zero Age, and — because "missing" outranks "stale" —
+	// would mask a genuinely stale driving metric from the CheckModelMetrics
+	// stale-metrics gate, which keys on FreshnessStatus == "stale". A replica with
+	// no present timestamps at all is still reported "missing".
+	worstFreshnessStatus := func(data *podMetricData, collectedAt time.Time) (string, time.Duration) {
+		thresholds := config.DefaultFreshnessThresholds()
+		timestamps := []time.Time{
+			data.kvTimestamp,
+			data.queueTimestamp,
+			data.avgOutputTokensTimestamp,
+			data.avgInputTokensTimestamp,
+			data.prefixCacheHitRateTimestamp,
+			data.cacheConfigTimestamp,
+			data.arrivalRateTimestamp,
+			data.avgTTFTTimestamp,
+			data.avgITLTimestamp,
+		}
+
+		worst := "fresh"
+		var oldestAge time.Duration
+		anyPresent := false
+		for _, ts := range timestamps {
+			status, age, hasTimestamp := classifyTimestamp(ts, collectedAt, thresholds)
+			if !hasTimestamp {
+				continue // absent-by-design metric must not dominate the rollup
+			}
+			anyPresent = true
+			if age > oldestAge {
+				oldestAge = age
+			}
+			if freshnessSeverity[status] > freshnessSeverity[worst] {
+				worst = status
+			}
+		}
+		if !anyPresent {
+			return "missing", 0
+		}
+		return worst, oldestAge
 	}
 
 	// Extract per-pod metrics from results
@@ -976,6 +1037,7 @@ func (c *ReplicaMetricsCollector) collectReplicaMetrics(
 
 		// Track freshness for metrics in this pod
 		trackMetricFreshness(vaName, data, collectedAt, vaMetricsFreshnessStatus)
+		freshnessStatus, freshnessAge := worstFreshnessStatus(data, collectedAt)
 		metric := domain.ReplicaMetrics{
 			PodName:               podName,
 			ModelID:               modelID,
@@ -1001,8 +1063,8 @@ func (c *ReplicaMetricsCollector) collectReplicaMetrics(
 			RequestRate:           data.requestRate,
 			Metadata: &domain.ReplicaMetricsMetadata{
 				CollectedAt:     collectedAt,
-				Age:             0, // Fresh
-				FreshnessStatus: "fresh",
+				Age:             freshnessAge,
+				FreshnessStatus: freshnessStatus,
 			},
 		}
 

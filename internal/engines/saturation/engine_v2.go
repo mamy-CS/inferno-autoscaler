@@ -178,11 +178,12 @@ func (e *Engine) runAnalyzersAndScore(
 }
 
 // updateLivenessAndSetLive refreshes e.lastGoodAnalysis for this model with
-// every informative result's AnalyzedAt, then sets nr.Live on each entry in
-// place based on whether its last good analysis (if any) is within the
-// staleness window. Applies uniformly to every analyzer, including
-// saturation — no name-based exemption. After the liveness pass it runs the
-// warn-only demand-liveness detector (see detectDemandLiveness).
+// every informative result's AnalyzedAt (or the current time, as a fail-safe,
+// when an informative result carries a zero-valued AnalyzedAt), then sets
+// nr.Live on each entry in place based on whether its last good analysis (if
+// any) is within the staleness window. Applies uniformly to every analyzer,
+// including saturation — no name-based exemption. After the liveness pass it
+// runs the warn-only demand-liveness detector (see detectDemandLiveness).
 func (e *Engine) updateLivenessAndSetLive(
 	ctx context.Context,
 	namespace, modelID string,
@@ -198,9 +199,12 @@ func (e *Engine) updateLivenessAndSetLive(
 	perAnalyzer := e.lastGoodAnalysis[modelKey]
 
 	// Config is nil in unit tests that construct a minimal Engine directly
-	// (bypassing NewEngine, which panics on a nil Config in production).
+	// (bypassing NewEngine, which panics on a nil Config in production). A present
+	// Config returning a non-positive interval falls back to the same 30s default —
+	// a zero/negative interval would otherwise zero the threshold below and latch
+	// every analyzer non-live, blocking all scale-down.
 	interval := 30 * time.Second
-	if e.Config != nil {
+	if e.Config != nil && e.Config.OptimizationInterval() > 0 {
 		interval = e.Config.OptimizationInterval()
 	}
 	now := time.Now()
@@ -209,7 +213,13 @@ func (e *Engine) updateLivenessAndSetLive(
 	for i := range namedResults {
 		nr := &namedResults[i]
 		if pipeline.ResultIsInformative(*nr) {
-			perAnalyzer[nr.Name] = nr.Result.AnalyzedAt
+			at := nr.Result.AnalyzedAt
+			if at.IsZero() {
+				// Fail-safe: an informative result observed this cycle is current by
+				// definition, so a forgotten AnalyzedAt cannot silently disarm the veto.
+				at = now
+			}
+			perAnalyzer[nr.Name] = at
 		}
 		lastGood, ok := perAnalyzer[nr.Name]
 		nr.Live = ok && now.Sub(lastGood) <= threshold
@@ -324,7 +334,10 @@ func (e *Engine) detectDemandLiveness(
 //
 // Guards against an empty active set: a cycle that enumerates no models (e.g.
 // saturation config not loaded yet) must not wipe accumulated state, so pruning
-// is skipped when activeKeys is empty.
+// is skipped when activeKeys is empty. This also means a genuine all-models-removed
+// state is indistinguishable from a transient empty cycle here: those entries leak
+// until a model reappears. Accepted, bounded leak — distinguishing the two cases
+// would need a separate "models were present last cycle" signal.
 func (e *Engine) pruneLastGoodAnalysis(activeKeys map[string]bool) {
 	if len(activeKeys) == 0 || e.lastGoodAnalysis == nil {
 		return

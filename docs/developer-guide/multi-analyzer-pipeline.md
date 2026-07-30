@@ -251,7 +251,13 @@ same live-only filter.
 **Liveness.** An analyzer is live for the current cycle iff it produced a
 non-error, capacity-bearing result within the staleness window (a fixed
 multiple of the optimization interval, `analyzerLivenessStaleCycles` in
-`internal/engines/saturation/engine_v2.go`). A non-live analyzer — one that
+`internal/engines/saturation/engine_v2.go`). The resolved interval falls back
+to a 30s default whenever `Config` is absent **or** reports a non-positive
+value, so a misconfigured interval can never zero the staleness window and
+latch every analyzer non-live. An informative result with a zero-valued
+`AnalyzedAt` is treated as current (recorded as "now") rather than
+instantly-stale, so a forgotten timestamp on a future analyzer cannot
+silently disarm the veto. A non-live analyzer — one that
 has never produced a usable result, is currently erroring, or whose last
 usable result has aged past the staleness window — is excluded from the
 scale-down vote entirely: it neither vetoes nor constrains the safe-removal

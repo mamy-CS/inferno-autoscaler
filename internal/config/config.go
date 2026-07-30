@@ -779,6 +779,17 @@ func (c *Config) setPrometheusBaseURLForTesting(baseURL string) {
 	c.prometheus.baseURL = baseURL
 }
 
+// SetOptimizationIntervalForTest overrides the optimization interval on a test
+// Config, including to a non-positive value — Load() always sanitizes it to at
+// least MinOptimizationInterval, so this is the only way to exercise a caller's
+// handling of a Config that (however it got there) reports a non-positive
+// interval. Not for production use.
+func SetOptimizationIntervalForTest(c *Config, interval time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.infrastructure.optimizationInterval = interval
+}
+
 // --- Bootstrap State Management ---
 
 // ConfigMapsBootstrapComplete returns true once the initial ConfigMap bootstrap has completed.

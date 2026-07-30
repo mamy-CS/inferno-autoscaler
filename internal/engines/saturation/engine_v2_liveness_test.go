@@ -125,4 +125,54 @@ var _ = Describe("analyzer liveness gate (engine level)", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(namedByName(results)[domain.SaturationAnalyzerName].Live).To(BeFalse())
 	})
+
+	It("falls back to the 30s default interval when a present Config reports a non-positive one", func() {
+		// Load() always sanitizes the interval to at least MinOptimizationInterval, so a
+		// non-positive OptimizationInterval() can only be reached via direct field
+		// manipulation (config.SetOptimizationIntervalForTest) — this guards against that
+		// Config ever reaching updateLivenessAndSetLive with a zero/negative interval, which
+		// would otherwise zero the threshold and latch every analyzer non-live.
+		fresh := &fakeAnalyzerWithResult{
+			analyzerName: domain.SaturationAnalyzerName,
+			result: &domain.AnalyzerResult{
+				AnalyzedAt:        time.Now(),
+				VariantCapacities: []domain.VariantCapacity{{VariantName: "v", Reason: "P1-obs"}},
+			},
+		}
+		e := liveEngine(fresh)
+		e.Config = config.NewTestConfig()
+		config.SetOptimizationIntervalForTest(e.Config, 0)
+
+		results, err := e.runAnalyzersAndScore(context.Background(), "m", "ns", nil, cfg, nil, nil, nil, nil, 0)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(namedByName(results)[domain.SaturationAnalyzerName].Live).To(BeTrue())
+	})
+
+	It("treats a zero-valued AnalyzedAt on an informative result as current, not instantly-stale", func() {
+		zeroTimestamp := &fakeAnalyzerWithResult{
+			analyzerName: domain.SaturationAnalyzerName,
+			result: &domain.AnalyzerResult{
+				AnalyzedAt:        time.Time{},
+				VariantCapacities: []domain.VariantCapacity{{VariantName: "v", Reason: "P1-obs"}},
+			},
+		}
+		e := liveEngine(zeroTimestamp)
+		results, err := e.runAnalyzersAndScore(context.Background(), "m", "ns", nil, cfg, nil, nil, nil, nil, 0)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(namedByName(results)[domain.SaturationAnalyzerName].Live).To(BeTrue())
+	})
+
+	It("leaves a non-informative result with a zero-valued AnalyzedAt excluded from liveness", func() {
+		zeroTimestampNoData := &fakeAnalyzerWithResult{
+			analyzerName: domain.SaturationAnalyzerName,
+			result: &domain.AnalyzerResult{
+				AnalyzedAt:        time.Time{},
+				VariantCapacities: []domain.VariantCapacity{{VariantName: "v", Reason: "no-data"}},
+			},
+		}
+		e := liveEngine(zeroTimestampNoData)
+		results, err := e.runAnalyzersAndScore(context.Background(), "m", "ns", nil, cfg, nil, nil, nil, nil, 0)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(namedByName(results)[domain.SaturationAnalyzerName].Live).To(BeFalse())
+	})
 })
