@@ -31,6 +31,7 @@ func (e *Engine) runV2AnalysisOnly(
 	scaleTargets map[string]scaletarget.ScaleTargetAccessor,
 	variantAutoscalings map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling,
 	schedulerQueue *domain.SchedulerQueueMetrics,
+	arrivalRate float64,
 ) (*domain.AnalyzerResult, error) {
 	logger := ctrl.LoggerFrom(ctx)
 
@@ -59,6 +60,7 @@ func (e *Engine) runV2AnalysisOnly(
 		VariantStates:  variantStates,
 		Config:         &config,
 		SchedulerQueue: schedulerQueue,
+		ArrivalRate:    arrivalRate,
 	}
 
 	// 3. Run V2 analyzer
@@ -100,12 +102,13 @@ func (e *Engine) runAnalyzersAndScore(
 	scaleTargets map[string]scaletarget.ScaleTargetAccessor,
 	variantAutoscalings map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling,
 	schedulerQueue *domain.SchedulerQueueMetrics,
+	arrivalRate float64,
 ) ([]pipeline.NamedAnalyzerResult, error) {
 	logger := ctrl.LoggerFrom(ctx)
 
 	// Run saturation analyzer (always needed for PerReplicaCapacity).
 	baseResult, err := e.runV2AnalysisOnly(ctx, modelID, namespace, replicaMetrics, config,
-		variantStates, scaleTargets, variantAutoscalings, schedulerQueue)
+		variantStates, scaleTargets, variantAutoscalings, schedulerQueue, arrivalRate)
 	if err != nil {
 		return nil, err
 	}
@@ -129,6 +132,7 @@ func (e *Engine) runAnalyzersAndScore(
 		VariantStates:  variantStates,
 		Config:         &config,
 		SchedulerQueue: schedulerQueue,
+		ArrivalRate:    arrivalRate,
 	}
 
 	// Collect per-analyzer results. Saturation is first; each non-saturation
@@ -570,9 +574,10 @@ func (e *Engine) collectV2ModelRequest(
 	scaleTargets map[string]scaletarget.ScaleTargetAccessor,
 	variantAutoscalings map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling,
 	schedulerQueue *domain.SchedulerQueueMetrics,
+	arrivalRate float64,
 ) (*pipeline.ModelScalingRequest, error) {
 	namedResults, err := e.runAnalyzersAndScore(ctx, modelID, namespace, replicaMetrics, config,
-		variantStates, scaleTargets, variantAutoscalings, schedulerQueue)
+		variantStates, scaleTargets, variantAutoscalings, schedulerQueue, arrivalRate)
 	if err != nil {
 		return nil, fmt.Errorf("collecting V2 model request for %s/%s: %w", namespace, modelID, err)
 	}

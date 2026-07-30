@@ -662,6 +662,72 @@ func TestCollectReplicaMetrics_ThroughputKeyMerge(t *testing.T) {
 	}
 }
 
+// TestCollectReplicaMetrics_ArrivalRatePerPodRetained is a regression guard for
+// PR C (model-level TA demand): that PR adds a model-level arrival-rate query for
+// the throughput analyzer but must not touch the existing per-pod
+// scheduler_dispatch_rate collection — queueingmodel and internal/utils/allocation
+// still read ReplicaMetrics.ArrivalRate per-pod. This pins that the per-pod value
+// keeps flowing through CollectReplicaMetrics unchanged.
+func TestCollectReplicaMetrics_ArrivalRatePerPodRetained(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	if err := metrics.InitMetrics(registry); err != nil {
+		t.Fatalf("InitMetrics: %v", err)
+	}
+
+	scheme := runtime.NewScheme()
+	if err := llmdVariantAutoscalingV1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme: %v", err)
+	}
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+	// KV-cache side: keyed by pod+instance (buildInstanceKey derives "pod-known:8000").
+	kvLabels := map[string]string{
+		"pod":                               "pod-known",
+		"instance":                          "10.0.0.1:8000",
+		constants.VariantLabelPrometheusKey: "va-1",
+	}
+	// Scheduler side: keyed by pod_name+port directly ("pod-known:8000" — same key).
+	schedulerLabels := map[string]string{
+		"pod_name": "pod-known",
+		"port":     "8000",
+	}
+	ts := time.Now()
+
+	mockSource := &mockMetricsSource{
+		refreshFunc: func(_ context.Context, _ source.RefreshSpec) (map[string]*source.MetricResult, error) {
+			return map[string]*source.MetricResult{
+				"kv_cache_usage": {
+					Values: []source.MetricValue{{Labels: kvLabels, Value: 0.5, Timestamp: ts}},
+				},
+				"scheduler_dispatch_rate": {
+					Values: []source.MetricValue{{Labels: schedulerLabels, Value: 3.5, Timestamp: ts}},
+				},
+			}, nil
+		},
+	}
+
+	collector := NewReplicaMetricsCollector(mockSource, k8sClient, nil, nil)
+	results, err := collector.CollectReplicaMetrics(
+		context.Background(),
+		"test-model",
+		"test-ns",
+		make(map[string]scaletarget.ScaleTargetAccessor),
+		make(map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling),
+		nil,
+		make(map[string]float64),
+	)
+	if err != nil {
+		t.Fatalf("CollectReplicaMetrics: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected exactly 1 ReplicaMetrics entry (key merge), got %d", len(results))
+	}
+	if results[0].ArrivalRate != 3.5 {
+		t.Errorf("ArrivalRate is %v, want 3.5 — per-pod scheduler_dispatch_rate merge must still populate it "+
+			"(queueingmodel and internal/utils/allocation depend on this field)", results[0].ArrivalRate)
+	}
+}
+
 // TestCollectReplicaMetrics_SGLangCacheConfig verifies the SGLang cache-config
 // pass: SGLang exposes total KV-cache token capacity directly via
 // sglang:max_total_num_tokens (queried as sglang/cache_config_info), and the

@@ -190,6 +190,7 @@ Key `AnalyzerInput` fields:
 | `VariantStates` | `[]VariantReplicaState` | Current/desired/pending replica counts per variant |
 | `Config` | `AnalyzerConfig` | Resolved config (cast to your config type as needed) |
 | `SchedulerQueue` | `*SchedulerQueueMetrics` | Scheduler queue metrics; nil when flow control is off |
+| `ArrivalRate` | float64 | Model-level request arrival rate (req/s), no per-pod labels; zero when EPP absent or no traffic yet |
 
 ### Output invariants
 

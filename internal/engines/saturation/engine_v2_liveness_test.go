@@ -37,7 +37,7 @@ var _ = Describe("analyzer liveness gate (engine level)", func() {
 		}
 		e := liveEngine(noData)
 
-		results, err := e.runAnalyzersAndScore(context.Background(), "m", "ns", nil, cfg, nil, nil, nil, nil)
+		results, err := e.runAnalyzersAndScore(context.Background(), "m", "ns", nil, cfg, nil, nil, nil, nil, 0)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(namedByName(results)[domain.SaturationAnalyzerName].Live).To(BeFalse())
 
@@ -51,7 +51,7 @@ var _ = Describe("analyzer liveness gate (engine level)", func() {
 		e.saturationV2Analyzer = informative
 		e.analyzersSnapshot = []analyzerEntry{{name: domain.SaturationAnalyzerName, analyzer: informative}}
 
-		results, err = e.runAnalyzersAndScore(context.Background(), "m", "ns", nil, cfg, nil, nil, nil, nil)
+		results, err = e.runAnalyzersAndScore(context.Background(), "m", "ns", nil, cfg, nil, nil, nil, nil, 0)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(namedByName(results)[domain.SaturationAnalyzerName].Live).To(BeTrue())
 	})
@@ -69,7 +69,7 @@ var _ = Describe("analyzer liveness gate (engine level)", func() {
 			},
 		}
 		e := liveEngine(atThreshold)
-		results, err := e.runAnalyzersAndScore(context.Background(), "m", "ns", nil, cfg, nil, nil, nil, nil)
+		results, err := e.runAnalyzersAndScore(context.Background(), "m", "ns", nil, cfg, nil, nil, nil, nil, 0)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(namedByName(results)[domain.SaturationAnalyzerName].Live).To(BeTrue())
 
@@ -81,7 +81,7 @@ var _ = Describe("analyzer liveness gate (engine level)", func() {
 			},
 		}
 		e2 := liveEngine(pastThreshold)
-		results, err = e2.runAnalyzersAndScore(context.Background(), "m", "ns", nil, cfg, nil, nil, nil, nil)
+		results, err = e2.runAnalyzersAndScore(context.Background(), "m", "ns", nil, cfg, nil, nil, nil, nil, 0)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(namedByName(results)[domain.SaturationAnalyzerName].Live).To(BeFalse())
 	})
@@ -114,14 +114,14 @@ var _ = Describe("analyzer liveness gate (engine level)", func() {
 		}
 		e.saturationV2Analyzer = fresh
 		e.analyzersSnapshot = []analyzerEntry{{name: domain.SaturationAnalyzerName, analyzer: fresh}}
-		_, err := e.runAnalyzersAndScore(context.Background(), "model-b", "ns", nil, cfg, nil, nil, nil, nil)
+		_, err := e.runAnalyzersAndScore(context.Background(), "model-b", "ns", nil, cfg, nil, nil, nil, nil, 0)
 		Expect(err).NotTo(HaveOccurred())
 
 		// model-a's never-analyzed, non-informative result must still be non-live — not
 		// contaminated by model-b's freshness.
 		e.saturationV2Analyzer = neverAnalyzed
 		e.analyzersSnapshot = []analyzerEntry{{name: domain.SaturationAnalyzerName, analyzer: neverAnalyzed}}
-		results, err := e.runAnalyzersAndScore(context.Background(), "model-a", "ns", nil, cfg, nil, nil, nil, nil)
+		results, err := e.runAnalyzersAndScore(context.Background(), "model-a", "ns", nil, cfg, nil, nil, nil, nil, 0)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(namedByName(results)[domain.SaturationAnalyzerName].Live).To(BeFalse())
 	})

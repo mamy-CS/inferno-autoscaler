@@ -1091,6 +1091,66 @@ func (c *ReplicaMetricsCollector) CollectSchedulerQueueMetrics(
 	}
 }
 
+// CollectModelArrivalRate collects the model-level request arrival rate (req/s)
+// from the llm-d inference scheduler. Unlike the per-instance scheduler dispatch
+// rate (QuerySchedulerDispatchRate), this query sums the same source metric
+// across the whole model with no pod_name/port labels to reconcile against
+// vLLM's per-instance metrics. Returns 0 (not an error) when the metric is
+// unavailable.
+func (c *ReplicaMetricsCollector) CollectModelArrivalRate(
+	ctx context.Context,
+	modelID, namespace string,
+) float64 {
+	logger := ctrl.LoggerFrom(ctx)
+
+	params := map[string]string{
+		source.ParamNamespace: namespace,
+		source.ParamModelID:   modelID,
+	}
+
+	results, err := c.source.Refresh(ctx, source.RefreshSpec{
+		Queries: []string{registration.QueryModelArrivalRate},
+		Params:  params,
+	})
+	if err != nil {
+		// Categorize rather than swallow: a broken or misconfigured arrival query and
+		// genuine zero traffic both surface here as a zero rate, but only the former is a
+		// fault. Record the categorized reason as a collection error so an operator can
+		// tell the two apart (a nonzero arrival_rate error counter means a query problem,
+		// not idle traffic). Demand still falls back to 0 — zero only ever permits
+		// scale-down, gated by the multi-analyzer live-consensus veto.
+		reason := prometheus.CategorizePrometheusError(err)
+		metrics.IncMetricsCollectionErrors(constants.QueryTypeArrivalRate, reason)
+		logger.V(logging.DEBUG).Info("Model arrival rate unavailable",
+			"modelID", modelID, "namespace", namespace, "reason", reason, "error", err)
+		return 0
+	}
+
+	result := results[registration.QueryModelArrivalRate]
+	if result == nil {
+		return 0
+	}
+	if result.HasError() {
+		reason := prometheus.CategorizePrometheusError(result.Error)
+		metrics.IncMetricsCollectionErrors(constants.QueryTypeArrivalRate, reason)
+		logger.V(logging.DEBUG).Info("Model arrival rate result carried an error",
+			"modelID", modelID, "namespace", namespace, "reason", reason)
+		return 0
+	}
+
+	var arrivalRate float64
+	for _, value := range result.Values {
+		if !math.IsNaN(value.Value) && !math.IsInf(value.Value, 0) && value.Value >= 0 {
+			arrivalRate += value.Value
+		}
+	}
+
+	logger.V(logging.DEBUG).Info("Collected model arrival rate",
+		"modelID", modelID, "namespace", namespace, "arrivalRate", arrivalRate)
+
+	return arrivalRate
+}
+
 // getScaleTargetNames extracts scale target names from the scale target map.
 func getScaleTargetNames(scaleTargets map[string]scaletarget.ScaleTargetAccessor) []string {
 	names := make([]string, 0, len(scaleTargets))
