@@ -556,6 +556,32 @@ var _ = Describe("ThroughputAnalyzer", func() {
 			Expect(ok).To(BeFalse())
 			Expect(reason).To(Equal(itlReasonT2Failed))
 		})
+
+		It("resolveITLModel returns T2-failed when the computed fit is rejected by validITLModel", func() {
+			// AvgITL below the constant baseline B (DefaultBaselineITLSec = 0.006, default path) at
+			// k=0.5 produces numerator = (0.001 - 0.006) * 0.5 = -0.0025, sumK2 = 0.25 → A = -0.01
+			// (negative, inverted slope) — a real Tier-2 fit is computed (n=1, sumK2>0) but
+			// validITLModel rejects it, unlike the existing "all idle" test which never reaches the
+			// fit at all.
+			belowBaseline := domain.ReplicaMetrics{
+				VariantName: "v1", KvUsageInstant: 0.5, KvCacheUsage: 0.5,
+				AvgITL: 0.001, AvgInputTokens: 5000, AvgOutputTokens: 200,
+				PrefixCacheHitRate: 0.1, TotalKvCapacityTokens: 1024000,
+			}
+			analyzer.Observe(ctx, time.Now(), modelID, namespace, []domain.ReplicaMetrics{belowBaseline})
+
+			_, reason, ok := analyzer.resolveITLModel(ctx,
+				func() *variantState {
+					analyzer.mu.Lock()
+					defer analyzer.mu.Unlock()
+					return analyzer.variantStates[variantKey(namespace, modelID, "v1")]
+				}(),
+				[]domain.ReplicaMetrics{belowBaseline},
+				namespace, modelID, "v1",
+			)
+			Expect(ok).To(BeFalse())
+			Expect(reason).To(Equal(itlReasonT2Failed))
+		})
 	})
 
 	Describe("Analyze — idle replicas produce no signal", func() {
@@ -2071,5 +2097,54 @@ var _ = Describe("computeLocalDemand", func() {
 		nanModel := ITLModel{A: math.NaN(), B: 0.006}
 		total := computeLocalDemand([]domain.ReplicaMetrics{replicaAt(0.5)}, shape, nanModel)
 		Expect(total).To(Equal(0.0))
+	})
+
+	It("skips a replica with non-positive TotalKvCapacityTokens", func() {
+		// Negative, not zero: the accumulated term is KvUsageInstant × capacity / KVreq / ITL, so
+		// a zero capacity contributes 0 whether or not the guard fires. Only a negative capacity
+		// makes the unguarded contribution non-zero, so only it pins the skip.
+		noCapacity := replicaAt(0.5)
+		noCapacity.TotalKvCapacityTokens = -65536
+		total := computeLocalDemand([]domain.ReplicaMetrics{noCapacity}, shape, model)
+		Expect(total).To(Equal(0.0))
+	})
+
+	It("skips a replica whose model produces a finite non-positive ITL", func() {
+		// B negative enough that A*k+B <= 0 at k=0.5 without A or B being NaN/Inf —
+		// distinct from the existing NaN-ITL case, which uses a NaN model coefficient.
+		negativeITLModel := ITLModel{A: 0.01, B: -0.1}
+		Expect(negativeITLModel.ITLAt(0.5)).To(BeNumerically("<=", 0), "fixture sanity check")
+		total := computeLocalDemand([]domain.ReplicaMetrics{replicaAt(0.5)}, shape, negativeITLModel)
+		Expect(total).To(Equal(0.0))
+	})
+})
+
+var _ = Describe("computeVariantSupply", func() {
+	shape := WorkloadShape{KVreq: 1024}
+	const itlSat = 0.05
+
+	replicaWithCap := func(capTokens int64) domain.ReplicaMetrics {
+		return domain.ReplicaMetrics{TotalKvCapacityTokens: capTokens}
+	}
+
+	It("aggregates supply across KV-capable replicas", func() {
+		// Differing capacities keep perReplica from being a copy of total, and the third replica
+		// carries no KV capacity so nKV (2) differs from len(metrics) (3) — that is what pins the
+		// mean to the KV-capable count rather than to the replica count.
+		total, perReplica, nKV := computeVariantSupply(
+			[]domain.ReplicaMetrics{replicaWithCap(65536), replicaWithCap(131072), replicaWithCap(0)},
+			shape, itlSat)
+		Expect(nKV).To(Equal(2))
+		// Σ_r DefaultKSat × KV_max_r / KVreq / itlSat over the KV-capable replicas.
+		Expect(total).To(BeNumerically("~", DefaultKSat*(65536+131072)/shape.KVreq/itlSat, 1e-6))
+		Expect(perReplica).To(BeNumerically("~", total/2, 1e-9))
+	})
+
+	It("skips a replica with non-positive TotalKvCapacityTokens", func() {
+		total, perReplica, nKV := computeVariantSupply(
+			[]domain.ReplicaMetrics{replicaWithCap(0)}, shape, itlSat)
+		Expect(nKV).To(Equal(0))
+		Expect(total).To(Equal(0.0))
+		Expect(perReplica).To(Equal(0.0))
 	})
 })
